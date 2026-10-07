@@ -14,6 +14,7 @@ import { Walker, attachWalkInput, buildingBlocker, paceLength } from './camera/w
 import { footfall } from './world/bodyshape.js';
 import { Spray } from './world/spray.js';
 import { Hand } from './world/hand.js';
+import { Figure, loadFigure } from './world/figure.js';
 import { Terrain } from './world/terrain.js';
 import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
@@ -476,6 +477,7 @@ export async function start(canvas, onProgress = () => {}) {
   resize();
 
   let adapt = 1;                                            // how far the eye has opened up for a cloud's shade (1 in the sun)
+  let inspected = null;                                     // (the body model put out to be looked at: tests only)
   let frames = 0, posedAt = -9, lastInput = NO_INPUT, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
   function frame(dt = 0) {
     frames++;
@@ -692,6 +694,21 @@ export async function start(canvas, onProgress = () => {}) {
     seaAt: (x, z) => ({ ...seaAt(x, z) }),
     /** For tests: your own body (world/body.js), and where its shins stand in the water ([x, z (wrapped to 64 m), in water, speed]). */
     body, legs: () => shared.uLeg.value.map(v => v.toArray()),
+    /**
+     * For tests: the body model (world/figure.js) stood at rest `dist` metres ahead of you, turned by `turn`
+     * degrees (0 = its back to you), to be looked at from outside. `dist` null puts it away again.
+     */
+    async inspectFigure(dist = 2.5, turn = 180, raise = 0) {
+      if (!inspected) {
+        inspected = new Figure(await loadFigure(manifest.compressed === 'gzip'), tier.fp.shadowTaps || 4); opaque.add(inspected.mesh);
+        inspected.mesh.visible = true; await renderer.compileAsync(opaque, rig.camera);          // (or the first pictures are taken before its shader is ready)
+      }
+      inspected.mesh.visible = dist !== null;
+      if (dist === null) return null;
+      const yaw = walker.yaw, wx = rig.eye.x + Math.sin(yaw) * dist, wz = rig.eye.z - Math.cos(yaw) * dist;
+      inspected.place(Math.sin(yaw) * dist, footing.heightAt(wx, wz) + raise, -Math.cos(yaw) * dist, yaw + turn * Math.PI / 180);
+      return { vertices: inspected.info.vertices, bones: inspected.bones.length, eyeHeight: inspected.info.eyeHeight };
+    },
     /** For tests: what your hand is doing (see world/hand.js). */
     hand: () => ({ ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
       stamps: shared.uTouchInfo.value.slice(0, shared.uTouchCount.value).map((v, i) => ({ kind: v.y, a: v.z, b: v.w, age: clock.time - v.x, x: shared.uTouchSeg.value[i].x, z: shared.uTouchSeg.value[i].y })) }),
