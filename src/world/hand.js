@@ -232,6 +232,8 @@ export class Hand {
     // (Far enough out, and near enough to the middle of what you see, that the hand, what falls from it and the
     // place where that lands are all in view.)
     const wrist = [eye[0] + 0.085, eye[1] + L[1] * 0.31 - U[1] * 0.075, eye[2] + L[2] * 0.31 - U[2] * 0.075];
+    // (A hand held out is never quite still: it rises and falls a little with your breath.)
+    wrist[1] += 0.003 * Math.sin(c.time * 1.45); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1);
     // (No lower than the arm can hold it level, crouched: above your knees.)
     wrist[1] = Math.max(wrist[1], Math.min(c.body - 0.3, 0.36));
     const dir = [-0.3, L[1] * 0.92 + U[1] * 0.12, L[2] * 0.92 + U[2] * 0.12], palm = [0.06, U[1] - L[1] * tip, U[2] - L[2] * tip];
@@ -326,7 +328,7 @@ export class Hand {
       // (What leaves the hand leaves with the hand's own motion.)
       const v = this.lastK && dt > 0 ? [0, 1, 2].map(i => Math.max(-1.5, Math.min(1.5, (K[i] - this.lastK[i]) / dt))) : [0, 0, 0];
       this.lastK = K;
-      this.pour = { K, f, N, A, floor, sea, ground, v };
+      this.pour = { K, f, N, A, floor, sea, ground, v, wetGround: !sea && c.wetAt(K[0], K[2], ground) };
       if (this.amount > 0.004) {
         // The heap (or the pool) in the palm: smaller as it goes.
         const k = Math.cbrt(this.amount), r = sandy ? 0.013 + 0.024 * k : 0.014 + 0.024 * Math.sqrt(this.amount), h = sandy ? 0.003 + 0.019 * k : 0.004 + 0.004 * this.amount;
@@ -464,6 +466,12 @@ export class Hand {
       this.heap.held += gone;
       const h = 0.03 * Math.cbrt(this.heap.held) * (this.kind === 'wet' ? 0.8 : 1);
       shared.uTouchInfo.value[this.heap.i].set(time, 2, h, 1.65 * h + 0.012);
+      // (Wet sand on dry: the dry sand round the clots darkens with their water.)
+      if (this.kind === 'wet' && !p.wetGround) {
+        if (!this.spot || Math.hypot(p.K[0] - this.spot.x, p.K[2] - this.spot.z) > 0.05) this.spot = { x: p.K[0], z: p.K[2], held: 0, i: this.stamp(p.K[0], p.K[2], time, 3, 0, 0.02) };
+        this.spot.held += gone;
+        shared.uTouchInfo.value[this.spot.i].set(time + fall, 3, Math.min(0.8, 0.3 + this.spot.held), 0.03 + 0.04 * Math.sqrt(this.spot.held));
+      }
     } else if (water && !p.sea) {
       // Water on sand: a dark spot, wider the more of it.
       if (!this.spot || Math.hypot(p.K[0] - this.spot.x, p.K[2] - this.spot.z) > 0.05) this.spot = { x: p.K[0], z: p.K[2], held: 0, i: this.stamp(p.K[0], p.K[2], time, 3, 0, 0.02) };

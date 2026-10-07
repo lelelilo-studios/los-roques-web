@@ -179,23 +179,30 @@ export class Tubes {
    * points, `palm` = the way the palm faces, `side` -1 left / +1 right, `curl` 0 (held flat) .. 1 (a loose fist):
    * a hand hanging at rest is about half curled. `spread` 0 (fingers together) .. 1 (fanned apart, gaps between
    * them). Returns the tip of the middle finger; this.palm then holds the hand's frame: { wrist, knuckles, f (the way
-   * it points), N (the way the palm faces), A (across it, towards the thumb) }.
+   * it points), N (the way the palm faces), A (across it, towards the thumb) }. With `elbow`, the forearm is drawn
+   * too, in one skin with the palm: round at the elbow, flattening to the wrist (which is wider across the hand
+   * than it is thick), and on into the heel of the hand, with no joint showing however the hand is bent.
    */
-  hand(wrist, f, palm, side, curl, colour, spread = 0) {
+  hand(wrist, f, palm, side, curl, colour, spread = 0, elbow = null) {
     const k = palm[0] * f[0] + palm[1] * f[1] + palm[2] * f[2], N = unit([palm[0] - f[0] * k, palm[1] - f[1] * k, palm[2] - f[2] * k]);
     const fxN = cross(f, N), A = [fxN[0] * side, fxN[1] * side, fxN[2] * side];        // across the palm, towards the thumb
     const K = add(wrist, f, 0.096);
     this.palm = { wrist: wrist.slice(), knuckles: K, f: f.slice(), N, A };
     // The palm is paler than the back of the hand, and so are the pads of the fingers.
     const pale = { dir: N, colour: [colour[0] * 1.22, colour[1] * 1.2, colour[2] * 1.24] }, back = [-N[0], -N[1], -N[2]];
-    // (One skin from inside the wrist to the knuckles: closed at the wrist, however the hand is bent.)
-    this.skin([add(wrist, f, -0.016), add(wrist, f, -0.004), wrist, add(wrist, f, 0.05), K], [[0.006, 0.005], [0.022, 0.015], [0.027, 0.017], [0.038, 0.0135], [0.04, 0.0115]], colour, A, 8, 0, pale);
-    // The two cushions of the palm, with the hollow between them that things lie in: the ball of the thumb,
-    // and the heel of the hand below the little finger. And the knuckles, standing a little proud on the back.
-    // (Each a rounded cushion, not a spindle: its ends are blunt.)
+    if (elbow) {
+      const w = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), len = Math.hypot(wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]);
+      this.skin([elbow, add(elbow, w, 0.55 * len), add(wrist, w, -0.03), wrist, add(wrist, f, 0.034), add(wrist, f, 0.068), K],
+        [[0.037, 0.039], [0.031, 0.032], [0.0255, 0.0215], [0.0265, 0.0178], [0.0355, 0.0165], [0.0395, 0.013], [0.04, 0.0115]], colour, A, 10, 0, pale);
+    } else {
+      // (One skin from inside the wrist to the knuckles: closed at the wrist, however the hand is bent.)
+      this.skin([add(wrist, f, -0.016), add(wrist, f, -0.004), wrist, add(wrist, f, 0.034), add(wrist, f, 0.068), K], [[0.006, 0.005], [0.022, 0.015], [0.0265, 0.0178], [0.0355, 0.0165], [0.0395, 0.013], [0.04, 0.0115]], colour, A, 8, 0, pale);
+    }
+    // The ball of the thumb: a cushion on the palm at the thumb's root, with the hollow that things lie in
+    // beside it. (The heel of the hand, on the other side, is in the palm's own thickness there. A cushion of
+    // its own showed as a patch.)
     const pad = (c, d, len, r) => this.skin([-1, -0.82, -0.45, 0, 0.45, 0.82, 1].map(k => add(c, d, k * len)), [0.12, 0.58, 0.9, 1, 0.9, 0.58, 0.12].map(k => [r[0] * k, r[1] * k]), colour, A, 8, 0, pale);
     pad(add(wrist, f, 0.036, A, 0.017, N, 0.005), unit(add([0, 0, 0], f, 0.85, A, 0.5)), 0.03, [0.0155, 0.0125]);
-    pad(add(wrist, f, 0.04, A, -0.0155, N, 0.0045), f, 0.03, [0.0125, 0.0115]);
     let middle = K;
     for (let i = 0; i < 4; i++) {
       // Three bones to a finger, each bent a little more than the one before it (a relaxed hand curls most at
@@ -416,12 +423,9 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     if (detail) { t.cap(sleeve, elbow, [0.036, 0.038], SKIN, 0.85); t.cap(wrist, elbow, [0.036, 0.04], SKIN, 0.85); }      // the elbow, likewise
     if (detail) {
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
-      t.tube(elbow, wrist, [0.036, 0.04], [0.021, 0.028], SKIN);
-      // (The wrist is a ball between the two: whichever way the hand bends from the forearm, the joint is closed.)
-      { const w = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]); t.skin([add(wrist, w, -0.02), add(wrist, w, -0.012), add(wrist, w, -0.002), add(wrist, w, 0.008), add(wrist, w, 0.015)], [[0.004, 0.004], [0.0165, 0.02], [0.0195, 0.0235], [0.0165, 0.019], [0.004, 0.004]], SKIN); }
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
       const rest = [-side, -0.6 * wade, 0.35 * (1 - wade)], loose = 0.55 - 0.3 * wade;
-      const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0);
+      const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow);
       joints.fingertips.push(tip);
       if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching, palm: t.palm };
     } else {
@@ -493,8 +497,7 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
     t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
     if (detail) {
       // The hand: flat, fingers together, palm down and a little outwards for the pull.
-      t.tube(elbow, target, [0.036, 0.04], [0.027, 0.02], SKIN);
-      t.hand(target, [dir[0] / dl, dir[1] / dl, dir[2] / dl], [side * 0.35 * pull, -1, 0], side, 0.08, SKIN);
+      t.hand(target, [dir[0] / dl, dir[1] / dl, dir[2] / dl], [side * 0.35 * pull, -1, 0], side, 0.08, SKIN, 0, elbow);
     } else {
       t.tube(elbow, target, [0.036, 0.04], [0.026, 0.03], SKIN);
       t.tube(target, tip, [0.04, 0.016], [0.034, 0.011], SKIN);            // the hand, flat like a paddle
