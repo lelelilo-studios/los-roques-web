@@ -19,6 +19,7 @@ import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
 import { Boats } from './world/boats.js';
 import { Birds } from './world/birds.js';
+import { buildBeachSets } from './world/beach.js';
 import { localDate, sunDirection, sunPosition, sunTimes } from './world/sun.js';
 import { conditions } from './world/weather.js';
 import { fetchLiveWeather } from './world/liveWeather.js';
@@ -91,6 +92,8 @@ export async function start(canvas, onProgress = () => {}) {
     const wind = env.windOverride ?? c.wind;
     if (wind !== waves.wind.speed || c.windFrom !== waves.wind.from) waves.setWind(wind, c.windFrom);
     shared.uMieScale.value = c.haze;
+    shared.uRain.value = c.rain;
+    shared.uCloudLayer.value.y = 1750 + 1600 * c.rain;         // shower clouds tower
     env.cloud = env.cloudOverride ?? c.cloud;
     shared.uSeaLevel.value = env.seaLevelOverride ?? c.seaLevel;
     Object.assign(status, { live: c.live, air: c.air, waveHeight: c.waveHeight, seaLevel: shared.uSeaLevel.value, wind, windFrom: c.windFrom, sunElevation: sun.elevation, sunrise: times.sunrise, sunset: times.sunset, sea: c.sea, airMax: c.airMax });
@@ -102,7 +105,7 @@ export async function start(canvas, onProgress = () => {}) {
   if (!places.some(p => p.id === 'overview')) places.unshift(OVERVIEW);
 
   // ---- the opaque scene: terrain, buildings and lighthouses, boats
-  const landmarks = new Landmarks(features, ground);
+  const landmarks = new Landmarks(features, ground, material => buildBeachSets(places, ground, material));
   const boats = new Boats(places, ground, waves, data.cpu.waveMap, rect, landmarks.material);
   const opaque = new THREE.Scene();
   opaque.matrixWorldAutoUpdate = false;
@@ -171,6 +174,7 @@ export async function start(canvas, onProgress = () => {}) {
     if (rig.step(dt)) saveHash();
     shared.uTime.value = clock.time;
     rig.update(R.size.width / R.size.height, R.reversed);
+    sky.overcast = Math.min(1, Math.max(0, (env.cloud - 0.45) / 0.4));
     sky.update();
     const view = rig.view();
     waves.update(clock.time, view.cam);

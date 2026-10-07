@@ -25,6 +25,7 @@ export const WEATHER = {
   clear: { label: 'Calm & clear', wind: 4, haze: 0.7, cloud: 0.04 },
   trade: { label: 'Trade winds', wind: null, haze: 1.0, cloud: 0.2 },
   strong: { label: 'Strong trades', wind: 12, haze: 1.5, cloud: 0.32 },
+  squall: { label: 'Squall', wind: 11, haze: 5, cloud: 0.85, rain: 1 },   // a passing shower: brief, grey, gusty
   live: { label: 'Live', wind: null, haze: 1.0, cloud: 0.2 },      // filled from the weather service
 };
 
@@ -37,11 +38,12 @@ export function conditions(preset, month, hours = 12, live = null) {
   const w = WEATHER[preset] || WEATHER.trade;
   const c = {
     wind: w.wind ?? CLIMATE.wind[month], windFrom: CLIMATE.windFrom[month], haze: w.haze, cloud: w.cloud,
-    sea: CLIMATE.sea[month], airMax: CLIMATE.airMax[month], seaLevel: CLIMATE.seaLevel[month] + tide(hours), live: false,
+    sea: CLIMATE.sea[month], airMax: CLIMATE.airMax[month], seaLevel: CLIMATE.seaLevel[month] + tide(hours), live: false, rain: w.rain || 0,
   };
   if (preset === 'live' && live) {
     // What it is doing there right now (cloud capped so the islands stay visible from the air).
-    Object.assign(c, { wind: live.wind, windFrom: live.windFrom, cloud: Math.min(live.cloud ?? c.cloud, 0.7), haze: 1 + 0.6 * (live.cloud ?? 0), live: true });
+    Object.assign(c, { wind: live.wind, windFrom: live.windFrom, cloud: Math.min(live.cloud ?? c.cloud, 0.7), haze: 1 + 0.6 * (live.cloud ?? 0), live: true,
+      rain: Math.min(1, (live.rain || 0) / 2) });
     if (live.sea !== null) c.sea = live.sea;
     if (live.air !== null) c.air = live.air;
     if (live.waveHeight !== null) c.waveHeight = live.waveHeight;

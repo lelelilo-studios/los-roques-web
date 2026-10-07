@@ -55,6 +55,7 @@ uniform sampler2D tWaterType; // 1 = lagoon water, 0 = clear ocean water
 uniform mat4 uViewProj;
 uniform float uCompareX;
 uniform vec4 uDebug;
+uniform float uRain;
 in vec3 vRel;
 in vec2 vGrid;
 in vec4 vWeights;
@@ -70,7 +71,7 @@ float lrFoamPattern(vec2 rel, float amount, float px) {
   float cells = lrFbm(p * 2.3 + uTime * 0.07) * 0.65 + lrNoise(p * 9.0 - uTime * 0.11) * 0.35;
   cells = smoothstep(0.3, 0.7, cells);                       // spread the noise out to roughly even odds
   float lace = smoothstep(0.85 - amount, 1.15 - amount, cells);
-  return mix(lace, amount, smoothstep(0.04, 0.3, px));
+  return mix(lace, amount, smoothstep(0.02, 0.14, px));
 }
 
 void main() {
@@ -130,7 +131,7 @@ void main() {
     if (i < 2) fold += vWeights[i] * textureGrad(tWaveA, uvw, gx / t, gy / t).w;
   }
   // Capillary ripples too small for the cascades, where there is wind on the water at all.
-  var += 2e-4 + 0.5 * (0.0006 + 0.0003 * uWind.z) * lrSaturate(vWeights.w * 200.0);
+  var += 2e-4 + 0.5 * (0.0006 + 0.0003 * uWind.z) * lrSaturate(vWeights.w * 200.0) + 0.012 * uRain;      // raindrops pock the surface
   vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
   float cosV = max(dot(n, V), 0.0), sigma = sqrt(max(var.x, var.y));
   float fresnel = lrMeanFresnel(cosV, sigma);
@@ -206,7 +207,7 @@ export class Water {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide,
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug'], { tRefr: { value: null } }),
+        'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

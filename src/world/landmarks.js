@@ -209,14 +209,17 @@ function buildPier(pier, material) {
 
 export class Landmarks {
   /** @param {object} features  parsed features.json  @param {Ground} ground */
-  constructor(features, ground) {
+  /** `extra(material)` may return more meshes (with userData.world) to manage alongside. */
+  constructor(features, ground, extraBuilder = null) {
     this.material = createObjectMaterial();
     this.group = new THREE.Group();
     const add = m => { if (m) this.group.add(m); };
+    const extra = extraBuilder ? [...extraBuilder(this.material).children] : [];
     for (const m of buildVillage(features.buildings || [], ground, this.material)) add(m);
     for (const l of features.lighthouses || []) if (l.pos) add(buildLighthouse(l, ground, this.material));
     for (const r of features.runways || []) if (r.a && r.b) add(buildRunway(r, ground, this.material));
     for (const p of features.piers || []) add(buildPier(p, this.material));
+    for (const m of extra) add(m);
   }
 
   /** Places everything relative to the camera; hides what is too far to see. `night`: 0..1. */

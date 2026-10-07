@@ -39,6 +39,20 @@ uniform sampler2D tCloud;      // rgb = cloud radiance, a = how much shows throu
 uniform float uCloudOn;
 uniform float uStarTurn;       // radians the star field has turned
 uniform vec3 uWind;
+uniform float uRain;
+
+// Falling rain as streaks in screen space: three sheets at different distances, slanted by the wind.
+float lrRainStreaks(vec2 uv) {
+  float a = 0.0;
+  for (int i = 0; i < 3; i++) {
+    float sc = 70.0 + 55.0 * float(i);
+    vec2 p = vec2((uv.x + uv.y * 0.12) * sc, uv.y * sc * 0.05 + uTime * (1.1 + 0.35 * float(i)));
+    vec2 cell = floor(p), f = fract(p);
+    float h = lrHash12(cell + 17.0 * float(i));
+    a += step(0.6, h) * smoothstep(0.07, 0.0, abs(f.x - 0.5 - (h - 0.8) * 0.9)) * smoothstep(0.0, 0.25, f.y) * smoothstep(1.0, 0.55, f.y);
+  }
+  return a;
+}
 uniform vec3 uCamRight, uCamUp, uCamFwd;
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
@@ -84,6 +98,12 @@ void main() {
   } else {
     col = lrAerial(scene.rgb, dir, lrViewZ(depth) * length(ray));
   }
+  if (uRain > 0.01) {
+    // Rain: a grey veil that thickens with distance, then the streaks nearest the eye.
+    vec3 grey = uSkyE / PI * 1.3;
+    float far = lrIsSky(depth) ? 30000.0 : lrViewZ(depth) * length(ray);
+    col = mix(col, grey, uRain * (1.0 - exp(-far / 2500.0)) * 0.9);
+  }
   if (uCloudOn > 0.5) {
     // The clouds were marched at reduced size with a different starting offset per pixel: a small tent blur
     // turns that grain into soft edges.
@@ -92,6 +112,7 @@ void main() {
                + texture(tCloud, vUv + t * vec2(-0.9, -0.4)) + texture(tCloud, vUv + t * vec2(0.4, -0.9)));
     col = col * cloud.a + cloud.rgb;
   }
+  if (uRain > 0.01) col += uRain * lrRainStreaks(vUv * vec2(uInvResolution.y / uInvResolution.x, 1.0)) * uSkyE / PI * 0.22;
   outColor = vec4(col, 1.0);
 }`;
 
@@ -144,7 +165,7 @@ export class FrameGraph {
     const { targets } = R;
     this.copy = new FullscreenPass(copyFragment, { tSrc: { value: targets.scene.texture } });
     this.composite = new FullscreenPass(compositeFragment, uniformsFor(
-      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind'],
+      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain'],
       { tScene: { value: targets.scene.texture }, tDepth: { value: targets.scene.depthTexture }, tCloud: { value: null }, uCloudOn: { value: 0 }, uStarTurn: { value: 0 } }));
     this.bloom = new Bloom(6);
     this.tonemap = new FullscreenPass(tonemapFragment, uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, 'uExposure'],
