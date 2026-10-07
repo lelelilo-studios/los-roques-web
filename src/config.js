@@ -12,7 +12,8 @@ export const params = {
   data: q.get('data') || 'real',            // fixture = the small synthetic atoll
   dev: q.has('dev'),
   validate: q.get('validate') === '1',
-  tubes: q.get('tubes') === '1',            // keep the figure of tubes as your body (do not load the real one)
+  tubes: q.get('tubes') === '1',
+  stamps: q.get('stamps') === '1',          // marks in the sand as stamps (no patch of real sand round you)            // keep the figure of tubes as your body (do not load the real one)
 };
 
 export const DATA_ROOT = 'data/';
@@ -23,10 +24,10 @@ export const WATER_IOR = 1.34;
 
 /** What each quality tier turns on. `maps` picks the texture set, `block` the clipmap block size in quads. */
 export const TIERS = {
-  low: { maps: 'lo', block: 16, maxPixels: 1.0e6, dprCap: 1.5, bicubicNormals: false, fps: 30, clouds: null, fp: { sand: 'plain', shadowMap: 0, shadowTaps: 4, life: 0 } },
-  medium: { maps: 'hi', block: 32, maxPixels: 2.1e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 64, steps: 28, lightSteps: 3, scale: 0.34, shadowEvery: 6 }, fp: { sand: 'plain', shadowMap: 1024, shadowTaps: 4, life: 1 } },
-  high: { maps: 'hi', block: 32, maxPixels: 3.7e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 48, lightSteps: 4, scale: 0.5, shadowEvery: 2 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2 } },
-  ultra: { maps: 'hi', block: 48, maxPixels: 8.3e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 80, lightSteps: 5, scale: 0.5, shadowEvery: 1 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2 } },
+  low: { maps: 'lo', block: 16, maxPixels: 1.0e6, dprCap: 1.5, bicubicNormals: false, fps: 30, clouds: null, fp: { sand: 'plain', shadowMap: 0, shadowTaps: 4, life: 0, patch: 0 } },
+  medium: { maps: 'hi', block: 32, maxPixels: 2.1e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 64, steps: 28, lightSteps: 3, scale: 0.34, shadowEvery: 6 }, fp: { sand: 'plain', shadowMap: 1024, shadowTaps: 4, life: 1, patch: 1024 } },
+  high: { maps: 'hi', block: 32, maxPixels: 3.7e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 48, lightSteps: 4, scale: 0.5, shadowEvery: 2 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2, patch: 2048 } },
+  ultra: { maps: 'hi', block: 48, maxPixels: 8.3e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 80, lightSteps: 5, scale: 0.5, shadowEvery: 1 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2, patch: 2048 } },
 };
 
 /** A browser drawing on the processor, with no graphics card behind it: its driver says so in its name. */

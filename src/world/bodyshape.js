@@ -334,6 +334,18 @@ export function footfall(stride) {
   return footAt(0, 0.72 + 0.33 * run * run * (3 - 2 * run), amount, Math.PI * (1.2 - 0.5 * run)).ahead - (PROP.back + 0.035 - 0.03) + 0.06;
 }
 
+/**
+ * How far your eyes are ahead of where they are when you stand upright looking level (metres). The solver
+ * works in a frame hung from the eye; in it, as you bend your head to look down, or squat, the body moves
+ * back from the eye. On the ground it is the other way about: the feet stay where they are and the head goes
+ * forward over them. The camera is moved forward by this much, so that they do (with real sand under them,
+ * feet that slid as you nodded ploughed it up).
+ */
+export function eyeAhead({ look = 0, eye, stride = 0 }) {
+  const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch;
+  return 0.1 * Math.max(0, -Math.sin(look)) + PROP.torso * Math.sin(lean) * 0.75 * (0.45 - 0.2 * crouch);
+}
+
 /** Two bones of lengths l1, l2 from `hip` reaching for `target`, the joint between them bending towards `bend`. Returns the joint. */
 export function reach(hip, target, l1, l2, bend) {
   const d = [target[0] - hip[0], target[1] - hip[1], target[2] - hip[2]];
@@ -388,7 +400,7 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
   const swing = 0.34 * s * (1 - 0.75 * crouch);              // (how far the arms swing)
   const steps = [-1, 1].map(side => footAt(phase + (side < 0 ? 0 : Math.PI), travel, amount, stance, (0.09 + 0.05 * run) * (1 - 0.6 * crouch)));
   const feet = [-1, 1].map((side, i) => {
-    const f = steps[i], ankle = [side * (PROP.hip + 0.01 + 0.05 * crouch), f.up - sink * f.planted, balance - 0.03 - f.ahead - 0.1 * crouch * amount];
+    const f = steps[i], ankle = [side * (PROP.hip + 0.025), f.up - sink * f.planted, balance - 0.03 - f.ahead - 0.1 * crouch * amount];
     ankle[1] += Math.max(-0.35, Math.min(0.45, slope[0] * -ankle[2] + slope[1] * ankle[0]));
     return ankle;
   });
@@ -404,7 +416,8 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
   for (const side of [-1, 1]) {
     const ph = phase + (side < 0 ? 0 : Math.PI), c = Math.cos(ph);
     const hipJ = [side * PROP.hip, hip[1], hip[2]], ankle = feet[side < 0 ? 0 : 1];
-    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * 0.12 * (1 + crouch), 0, -1]);
+    // (The feet stay as wide apart as they were when you squat: it is the knees that part.)
+    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * (0.12 + 0.45 * crouch), 0, -1]);
     const hem = [hipJ[0] + (knee[0] - hipJ[0]) * 0.55, hipJ[1] + (knee[1] - hipJ[1]) * 0.55, hipJ[2] + (knee[2] - hipJ[2]) * 0.55];
     // (Loose shorts: the leg of them stands a finger's breadth off the thigh.)
     t.tube(hipJ, hem, [0.088, 0.092], [0.08, 0.083], SHORTS);

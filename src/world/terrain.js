@@ -13,6 +13,7 @@ import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
 import { detailGLSL } from './detail.js';
 import { shadowGLSL } from './shadow.js';
+import { patchGLSL } from '../sim/patch.js';
 
 // Lumpy tops of tree crowns: 1 = average height. Used for the canopy's shape (vertices) and its shading (pixels).
 const crownsGLSL = /* glsl */`
@@ -72,6 +73,7 @@ uniform vec4 uTouchSeg[24];  // what your hand has drawn or pressed in the sand:
 uniform vec4 uTouchInfo[24]; // for each: when; kind (0 fingers drawn along, 1 a hand pressed flat, 2 a heap poured out, 3 a spot wetted, 4 the hollow a handful left);
                              // the hand's heading (1, 4) or the heap's height or how wet (2, 3); how far apart the furrows lie (0) or how wide (2, 3)
 uniform int uTouchCount;
+${patchGLSL}
 uniform vec4 uContact[8];    // the parts of you on or just over the ground: where (x, z relative to the camera; y absolute) and how big (m)
 uniform vec4 uLeg[3];        // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
@@ -398,6 +400,11 @@ void main() {
   vec3 V = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
   float openSky = 1.0, sunCut = 1.0, grainy = sand * (1.0 - smoothstep(0.012, 0.05, px));
   float lumpy = sand * trodden * (1.0 - smoothstep(0.12, 0.3, px));
+  // The sand round you as you have left it (sim/patch.js): where you have pressed it, it is smooth.
+  // (Only as far as a pixel is not much bigger than its texels, two millimetres: beyond that the stamps do.)
+  float pxLong = max(length(ddx), length(ddy));           // (a pixel's reach along the ground, the long way: at a low angle, much more than across)
+  float inPatch = pxLong < 0.008 && sand > 0.5 ? lrPatchIn(d) * (1.0 - smoothstep(0.0042, 0.008, pxLong)) : 0.0;
+  if (inPatch > 0.0) lumpy *= 1.0 - inPatch * min(lrPatch(d).a, 1.0);
   vec2 at = d;                                              // where on the sand this pixel lands, once its relief is counted
   float hollow = 0.0;                                       // how far down in a hollow of trodden ground (0..1)
   // Pools: on the flat, hard-trodden streets of the village the rain collects in broad shallow puddles, a step
@@ -455,14 +462,43 @@ void main() {
   if (!covered && uFootCount + uTouchCount > 0 && sand > 0.5 && px < 0.03) {
     // Your own footprints.
     float soft = 1.0 - wetness, since = beach && sw.age < 900.0 ? uTime - sw.age : -1e9, e = 0.004;
-    float h0 = lrMarks(d, soft, since);
-    vec2 slope = vec2(lrMarks(d + vec2(e, 0.0), soft, since), lrMarks(d + vec2(0.0, e), soft, since)) - h0;
+    // (Beyond the patch of real sand round you, prints are the stamps they always were.)
+    float h0 = lrMarks(d, soft, since) * (1.0 - inPatch);
+    vec2 slope = (vec2(lrMarks(d + vec2(e, 0.0), soft, since), lrMarks(d + vec2(0.0, e), soft, since)) * (1.0 - inPatch) - h0);
     if (h0 != 0.0 || slope != vec2(0.0) || lrHandDamp > 0.0) {
       n = normalize(vec3(n.x - slope.x / e, n.y, n.z - slope.y / e));
       openSky *= 1.0 + 16.0 * min(h0, 0.0);                 // (the bottom of a print 2 cm deep sees two thirds of the sky)
       albedo *= 1.0 + 4.0 * min(h0, 0.0) * soft;            // pressed sand is a shade darker
-      albedo *= 1.0 - 0.42 * max(lrFootDamp, lrHandDamp) * soft;       // and darker still where a wet foot, or water poured from your hand, has left it damp
+      albedo *= 1.0 - 0.42 * max(lrFootDamp, lrHandDamp) * soft * (1.0 - inPatch);       // and darker still where a wet foot, or water poured from your hand, has left it damp
     }
+  }
+  if (inPatch > 0.0) {
+    // The eye sees the floor of a hollow further along its line of sight, the top of a heap nearer.
+    float texel = uPatch.z / float(textureSize(tPatch, 0).x), e2 = 1.5 * texel;
+    vec2 lean = V.xz / max(V.y, 0.3), p = d;
+    for (int i = 0; i < 3; i++) p = d + lean * lrPatchHeight(p) * inPatch;
+    vec4 P = lrPatch(p);
+    float h = lrPatchHeight(p);
+    vec2 grad = vec2(lrPatchHeight(p + vec2(e2, 0.0)) - lrPatchHeight(p - vec2(e2, 0.0)), lrPatchHeight(p + vec2(0.0, e2)) - lrPatchHeight(p - vec2(0.0, e2))) / (2.0 * e2) * inPatch;
+    n = normalize(vec3(n.x - grad.x, n.y, n.z - grad.y));
+    // Its own shadows: a rim shades the print beside it, a heap its far side.
+    if (uSunDir.y > 0.02) {
+      vec2 s = normalize(uSunDir.xz + 1e-5);
+      float rise = uSunDir.y / max(length(uSunDir.xz), 1e-3), lit = 1.0;
+      for (int i = 1; i <= 6; i++) {
+        float t = 0.0035 * float(i) * (1.0 + 0.25 * float(i));
+        lit = min(lit, 1.0 - lrSaturate((lrPatchHeight(p + s * t) - h - rise * t) / (0.25 * rise * t + 0.0006)));
+      }
+      sunCut *= mix(1.0, lit, inPatch);
+    }
+    // A hollow sees less of the sky than the open beach; the top of a heap, all of it.
+    float round_ = 0.25 * (lrPatchHeight(p + vec2(0.012, 0.0)) + lrPatchHeight(p - vec2(0.012, 0.0)) + lrPatchHeight(p + vec2(0.0, 0.012)) + lrPatchHeight(p - vec2(0.0, 0.012)));
+    openSky *= mix(1.0, clamp(1.0 + 22.0 * (h - round_), 0.45, 1.1), inPatch);
+    // Damp sand is darker; pressed sand a shade darker than loose; sand just turned over, paler.
+    float dry = 1.0 - wetness;
+    float flat_ = min(P.a, 1.0);
+    albedo *= 1.0 - inPatch * dry * (0.4 * P.g + 0.07 * flat_);
+    albedo *= 1.0 + 0.05 * inPatch * dry * (1.0 - flat_) * smoothstep(0.001, 0.006, abs(h));
   }
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);
   // Shadows of things. On the seabed the light came in through the surface up-sun of here: look there.
@@ -570,7 +606,7 @@ export class Terrain {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg', ...CHUNK_UNIFORMS.touch]),
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg', ...CHUNK_UNIFORMS.touch, ...CHUNK_UNIFORMS.patch]),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

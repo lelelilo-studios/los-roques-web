@@ -20,6 +20,8 @@ export const shared = {
   uTouchSeg: { value: Array.from({ length: 24 }, () => new THREE.Vector4()) }, uTouchInfo: { value: Array.from({ length: 24 }, () => new THREE.Vector4(-1e9, 0, 0, 0)) }, uTouchCount: { value: 0 },
   // The parts of you that rest on the ground or hang just over it (heels, balls of the feet, hands, knees): where each is (x, z relative to the camera; y absolute) and how big (m; 0 = none).
   uContact: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
+  // The sand round you as it has been pressed, dug and heaped (sim/patch.js): the texture; the window's middle (wrapped to 64 m), its length (m), 1 = there is one.
+  tPatch: { value: null }, uPatch: { value: new THREE.Vector4(0, 0, 4, 0) },
   uRing: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -1e9, 0)) },     // rings you send out wading: x, z (wrapped to 64 m), time, strength
   tShadow: { value: null }, uShadowC: { value: new THREE.Vector3() }, uShadowR: { value: new THREE.Vector3(1, 0, 0) }, uShadowU: { value: new THREE.Vector3(0, 0, 1) },
   uShadowP: { value: new THREE.Vector4(1, 1, 0, 0) },
@@ -90,6 +92,7 @@ export const CHUNK_UNIFORMS = {
   detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
   rings: ['uRing', 'uLeg'],
   touch: ['uTouchSeg', 'uTouchInfo', 'uTouchCount', 'uContact'],
+  patch: ['tPatch', 'uPatch'],
   shadow: ['tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP', 'tShadowB', 'uShadowB', 'uShadowBP'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
   atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa', 'tEnv'],

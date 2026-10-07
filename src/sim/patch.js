@@ -1,0 +1,252 @@
+// The sand round you, as sand: a square of beach four metres across that keeps what is done to it. Your feet,
+// hands and knees press into it exactly as they are shaped; in dry sand what they push aside wells up round
+// them and slumps to the slope dry sand rests at, while damp sand packs and holds an edge; what is taken out
+// leaves a hollow and what is poured on builds a heap of just that much; the sea, wherever it runs over the
+// patch, planes it smooth again.
+//
+// It is a texture anchored to the world: a texel belongs to a place, (x, z) taken modulo the patch's length L
+// (which divides the 64 m the detail coordinates wrap in), so nothing is copied as you walk; the square of it
+// that is in use is centred on you, and a texel is wiped as it leaves that square by the far side.
+//   r  height the sand has gained or lost here (m)        g  dampness added (wet feet, water poured), 0..1
+//   b  sand in transit: pushed out from under you and not yet settled (m)      a  pressed smooth, 0..1; 2 while your skin is on it
+//
+// Every frame: (1) your body is drawn from below into a small map of the lowest skin over each point;
+// (2) one pass over the patch moves it on (transit, press, give and take, slump, the sea);
+// (3) the terrain shader reads it (lr_patch below) for the shape, the shading and the colour of the sand.
+import * as THREE from 'three';
+import { FullscreenPass } from '../core/framegraph.js';
+import { shared } from '../core/uniforms.js';
+import { skinningGLSL } from '../world/figure.js';
+
+export const PATCH_LENGTH = 4;                     // metres across (64 / 16)
+const GRID = 13, EVENTS = 4;
+
+const simFragment = /* glsl */`
+precision highp float;
+uniform sampler2D tPrev;
+uniform sampler2D tTool;      // the lowest skin over each point of the window, above uBase (m); 1 where there is none
+uniform sampler2D tGround;    // over the window: r = the ground above uBase (m), g = sand the sea keeps wet (0..1), b = depth of water over it now (m)
+uniform vec2 uCentre;         // where the window's middle is (detail coordinates)
+uniform float uL, uN, uDt, uFeetWet, uStride;
+uniform vec4 uDrop[${EVENTS}];        // sand arriving (or taken): where (detail coordinates), over what radius (m), how fast at its middle (m/s)
+uniform vec4 uDropWet[${EVENTS}];     // x: dampness arriving per second
+in vec2 vUv;
+layout(location = 0) out vec4 outColor;
+// (The steepest slope sand stands at between two neighbours: 33 degrees dry, nearly a wall damp, almost flat under water.)
+float talus(float wet, float under) { return mix(mix(0.65, 3.5, smoothstep(0.15, 0.6, wet)), 0.18, under); }
+void main() {
+  vec2 d = vUv * uL, q = mod(d - uCentre + 0.5 * uL, uL) - 0.5 * uL;
+  float cell = uL / uN, e = 1.0 / uN;
+  // Leaving the window: this texel will next be somewhere else. Clean sand.
+  if (max(abs(q.x), abs(q.y)) > 0.5 * uL - 4.0 * cell) { outColor = vec4(0.0); return; }
+  vec4 c = texture(tPrev, vUv);
+  vec3 g = texture(tGround, q / uL + 0.5).rgb;
+  float under = smoothstep(0.003, 0.012, g.b), wet = max(g.g, c.g), h = c.r, damp = c.g, pressed = min(c.a, 1.0);
+
+  // Slumping: sand runs to each lower neighbour by a part of what the slope between them is too steep by.
+  // (Not into or out of where your body rests on it: skin holds the wall of its own print up. Without this,
+  // sand ran in under a foot, was pressed away, and more ran in: the beach round a standing foot sank.)
+  float tool = texture(tTool, q / uL + 0.5).r, give = 0.0;
+  // (Whether skin was on a neighbour is in the patch itself, from the frame before: no need to look the skin up again.)
+  bool held = tool < g.r + h + 5e-4 || c.a > 1.5;
+  // (Eight neighbours, the diagonal ones further off: with four, a heap came out a pyramid.)
+  vec2 at[8] = vec2[8](vec2(e, 0.0), vec2(-e, 0.0), vec2(0.0, e), vec2(0.0, -e), vec2(e, e), vec2(-e, e), vec2(e, -e), vec2(-e, -e));
+  for (int i = 0; i < 8; i++) {
+    vec4 nb = texture(tPrev, vUv + at[i]);
+    if (held || nb.a > 1.5) continue;
+    float dh = h - nb.r, most = talus(max(g.g, 0.5 * (c.g + nb.g)), under) * cell * (i < 4 ? 1.0 : 1.4142);
+    give += sign(dh) * max(abs(dh) - most, 0.0) * (i < 4 ? 1.0 : 0.7071);
+  }
+  h -= 0.16 * give;
+
+  // What your body has pushed out from under itself travels, a centimetre a frame, until there is room for it.
+  // (A different stride every frame: with one stride the sand that came back lay in rows that far apart.)
+  float stride = uStride * e;
+  float moving = 0.25 * (texture(tPrev, vUv + vec2(stride, 0.0)).b + texture(tPrev, vUv - vec2(stride, 0.0)).b + texture(tPrev, vUv + vec2(0.0, stride)).b + texture(tPrev, vUv - vec2(0.0, stride)).b);
+
+  // The sea over it: the sheet planes the sand flat and leaves it wet.
+  if (under > 0.0) {
+    float k = 1.0 - exp(-uDt * 1.6 * under);
+    h -= h * k; pressed -= pressed * k; damp = max(damp, under);
+  }
+
+  // What arrives and what is taken.
+  for (int i = 0; i < ${EVENTS}; i++) {
+    if (uDrop[i].z <= 0.0) continue;
+    vec2 o = mod(d - uDrop[i].xy + 0.5 * uL, uL) - 0.5 * uL;
+    float k = exp(-2.0 * dot(o, o) / (uDrop[i].z * uDrop[i].z));
+    h += uDrop[i].w * uDt * k;
+    damp += uDropWet[i].x * uDt * k;
+    if (uDrop[i].w > 0.0) pressed *= 1.0 - k * min(1.0, uDt * 30.0);             // (fresh sand lies loose)
+  }
+
+  // Your body. Where skin is lower than the sand, the sand is where the skin is: of what it displaced, damp
+  // sand packs nearly all, dry sand sends a third aside. Where there is room, sand in transit settles.
+  float surface = g.r + h;
+  if (tool < surface) {
+    float push = min(surface - tool, h + 0.07);            // (never more than 7 cm into the beach)
+    h -= push; moving += push * mix(0.16, 0.04, smoothstep(0.15, 0.6, wet));
+    pressed = 2.0; damp = max(damp, uFeetWet * (1.0 - step(0.5, g.g)));          // (2: skin is on it now)
+  } else {
+    float room = tool - surface, settle = min(moving, room > 0.5 ? moving : 0.5 * room);
+    h += settle; moving -= settle;
+    pressed *= 1.0 - min(1.0, settle * 400.0);
+  }
+  // (Skin resting on it, to within half a millimetre: marked, so that nothing slumps in under it next frame.)
+  if (tool < g.r + h + 5e-4) pressed = 2.0;
+  // (Dampness that was added dries; what the sea keeps wet is not in this number.)
+  damp *= exp(-uDt / 40.0);
+  outColor = vec4(clamp(h, -0.08, 0.2), clamp(damp, 0.0, 1.0), max(moving, 0.0), clamp(pressed, 0.0, 2.0));
+}`;
+
+const toolVertex = /* glsl */`
+${skinningGLSL}
+uniform vec3 uToolC;      // the window's middle relative to the camera (x, z), and the base height (y)
+uniform float uToolHalf;
+out float vAbove;
+void main() {
+  vec4 wp = modelMatrix * (lrSkin() * vec4(position, 1.0));
+  vAbove = wp.y - uToolC.y;
+  gl_Position = vec4((wp.x - uToolC.x) / uToolHalf, (wp.z - uToolC.z) / uToolHalf, 0.0, 1.0);
+}`;
+const toolFragment = /* glsl */`
+precision highp float;
+in float vAbove;
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(vAbove, 0.0, 0.0, 1.0); }`;
+
+/**
+ * GLSL for the terrain: the patch at a place. (Needs lr_common.) lrPatchIn(d) is how much the patch has to say
+ * at detail coordinates d (1 inside the window, fading to 0 at its edge); lrPatch(d) its four numbers there.
+ */
+export const patchGLSL = /* glsl */`
+uniform sampler2D tPatch;
+uniform vec4 uPatch;      // the window's middle (detail coordinates), its length (m), 1 = there is a patch
+float lrPatchIn(vec2 d) {
+  if (uPatch.w < 0.5) return 0.0;
+  vec2 q = mod(d - uPatch.xy + 0.5 * uPatch.z, uPatch.z) - 0.5 * uPatch.z;
+  return 1.0 - smoothstep(0.42 * uPatch.z, 0.47 * uPatch.z, max(abs(q.x), abs(q.y)));
+}
+vec4 lrPatch(vec2 d) { return textureLod(tPatch, d / uPatch.z, 0.0); }
+// The height of the sand as it is to be drawn. Where your skin is in it now, the sand lies against the skin at
+// the level of the beach: the hollow under a foot is full of foot, and is seen only when the foot has gone.
+float lrPatchHeight(vec2 d) { vec4 t = lrPatch(d); return t.r * (1.0 - clamp(4.0 * (t.a - 1.0), 0.0, 1.0)); }
+`;
+
+export class SandPatch {
+  /** @param {THREE.WebGLRenderer} renderer  @param {number} size  texels across (0 = none) */
+  constructor(renderer, size = 2048) {
+    this.renderer = renderer; this.size = size; this.L = PATCH_LENGTH;
+    const target = () => new THREE.WebGLRenderTarget(size, size, { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, generateMipmaps: false, colorSpace: THREE.NoColorSpace });
+    this.targets = [target(), target()]; this.now = 0;
+    this.tool = new THREE.WebGLRenderTarget(size, size, { type: THREE.HalfFloatType, format: THREE.RedFormat, depthBuffer: false, stencilBuffer: false,
+      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false, colorSpace: THREE.NoColorSpace });
+    this.gridData = new Uint16Array(GRID * GRID * 4);
+    this.grid = new THREE.DataTexture(this.gridData, GRID, GRID, THREE.RGBAFormat, THREE.HalfFloatType);
+    Object.assign(this.grid, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
+    this.events = []; this.falling = [];
+    this.pass = new FullscreenPass(simFragment, {
+      tPrev: { value: null }, tTool: { value: this.tool.texture }, tGround: { value: this.grid }, uCentre: { value: new THREE.Vector2() }, uL: { value: this.L }, uN: { value: size },
+      uDt: { value: 0 }, uFeetWet: { value: 0 }, uStride: { value: 5 }, uDrop: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) }, uDropWet: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) },
+    });
+    this.toolUniforms = { uToolC: { value: new THREE.Vector3() }, uToolHalf: { value: this.L / 2 } };
+    this.clearTool = new Float32Array([1, 0, 0, 0]); this.clearPatch = new Float32Array([0, 0, 0, 0]);
+    this.reset();
+  }
+
+  /** What draws a skinned mesh into the tool map (it needs the mesh's bone texture). */
+  toolMaterial(tBones) {
+    return new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: toolVertex, fragmentShader: toolFragment, side: THREE.DoubleSide, depthTest: false, depthWrite: false,
+      blending: THREE.CustomBlending, blendEquation: THREE.MinEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+      uniforms: { tBones, ...this.toolUniforms },
+    });
+  }
+
+  /** Clean sand everywhere (you have been put down somewhere else). */
+  reset() {
+    const { renderer } = this, previous = renderer.getRenderTarget();
+    for (const t of this.targets) { renderer.setRenderTarget(t); renderer.getContext().clearBufferfv(renderer.getContext().COLOR, 0, this.clearPatch); }
+    renderer.setRenderTarget(previous);
+    this.events.length = 0; this.falling.length = 0;
+    shared.uPatch.value.w = 0;
+  }
+
+  /**
+   * Sand arriving at (x, z) (world; or taken, with a negative rate) for `seconds`: over radius r (m), `rate`
+   * metres a second at the middle; `wet` = dampness arriving per second.
+   */
+  drop(x, z, r, rate, seconds, wet = 0) {
+    if (this.events.length >= EVENTS) this.events.shift();
+    this.events.push({ x, z, r, rate, wet, left: seconds });
+  }
+  /**
+   * Sand (cubic metres) and dampness (units) let fall towards (x, z), to land `fall` seconds from now. Whatever
+   * lands in the same frame is set down together.
+   */
+  pour(x, z, r, volume, wet, fall, time) { this.falling.push({ x, z, r, volume, wet, at: time + fall }); }
+  /** `volume` cubic metres of sand set down round (x, z) over `seconds` (a negative volume: dug out). */
+  move(x, z, r, volume, seconds, wet = 0) { this.drop(x, z, r, volume / (Math.PI * r * r / 2) / seconds, seconds, wet); }
+
+  /**
+   * One frame.
+   * @param {number} dt
+   * @param {object} c  x, z: where you are (world); cam: the camera (x, z); base: the height of the ground under
+   *   you; meshes: [{ mesh, material }] to draw into the tool map; sample(x, z) -> [ground height, wet 0..1,
+   *   depth of water now]; feetWet 0..1; time (s)
+   */
+  update(dt, c) {
+    const { renderer, L } = this, wrap = v => ((v % 64) + 64) % 64, half = THREE.DataUtils.toHalfFloat;
+    shared.uPatch.value.set(wrap(c.x), wrap(c.z), L, 1); shared.tPatch.value = this.targets[this.now].texture;
+    if (!(dt > 0)) return;
+    const previous = renderer.getRenderTarget();
+    // (1) The lowest skin over each point.
+    this.toolUniforms.uToolC.value.set(c.x - c.cam.x, c.base, c.z - c.cam.z);
+    renderer.setRenderTarget(this.tool);
+    renderer.getContext().clearBufferfv(renderer.getContext().COLOR, 0, this.clearTool);
+    const auto = renderer.autoClear;
+    renderer.autoClear = false;
+    for (const { mesh, material } of c.meshes) {
+      const own = mesh.material, parent = mesh.parent, seen = mesh.visible;
+      if (parent) parent.remove(mesh);
+      mesh.material = material; mesh.visible = true;
+      renderer.render(mesh, this.camera ??= new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1));
+      mesh.material = own; mesh.visible = seen;
+      if (parent) parent.add(mesh);
+    }
+    renderer.autoClear = auto;
+    // The ground, the wet and the water over the window.
+    for (let j = 0, o = 0; j < GRID; j++) for (let i = 0; i < GRID; i++, o += 4) {
+      const s = c.sample(c.x + ((i + 0.5) / GRID - 0.5) * L, c.z + ((j + 0.5) / GRID - 0.5) * L);
+      this.gridData[o] = half(s[0] - c.base); this.gridData[o + 1] = half(s[1]); this.gridData[o + 2] = half(Math.max(s[2], 0)); this.gridData[o + 3] = half(1);
+    }
+    this.grid.needsUpdate = true;
+    // What was let fall and lands now: one arrival.
+    if (this.falling.length) {
+      let v = 0, w = 0, x = 0, z = 0, r = 0, n = 0;
+      this.falling = this.falling.filter(f => { if (f.at > c.time) return true; v += f.volume; w += f.wet; x += f.x; z += f.z; r += f.r; n++; return false; });
+      if (n) { const rr = r / n; this.drop(x / n, z / n, rr, v / (Math.PI * rr * rr / 2) / dt, dt * 0.5, w / dt); }       // (for this frame only)
+    }
+    // (2) The patch moves on.
+    const u = this.pass.material.uniforms;
+    u.tPrev.value = this.targets[this.now].texture; u.uCentre.value.set(wrap(c.x), wrap(c.z)); u.uDt.value = Math.min(dt, 0.05); u.uFeetWet.value = c.feetWet || 0; u.uStride.value = [3, 7, 2, 5, 8, 4][this.tick = ((this.tick || 0) + 1) % 6];
+    for (let i = 0; i < EVENTS; i++) {
+      const e = this.events[i];
+      if (e) { u.uDrop.value[i].set(wrap(e.x), wrap(e.z), e.r, e.rate); u.uDropWet.value[i].set(e.wet, 0, 0, 0); e.left -= dt; } else u.uDrop.value[i].set(0, 0, 0, 0);
+    }
+    this.events = this.events.filter(e => e.left > 0);
+    this.now = 1 - this.now;
+    this.pass.render(renderer, this.targets[this.now]);
+    shared.tPatch.value = this.targets[this.now].texture;
+    renderer.setRenderTarget(previous);
+  }
+
+  /** For tests: the patch's four numbers at a place (world x, z), read back from the GPU. */
+  read(x, z) {
+    const wrap = v => ((v % this.L) + this.L) % this.L, px = Math.min(this.size - 1, Math.floor(wrap(x) / this.L * this.size)), py = Math.min(this.size - 1, Math.floor(wrap(z) / this.L * this.size));
+    const out = new Uint16Array(4);
+    this.renderer.readRenderTargetPixels(this.targets[this.now], px, py, 1, 1, out);
+    return Array.from(out, THREE.DataUtils.fromHalfFloat);
+  }
+}

@@ -91,7 +91,8 @@ export class CameraRig {
       // First person: the walker owns the eye. The ground detail is centred a few metres ahead of the feet.
       // (A heel coming down drops the eye half a centimetre and nods it a third of a degree, for an instant.)
       const w = this.walker, jolt = (w.thud || 0) * (w.bobAmount ?? 1), look = w.look - 0.006 * jolt, cl = Math.cos(look);
-      eye.x = w.x + cy * w.sway; eye.z = w.z + sy * w.sway; eye.y = w.eyeY + w.bob - 0.005 * jolt;
+      // (The head sways over each planted foot, and goes forward over the feet as you look down or squat.)
+      eye.x = w.x + cy * w.sway + sy * (w.ahead || 0); eye.z = w.z + sy * w.sway - cy * (w.ahead || 0); eye.y = w.eyeY + w.bob - 0.005 * jolt;
       this.target.x = w.x; this.target.z = w.z; this.target.y = eye.y;
       dirX = sy * cl; dirY = Math.sin(look); dirZ = -cy * cl;
       this.focus.x = w.x + sy * 6; this.focus.z = w.z - cy * 6;

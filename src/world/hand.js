@@ -21,6 +21,8 @@ const STUFF = {
   wet: { rate: 0.2, things: 260, size: [0.003, 0.0065], left: 0.12 },
   water: { rate: 0.42, things: 260, size: [0.0022, 0.0042], left: 0 },
 };
+/** A handful of sand: sixty cubic centimetres. */
+const HANDFUL = 6e-5;
 // The streams: one from each of the three gaps between the four fingers, each a ribbon of so many samples.
 const GAPS = 3, SAMPLES = 64, GRAVITY = 9.8;
 
@@ -127,8 +129,9 @@ export class Hand {
    * @param {(x: number, z: number, when: number, strength: number) => void} o.ring  a ring on the water
    * @param {number} o.shadowTaps
    */
-  constructor({ spray, sound, ring, shadowTaps = 8 }) {
-    Object.assign(this, { spray, sound, ring });
+  constructor({ spray, sound, ring, shadowTaps = 8, patch = null }) {
+    /** `patch`: () => the sand round you as real sand (sim/patch.js), or null: then what the hand does is drawn as stamps. */
+    Object.assign(this, { spray, sound, ring, patch: patch || (() => null) });
     // What is in the palm: a low dome, sized and laid in the hand every frame.
     const rings = 10, sides = 24, pos = [], nor = [], idx = [];
     for (let j = 0; j <= rings; j++) for (let i = 0; i <= sides; i++) {
@@ -291,6 +294,8 @@ export class Hand {
         this.sound.touch(this.kind, 'take');
         if (sandy && this.mark >= 0 && info[this.mark].y > 0.5) { info[this.mark].set(time, 4, c.yaw, this.kind === 'dry' ? 1 : 0.7); this.mark = -1; }
         if (!sandy) this.ring(tip[0], tip[2], time, 0.3);
+        // (Out of real sand: the handful's volume, from under the palm and the fingers.)
+        if (sandy) { const w = c.world(touching.wrist); this.patch()?.move((tip[0] + w[0]) / 2, (tip[2] + w[2]) / 2, 0.042, -HANDFUL * (this.kind === 'dry' ? 1 : 0.75), 0.12); }
       }
       if (this.speed > 0.06 && time - this.spoke > 0.13) { this.sound.touch(this.kind, 'drag', this.speed); this.spoke = time; }
       if (!sandy && this.speed > 0.12 && time - this.ringed > 0.28) { this.ring(tip[0], tip[2], time, 0.3); this.ringed = time; }
@@ -464,6 +469,7 @@ export class Hand {
       // Sand on sand: a heap grows under the hand, its sides as steep as sand stands; a new one when the hand has moved on.
       if (!this.heap || Math.hypot(p.K[0] - this.heap.x, p.K[2] - this.heap.z) > 0.04) this.heap = { x: p.K[0], z: p.K[2], held: 0, i: this.stamp(p.K[0], p.K[2], time, 2, 0, 0.01) };
       this.heap.held += gone;
+      this.patch()?.pour(p.K[0] - p.N[0] * 0.01, p.K[2] - p.N[2] * 0.01, 0.017, gone * HANDFUL * (this.kind === 'dry' ? 1 : 0.75), this.kind === 'wet' && !p.wetGround ? gone * 5 : 0, fall, time);
       const h = 0.03 * Math.cbrt(this.heap.held) * (this.kind === 'wet' ? 0.8 : 1);
       shared.uTouchInfo.value[this.heap.i].set(time, 2, h, 1.65 * h + 0.012);
       // (Wet sand on dry: the dry sand round the clots darkens with their water.)
@@ -477,6 +483,7 @@ export class Hand {
       if (!this.spot || Math.hypot(p.K[0] - this.spot.x, p.K[2] - this.spot.z) > 0.05) this.spot = { x: p.K[0], z: p.K[2], held: 0, i: this.stamp(p.K[0], p.K[2], time, 3, 0, 0.02) };
       this.spot.held += gone;
       shared.uTouchInfo.value[this.spot.i].set(time + fall, 3, Math.min(1, 0.4 + 2 * this.spot.held), 0.03 + 0.05 * Math.sqrt(this.spot.held));
+      this.patch()?.pour(p.K[0], p.K[2], 0.04, 0, gone * 7, fall, time);
     } else if (time - this.ringed > (water ? 0.16 : 0.3)) {
       // Into the sea: rings where the drops (or the grains) go in.
       this.ring(p.K[0] + (r() - 0.5) * 0.05, p.K[2] + (r() - 0.5) * 0.05, time + fall, water ? 0.2 : 0.1);

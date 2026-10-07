@@ -45,6 +45,7 @@ export class Walker {
     this.depth = 0; this.afloat = false;
     this.stride = 0;                                              // pace against an easy walk: 0 standing, 1 walking, about 2 running
     this.stroke = 0;                                              // phase of the swimming stroke, radians
+    this.ahead = 0;                                               // how far the eyes are ahead of the body's own line (looking down, squatting: bodyshape.js eyeAhead)
     this.sway = 0;                                                // the head's swing to the side of the planted foot, metres (to the right positive)
     this.roll = 0;                                                // and its lean over that foot, radians
     this.thud = 0;                                                // the jolt of a heel coming down, 1 fading to 0
