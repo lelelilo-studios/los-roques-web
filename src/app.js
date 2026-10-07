@@ -15,6 +15,7 @@ import { Terrain } from './world/terrain.js';
 import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
 import { Waves } from './world/waves.js';
+import { Detail } from './world/detail.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
@@ -65,6 +66,9 @@ export async function start(canvas, onProgress = () => {}) {
   const graph = new FrameGraph(R);
   const sky = new Sky(renderer, { syncReadback: params.freeze });
   const waves = new Waves(renderer);
+  const detail = new Detail(renderer);
+  shared.tDetail.value = detail.texture;
+  detail.means.forEach((m, i) => shared.uDetailMean.value[i].copy(m));
   const clouds = new Clouds(renderer, tier.clouds, rect);
   if (params.freeze) while (clouds.enabled && !clouds.bakeSome(64)) { /* tests want the clouds from the first frame */ }
   const clock = { time: 0, last: performance.now() };
@@ -121,6 +125,15 @@ export async function start(canvas, onProgress = () => {}) {
     const sea = shared.uSeaLevel.value;
     return sea + waves.heightAt(x, z, clock.time, boats.weightsAt(x, z, sea - ground.heightAt(x, z)), 3);
   };
+  // Your footprints: the last 24 paces on sand, left and right of the line walked.
+  let prints = 0;
+  const wrap64 = v => ((v % 64) + 64) % 64;
+  function stamp(step) {
+    if (step.depth > 0.03) return;
+    const side = step.side ? 0.085 : -0.085, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
+    shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side), wrap64(step.z + sy * side), step.yaw + (step.side ? 0.12 : -0.12), clock.time);
+    shared.uFootCount.value = Math.min(++prints, 24);
+  }
   const walker = new Walker({ ground, surfaceAt, blocked: buildingBlocker(features.buildings), rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
   rig.walker = walker;
@@ -229,7 +242,7 @@ export async function start(canvas, onProgress = () => {}) {
     rig.seaLevel = shared.uSeaLevel.value;
     if (rig.mode === 'walk') {
       const moved = walker.x + walker.z + walker.yaw;
-      walker.step(dt, walkInput ? walkInput.read() : NO_INPUT);
+      for (const step of walker.step(dt, walkInput ? walkInput.read() : NO_INPUT)) stamp(step);
       if (moved !== walker.x + walker.z + walker.yaw) saveHash();
     }
     shared.uUnderEye.value = rig.mode === 'walk' && walker.under ? 1 : 0;
@@ -307,12 +320,18 @@ export async function start(canvas, onProgress = () => {}) {
       // walk: a first-person pose (see app.setWalk), set at once; false leaves first person. After the
       // environment, because the pose depends on the sea level.
       if (s.walk !== undefined) { if (s.walk) app.setWalk(true, s.walk, true); else app.setWalk(false); }
+      // stroll: { seconds, input, turn (degrees), pitch }: walk on from the pose, then turn and look (to see the prints left).
+      if (s.stroll) {
+        api.walkFor(s.stroll.seconds, s.stroll.input || { fwd: 1 });
+        walker.yaw += (s.stroll.turn || 0) * Math.PI / 180;
+        if (s.stroll.pitch !== undefined) walker.look = s.stroll.pitch * Math.PI / 180;
+      }
       if (s.compare !== undefined) await app.setCompare(s.compare);
       syncPanel?.(status);
     },
     getState: () => ({ cam: rig.get(), mode: rig.mode, walk: { x: walker.x, z: walker.z, yaw: walker.yaw * 180 / Math.PI, look: walker.look * 180 / Math.PI, eye: walker.eyeY - shared.uSeaLevel.value, depth: walker.depth, diving: walker.diving, afloat: walker.afloat }, time: clock.time, env: { ...env }, status: { ...status } }),
     /** Advances first person by `seconds` with a fixed input ({ fwd, right, run, down, up }), in 1/60 s steps: for tests. */
-    walkFor(seconds, input = {}) { for (let t = 0; t < seconds; t += 1 / 60) { clock.time += 1 / 60; walker.step(1 / 60, { ...NO_INPUT, ...input }); } },
+    walkFor(seconds, input = {}) { for (let t = 0; t < seconds; t += 1 / 60) { clock.time += 1 / 60; for (const step of walker.step(1 / 60, { ...NO_INPUT, ...input })) stamp(step); } },
     flyTo: id => { const p = places.find(q => q.id === id); if (p) app.flyToPlace(p); return !!p; },
     /** Jumps straight to a place's camera shot (no flight). */
     goTo: id => { const p = places.find(q => q.id === id); if (p) { app.setWalk(false); rig.cancelFlight(); rig.set(shotFor(p)); } return !!p; },

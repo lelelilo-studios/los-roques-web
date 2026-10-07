@@ -65,6 +65,13 @@ float lrNoise(vec2 p) {
   vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
   return mix(mix(lrHash12(i), lrHash12(i + vec2(1.0, 0.0)), u.x), mix(lrHash12(i + vec2(0.0, 1.0)), lrHash12(i + vec2(1.0, 1.0)), u.x), u.y);
 }
+// The same noise repeating every 'period' cells: for patterns in detail coordinates, which wrap (use a
+// frequency f with 64 f whole, and period = 64 f, and nothing shows where the coordinates wrap).
+float lrNoiseTile(vec2 p, float period) {
+  vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(lrHash12(mod(i, period)), lrHash12(mod(i + vec2(1.0, 0.0), period)), u.x),
+             mix(lrHash12(mod(i + vec2(0.0, 1.0), period)), lrHash12(mod(i + vec2(1.0, 1.0), period)), u.x), u.y);
+}
 float lrFbm(vec2 p) {
   float s = 0.0, a = 0.5;
   for (int i = 0; i < 4; i++) { s += a * lrNoise(p); p = p * 2.03 + 17.7; a *= 0.5; }

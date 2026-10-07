@@ -162,6 +162,9 @@ void main() {
   }
   // Capillary ripples too small for the cascades, where there is wind on the water at all.
   var += 2e-4 + 0.5 * (0.0006 + 0.0003 * uWind.z) * lrSaturate(vWeights.w * 200.0) + 0.012 * uRain;      // raindrops pock the surface
+  // Water a finger deep running over sand is wrinkled by it (a film thinner than that is a mirror, and deeper
+  // water has its own waves).
+  var += 0.005 * smoothstep(0.0, 0.015, column) * (1.0 - smoothstep(0.06, 0.3, column));
   // On the beach face the sheet lies on the sand, and an advancing front stands up from it.
   if (aboveStill > 0.0) slope += lrSheetSlope(bedSlope, aboveStill, sw);
   vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));

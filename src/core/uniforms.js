@@ -11,6 +11,10 @@ export const shared = {
   uMapRect: { value: new THREE.Vector4(0, 0, 1, 1) },
   uMapTexels: { value: new THREE.Vector4(1, 1, 1, 1) },
   uMpp: { value: 11 },
+  tDetail: { value: null },
+  uDetailMean: { value: [new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5)] },
+  uFoot: { value: Array.from({ length: 24 }, () => new THREE.Vector4(0, 0, 0, -1e9)) },   // your footprints: x, z (wrapped to 64 m), heading, time made
+  uFootCount: { value: 0 },
   uCamTexel: { value: new THREE.Vector4() },
   uCamTexelShore: { value: new THREE.Vector4() },
   uLift: { value: new THREE.Vector2(2e-4, 0) },   // how far the sea's mesh rides above the beach face: per metre, per metre squared
@@ -68,6 +72,7 @@ export const CHUNK_UNIFORMS = {
   common: ['uCamXZ', 'uCamMod', 'uCamY', 'uMapRect', 'uSeaLevel', 'uTime', 'uInvEarthR', 'uSunDir', 'uSunE', 'uSkyE', 'uNearFar', 'uInvResolution'],
   geo: ['tHeight', 'tShore', 'uMapTexels', 'uMpp', 'uCamTexel', 'uCamTexelShore'],
   shore: ['uLift'],
+  detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
   atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa'],
   clouds: ['tCloudShape', 'tCloudDetail', 'uCloudLayer', 'uCloudWind'],
