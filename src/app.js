@@ -158,7 +158,7 @@ export async function start(canvas, onProgress = () => {}) {
   // Your own body: seen when you look down, and the caster of your shadow (the head only ever in the shadow).
   const body = new Body(createObjectMaterial(tier.fp.shadowTaps, true), true);
   // How wet you are: `high` is as far up as the sea has stood round you lately (drying), `now` the water you stand in.
-  const soak = { high: 0, amount: 0, now: 0, nowAmount: 0 };
+  const soak = { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 };
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
   const shadows = new Shadows(renderer, tier.fp.shadowMap, R.reversed);
   const statue = buildStatue(places, ground, landmarks.material), turtle = new Turtle(places, ground, landmarks.material);
@@ -227,6 +227,8 @@ export async function start(canvas, onProgress = () => {}) {
   const wrap64 = v => ((v % 64) + 64) % 64;
   let rings = 0;
   function stamp(step) {
+    // (Wet feet pick up sand at every step on the dry beach; the sea washes it off again.)
+    if (step.depth < 0.02 && !onDeck(step.x, step.z) && Math.max(soak.amount * (soak.high > 0.02 ? 1 : 0), soak.nowAmount) > 0.2) soak.sand = Math.min(1, soak.sand + 0.3);
     // (On a pier: the knock of boards, and no prints in the sand below.)
     if (onDeck(step.x, step.z) && step.depth < 0.03) { sound.step({ side: step.side, surface: 'wood' }); return; }
     const above = ground.heightAt(step.x, step.z) - shared.uSeaLevel.value;
@@ -465,7 +467,7 @@ export async function start(canvas, onProgress = () => {}) {
       const fx = Math.sin(walker.yaw), fz = -Math.cos(walker.yaw), g = (dx, dz) => footing.heightAt(walker.x + dx, walker.z + dz);
       const slope = [(g(fx * 0.3, fz * 0.3) - g(-fx * 0.3, -fz * 0.3)) / 0.6, (g(-fz * 0.2, fx * 0.2) - g(fz * 0.2, -fx * 0.2)) / 0.4];
       const wade = Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4));
-      body.pose({ phase: walker.phase, stride: walker.stride, eye: walker.body, look: walker.look, slope, wade }); body.place(walker.eyeY - walker.body, walker.yaw);
+      body.pose({ phase: walker.phase, stride: walker.stride, eye: walker.body, look: walker.look, slope, wade, breath: Math.sin(clock.time * 1.45) }); body.place(walker.eyeY - walker.body, walker.yaw);
     }
     else if (walking) {
       const under = walker.diving ? 1 : 0;
@@ -478,6 +480,8 @@ export async function start(canvas, onProgress = () => {}) {
       if (reach >= soak.high || soak.amount < 0.02) { soak.high = reach; soak.amount = reach > 0 ? 1 : 0; } else if (dt > 0) soak.amount = Math.max(0, soak.amount - dt / 180);
       if (reach > 0) { soak.now = reach; soak.nowAmount = 1; } else if (dt > 0) soak.nowAmount = Math.max(0, soak.nowAmount - dt / 180);
       body.mesh.material.uniforms.uBodyWet.value.set(feet + soak.high, soak.amount, feet + soak.now, soak.nowAmount);
+      if (dt > 0) soak.sand = Math.max(0, soak.sand - dt * (walker.depth > 0.03 || !standing ? 2.5 : 1 / 300));       // washed off in the sea; otherwise it dries and drops off in minutes
+      body.mesh.material.uniforms.uBodySand.value = standing ? soak.sand : 0;
     }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
@@ -595,7 +599,7 @@ export async function start(canvas, onProgress = () => {}) {
       // stroll: { seconds, input, turn (degrees), pitch }: walk on from the pose, then turn and look (to see the prints left).
       if (s.stroke !== undefined) walker.stroke = s.stroke * 2 * Math.PI;      // (place in the swimming stroke, 0..1)
       // soaked: { to: metres above your feet, amount: 0..1 }: as if you had just waded that deep (for pictures).
-      if (s.soaked !== undefined) Object.assign(soak, s.soaked ? { high: s.soaked.to, amount: s.soaked.amount ?? 1 } : { high: 0, amount: 0, now: 0, nowAmount: 0 });
+      if (s.soaked !== undefined) Object.assign(soak, s.soaked ? { high: s.soaked.to, amount: s.soaked.amount ?? 1, sand: s.soaked.sand ?? 0 } : { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 });
       if (s.stroll) {
         api.walkFor(s.stroll.seconds, s.stroll.input || { fwd: 1 });
         walker.yaw += (s.stroll.turn || 0) * Math.PI / 180;

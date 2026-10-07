@@ -9,12 +9,13 @@
 const SIDES = 10, BACK = 0.09;
 const COS = Float64Array.from({ length: SIDES + 1 }, (_, k) => Math.cos(k / SIDES * 2 * Math.PI)), SIN = Float64Array.from({ length: SIDES + 1 }, (_, k) => Math.sin(k / SIDES * 2 * Math.PI));
 const RING = new Float64Array((SIDES + 1) * 12);
-const SKIN0 = [0.5, 0.36, 0.27], SHIRT0 = [0.56, 0.6, 0.6], SHORTS0 = [0.06, 0.14, 0.24];
+const SKIN0 = [0.5, 0.36, 0.27], SHIRT0 = [0.56, 0.6, 0.6], SHORTS0 = [0.06, 0.14, 0.24], NAIL = [0.66, 0.5, 0.44];
+const shade = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
 export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, SHOULDER = 0.175;
 /** Vertices the body below the neck and the head can take (see poseBody). */
 export const BODY_VERTICES = 6 * SIDES * 36 + 3 * SIDES * 12, HEAD_VERTICES = 6 * SIDES * 5 + 3 * SIDES;
 /** The same with `detail` (your own body: hands with fingers and thumbs, feet with toes). */
-export const BODY_VERTICES_DETAIL = BODY_VERTICES + 1500;
+export const BODY_VERTICES_DETAIL = BODY_VERTICES + 2100;
 const LIMB = new Float64Array(11 * 12);
 const add = (p, a, ka, b = null, kb = 0, c = null, kc = 0) => [p[0] + a[0] * ka + (b ? b[0] * kb : 0) + (c ? c[0] * kc : 0), p[1] + a[1] * ka + (b ? b[1] * kb : 0) + (c ? c[1] * kc : 0), p[2] + a[2] * ka + (b ? b[2] * kb : 0) + (c ? c[2] * kc : 0)];
 const unit = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -123,6 +124,11 @@ export class Tubes {
     }
     this.n = j / 3;
   }
+  /** A nail: a small plate on the last joint of a finger or toe, from `a` to `b` along it, `w` wide, facing `out`. */
+  nail(a, b, across, w, out) {
+    const A = add(a, across, -w), B = add(a, across, w), C = add(b, across, w * 0.8), D = add(b, across, -w * 0.8);
+    for (const q of [A, B, C, A, C, D]) this.vertex(q, out, NAIL);
+  }
   /**
    * A hand from the wrist on: the palm, four fingers of their own lengths and a thumb. `f` = the way the forearm
    * points, `palm` = the way the palm faces, `side` -1 left / +1 right, `curl` 0 (held flat) .. 1 (a loose fist):
@@ -139,6 +145,9 @@ export class Tubes {
       const B = add(K, A, 0.03 - 0.02 * i, f, -0.0015 * i * i), M = add(B, f, Math.cos(c1) * 0.55 * L, N, Math.sin(c1) * 0.55 * L), T = add(M, f, Math.cos(c2) * 0.45 * L, N, Math.sin(c2) * 0.45 * L);
       this.limb(B, M, A, [r, r * 0.92], [r * 0.9, r * 0.82], colour, 5);
       this.limb(M, T, A, [r * 0.9, r * 0.82], [r * 0.72, r * 0.62], colour, 5, r * 0.6);
+      // (The nail lies on the back of the last joint.)
+      const along = [T[0] - M[0], T[1] - M[1], T[2] - M[2]], back = [-N[0], -N[1], -N[2]];
+      this.nail(add(M, along, 0.45, back, r * 0.745), add(M, along, 1.0, back, r * 0.645), A, r * 0.6, back);
       if (i === 1) middle = T;
     }
     // The thumb stands off the edge of the palm, turned towards the fingers.
@@ -175,7 +184,9 @@ export class Tubes {
       // [how far towards the inside of the foot, where along it the toe begins, its length, its radius]
       for (const [across, along, len, r] of [[0.031, 0.152, 0.034, 0.0125], [0.011, 0.157, 0.029, 0.0095], [-0.005, 0.154, 0.026, 0.009], [-0.02, 0.148, 0.022, 0.0085], [-0.033, 0.14, 0.017, 0.008]]) {
         const base = [ankle[0] + fwd[0] * along - side * right[0] * across, y0 + r + 0.002, ankle[2] + fwd[1] * along - side * right[2] * across];
-        this.limb(base, [base[0] + fwd[0] * len, base[1] - r * 0.2, base[2] + fwd[1] * len], right, [r, r * 0.9], [r * 0.9, r * 0.72], colour, 5, r * 0.6);
+        const tip = [base[0] + fwd[0] * len, base[1] - r * 0.2, base[2] + fwd[1] * len], run = [tip[0] - base[0], tip[1] - base[1], tip[2] - base[2]];
+        this.limb(base, tip, right, [r, r * 0.9], [r * 0.9, r * 0.72], colour, 5, r * 0.6);
+        this.nail(add(base, run, 0.45, [0, 1, 0], r * 0.83), add(base, run, 1.0, [0, 1, 0], r * 0.735), right, r * 0.62, [0, 1, 0]);
       }
     } else {
       const toes = P(0.19, 0.014);
@@ -214,13 +225,14 @@ export function reach(hip, target, l1, l2, bend) {
  * @param {{skin?: number[], shirt?: number[], shorts?: number[], hair?: number[]}} [p.colours]  for other people (yours are the defaults)
  * @param {[number, number]} [p.slope]  rise of the ground per metre forward and to the right: each foot is set down on it
  * @param {number} [p.wade]  0..1: in water to the chest the arms are held up and out, hands at the surface
- * @param {boolean} [p.detail]  hands with fingers and thumbs, feet with toes (your own body; needs BODY_VERTICES_DETAIL)
+ * @param {boolean} [p.detail]  hands with fingers, thumbs and nails, feet with toes, hems on the clothes (your own body; needs BODY_VERTICES_DETAIL)
+ * @param {number} [p.breath]  -1..1: where you are in a breath (the shoulders rise a few millimetres, the chest fills)
  */
-export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false }) {
+export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0 }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   // (You lean into a hill, and back coming down one.)
   const crouch = Math.min(1, Math.max(0, (1.65 - eye) / 0.9)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
-  const sy = eye - 0.22, shoulder = [0, sy, BACK + 0.02 + 0.1 * Math.max(0, -Math.sin(look))], joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [] };
+  const sy = eye - 0.22 + 0.004 * breath, shoulder = [0, sy, BACK + 0.02 + 0.1 * Math.max(0, -Math.sin(look))], joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [] };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.
   const hip = [0, Math.max(sy - TORSO * Math.cos(lean), 0.2), shoulder[2] + TORSO * Math.sin(lean) * 0.75];
   t.n = 0;
@@ -250,9 +262,12 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     const hem = [hipJ[0] + (knee[0] - hipJ[0]) * 0.55, hipJ[1] + (knee[1] - hipJ[1]) * 0.55, hipJ[2] + (knee[2] - hipJ[2]) * 0.55];
     // (Loose shorts: the leg of them stands a finger's breadth off the thigh.)
     t.tube(hipJ, hem, [0.088, 0.092], [0.08, 0.083], SHORTS);
+    if (detail) t.tube([hipJ[0] + (hem[0] - hipJ[0]) * 0.9, hipJ[1] + (hem[1] - hipJ[1]) * 0.9, hipJ[2] + (hem[2] - hipJ[2]) * 0.9], hem, [0.0818, 0.0848], [0.0812, 0.0842], shade(SHORTS, 0.72));   // the stitched hem
     t.tube(hem, knee, [0.068, 0.07], [0.055, 0.057], SKIN);
     const calf = [knee[0] + (ankle[0] - knee[0]) * 0.35, knee[1] + (ankle[1] - knee[1]) * 0.35, knee[2] + (ankle[2] - knee[2]) * 0.35 + 0.012];
     t.chain([knee, calf, ankle], [[0.055, 0.057], [0.052, 0.058], [0.034, 0.038]], [SKIN, SKIN]);
+    // (The knee: both bones end rounded, so that a bent knee is a knee and not the open ends of two pipes.)
+    if (detail) { t.cap(hem, knee, [0.055, 0.057], SKIN, 0.85); t.cap(calf, knee, [0.055, 0.057], SKIN, 0.85); }
     t.foot(ankle, [side * 0.12, -0.993], SKIN, detail ? side : 0);
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
@@ -262,7 +277,9 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     const tip = [wrist[0] - side * 0.01, wrist[1] - 0.17 * Math.cos(a + bend + 0.15), wrist[2] - 0.17 * Math.sin(a + bend + 0.15)];
     const sleeve = [sh[0] + (elbow[0] - sh[0]) * 0.5, sh[1] + (elbow[1] - sh[1]) * 0.5, sh[2] + (elbow[2] - sh[2]) * 0.5];
     t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
+    if (detail) t.tube([sh[0] + (sleeve[0] - sh[0]) * 0.86, sh[1] + (sleeve[1] - sh[1]) * 0.86, sh[2] + (sleeve[2] - sh[2]) * 0.86], sleeve, [0.0485, 0.0518], [0.0478, 0.0508], shade(SHIRT, 0.8));
     t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
+    if (detail) { t.cap(sleeve, elbow, [0.036, 0.038], SKIN, 0.85); t.cap(wrist, elbow, [0.036, 0.04], SKIN, 0.85); }      // the elbow, likewise
     if (detail) {
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       t.tube(elbow, wrist, [0.036, 0.04], [0.021, 0.028], SKIN);
@@ -284,7 +301,9 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
   const collar = [0, sy + 0.07, shoulder[2] - 0.012 - 0.03 * crouch], neck = [0, sy + 0.1, collar[2]];
   // The shorts come up to the waist; the shirt hangs loose over them, a hand's breadth down past the waistband.
   t.chain([seat, on(0.04), on(0.2), on(0.27)], [[0.15, 0.1], [0.172, 0.118], [0.161, 0.113], [0.156, 0.11]], [SHORTS, SHORTS, SHORTS]);
-  t.chain([on(0.15), on(0.42), on(0.74), on(0.9), collar], [[0.172, 0.124], [0.15, 0.108], [0.172, 0.12], [0.168, 0.112], [0.07, 0.066]], [SHIRT, SHIRT, SHIRT, SHIRT]);
+  const chest = 1 + 0.012 * breath;
+  t.chain([on(0.15), on(0.42), on(0.74), on(0.9), collar], [[0.172, 0.124], [0.15, 0.108], [0.172 * chest, 0.12 * chest], [0.168, 0.112], [0.07, 0.066]], [SHIRT, SHIRT, SHIRT, SHIRT]);
+  if (detail) t.tube(on(0.15), on(0.185), [0.1735, 0.1255], [0.1712, 0.1232], shade(SHIRT, 0.8));          // the shirt's hem
   t.cap(on(0.9), collar, [0.07, 0.066], SHIRT, 0.25);
   t.cap(on(0.04), seat, [0.15, 0.1], SHORTS, 0.35);
 

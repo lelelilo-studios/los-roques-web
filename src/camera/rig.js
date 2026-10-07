@@ -90,7 +90,7 @@ export class CameraRig {
     if (walking) {
       // First person: the walker owns the eye. The ground detail is centred a few metres ahead of the feet.
       const w = this.walker, cl = Math.cos(w.look);
-      eye.x = w.x; eye.z = w.z; eye.y = w.eyeY + w.bob;
+      eye.x = w.x + cy * w.sway; eye.z = w.z + sy * w.sway; eye.y = w.eyeY + w.bob;
       this.target.x = w.x; this.target.z = w.z; this.target.y = eye.y;
       dirX = sy * cl; dirY = Math.sin(w.look); dirZ = -cy * cl;
       this.focus.x = w.x + sy * 6; this.focus.z = w.z - cy * 6;

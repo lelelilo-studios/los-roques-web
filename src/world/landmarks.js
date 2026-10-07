@@ -15,6 +15,7 @@ out vec3 vRel;
 out vec3 vColor;
 #ifdef LR_SMOOTH
 out vec3 vNormal;           // (round things: normals come with the mesh; everything else is flat-shaded)
+out vec3 vObj;              // the point in the thing's own frame (a body's: metres, y above its feet)
 #endif
 void main() {
 #ifdef USE_INSTANCING
@@ -24,6 +25,7 @@ void main() {
 #endif
 #ifdef LR_SMOOTH
   vNormal = mat3(modelMatrix) * normal;
+  vObj = position;
 #endif
   vRel = wp.xyz;
   vColor = color;
@@ -45,6 +47,8 @@ in vec3 vRel;
 in vec3 vColor;
 #ifdef LR_SMOOTH
 in vec3 vNormal;
+in vec3 vObj;
+uniform float uBodySand;    // (your own body) how much sand is stuck to your feet, 0..1
 #endif
 layout(location = 0) out vec4 outColor;
 void main() {
@@ -77,6 +81,15 @@ void main() {
   soaked = max(uBodyWet.y * (1.0 - smoothstep(uBodyWet.x - 0.04, uBodyWet.x + 0.015, vRel.y)), uBodyWet.w * (1.0 - smoothstep(uBodyWet.z - 0.03, uBodyWet.z + 0.01, vRel.y)));
   wet = max(wet, soaked);
 #endif
+#ifdef LR_SMOOTH
+  if (uBodySand > 0.01) {
+    // Sand sticks to wet feet: thick on the soles and between the toes, thinning in a ragged line up the sides.
+    float line = 0.02 + 0.05 * uBodySand * (0.4 + lrNoise(vObj.xz * 70.0)), grains = lrNoise(vObj.xz * 900.0 + vObj.y * 500.0);
+    float stuck = uBodySand * (1.0 - smoothstep(0.4 * line, line, vObj.y)) * step(0.35 - 0.5 * uBodySand, grains);
+    albedo = mix(albedo, vec3(0.5, 0.46, 0.39) * (0.8 + 0.4 * grains), stuck);
+    soaked *= 1.0 - stuck;                                   // (sanded skin does not shine)
+  }
+#endif
   // (Cloth drinks the water and goes much darker; skin only a little, but it shines.)
   float cloth = 1.0 - smoothstep(1.1, 1.3, vColor.r / max(vColor.g, 1e-3));
   albedo *= 1.0 - wet * mix(0.12, 0.34, cloth) * (1.0 - glow);
@@ -94,7 +107,7 @@ void main() {
 export function createObjectMaterial(shadowTaps = 8, smooth = false) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, ...(smooth ? { LR_SMOOTH: 1 } : {}) },
-    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) } }),
+    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 } }),
   });
 }
 
