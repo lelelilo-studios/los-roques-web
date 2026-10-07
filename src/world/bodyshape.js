@@ -335,6 +335,92 @@ export function footfall(stride) {
 }
 
 /**
+ * Sitting on the sand, legs out in front of you, leaning back a little on your left hand. Same frame and the
+ * same joints as poseBody (the ground you sit on is y = 0; the eye is at (0, eye, 0)).
+ * @param {number} p.eye  the eye's height above the sand
+ * @param {number} [p.draw]  0 legs stretched out, heels in the sand .. 1 knees drawn up, feet flat
+ * @param {number} [p.splay]  0 feet a hip's width apart .. 1 wide
+ * @param {number} [p.wiggle]  how far the toes are curled up (radians; negative: gripping)
+ * @param {object} [p.touch]  the right hand at work, as for poseBody
+ */
+export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, detail = false, breath = 0, sink = 0, colours = {} }) {
+  const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
+  t.n = 0; h.n = 0;
+  // The hip joints stand a hand's breadth over the sand you sit on; the trunk leans back from them as far as
+  // it must for the eye to be where it is.
+  const SEAT = 0.095, sy = eye - PROP.eyeToShoulder + 0.004 * breath, shoulder = [0, sy, PROP.back + 0.02];
+  const hip = [0, SEAT, shoulder[2] - Math.sqrt(Math.max(PROP.torso * PROP.torso - (sy - SEAT) * (sy - SEAT), 0))];
+  const joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [], shoulders: [], elbows: [], feet: [], hands: [], hip, shoulder, crouch: 1, sitting: true };
+  const leg = PROP.thigh + PROP.shin;
+  for (const side of [-1, 1]) {
+    // Legs: out in front, the heels in the sand and the toes up; drawn in, the heels slide back, the knees rise
+    // and the feet come flat.
+    const hipJ = [side * PROP.hip, hip[1], hip[2]], pitch = 1.1 * (1 - draw) + 0.12;
+    const ankle = [side * (PROP.hip + 0.035 + 0.14 * splay + 0.05 * draw), PROP.ankle + 0.014 * (1 - draw) - sink, hip[2] - leg * (0.985 - 0.5 * draw)];
+    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * (0.2 + 0.5 * splay), 1, 0]);
+    const hem = lerp3(hipJ, knee, 0.55), calf = lerp3(knee, ankle, 0.35);
+    t.tube(hipJ, hem, [0.088, 0.092], [0.08, 0.083], SHORTS);
+    t.tube(hem, knee, [0.068, 0.07], [0.055, 0.057], SKIN);
+    t.chain([knee, calf, ankle], [[0.055, 0.057], [0.052, 0.058], [0.034, 0.038]], [SKIN, SKIN]);
+    t.foot(ankle, [side * (0.2 + 0.3 * splay), -0.97], SKIN, detail ? side : 0, pitch);
+    joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
+    joints.feet.push({ pitch, out: side * (0.2 + 0.3 * splay), planted: 1, toes: wiggle });
+    // Arms: the left hand on the sand behind you, taking some of your weight; the right resting beside your
+    // thigh, or at work.
+    const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]];
+    const wrist = side < 0 ? [sh[0] - 0.12, 0.03, hip[2] + 0.2] : [sh[0] + 0.1, 0.03, hip[2] - 0.12];
+    let elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * 0.7, 0.1, 1]);
+    const reaching = touch && side > 0 && touch.amount > 0 ? touch.amount * touch.amount * (3 - 2 * touch.amount) : 0;
+    let point = null, facing = null;
+    if (reaching) {
+      const to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      // (You lean over towards what you reach for.)
+      sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); sh[0] += 0.03 * reaching * (1 - up);
+      const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
+      if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
+      for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
+      elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [0.75 - 0.15 * up, 0.25 - 0.95 * up, 0.6 - 0.25 * up]);
+      point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, touch.dir[1] * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
+      facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
+    }
+    const sleeve = lerp3(sh, elbow, 0.5);
+    t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
+    if (!detail) t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
+    // (At rest a hand lies flat on the sand, fingers pointing out and back on the left, forward on the right.)
+    const flat = side < 0 ? unit([-0.55, 0, 0.83]) : unit([0.25, 0, -0.97]), mix = (a, b) => unit([a[0] + (b[0] - a[0]) * reaching, a[1] + (b[1] - a[1]) * reaching, a[2] + (b[2] - a[2]) * reaching]);
+    const curl = point ? 0.12 + ((touch.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (touch.spread ?? 0) * reaching : 0.25;
+    if (detail) {
+      const tip = t.hand(wrist, point ? mix(flat, point) : flat, point ? mix([0, -1, 0], facing) : [0, -1, 0], side, curl, SKIN, spread, elbow, sleeve);
+      joints.fingertips.push(tip);
+      joints.hands.push({ ...t.palm, curl, spread });
+      if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching, palm: t.palm };
+    } else {
+      const tip = [wrist[0] + flat[0] * 0.17, wrist[1], wrist[2] + flat[2] * 0.17];
+      t.tube(elbow, wrist, [0.036, 0.04], [0.026, 0.03], SKIN);
+      t.tube(wrist, tip, [0.036, 0.018], [0.03, 0.012], SKIN);
+      t.cap(wrist, tip, [0.03, 0.012], SKIN);
+      joints.fingertips.push(tip);
+    }
+    t.tube([sh[0] - side * 0.01, sh[1] - 0.012, sh[2]], [side * 0.075, sy + 0.03, sh[2] - 0.01], [0.045, 0.056], [0.03, 0.045], SHIRT);
+    t.cap(sleeve, sh, [0.052, 0.056], SHIRT, 0.3);
+    joints.wrists.push(wrist); joints.shoulders.push(sh); joints.elbows.push(elbow);
+  }
+  const on = k => lerp3(hip, shoulder, k), seat = [0, hip[1] - 0.07, hip[2] + 0.03];
+  const collar = [0, sy + 0.07, shoulder[2] - 0.012], neck = [0, sy + 0.1, collar[2]];
+  t.chain([seat, on(0.04), on(0.2), on(0.27)], [[0.15, 0.1], [0.172, 0.118], [0.161, 0.113], [0.156, 0.11]], [SHORTS, SHORTS, SHORTS]);
+  t.chain([on(0.15), on(0.42), on(0.74), on(0.9), collar], [[0.172, 0.124], [0.15, 0.108], [0.172, 0.12], [0.168, 0.112], [0.07, 0.066]], [SHIRT, SHIRT, SHIRT, SHIRT]);
+  t.cap(on(0.9), collar, [0.07, 0.066], SHIRT, 0.25);
+  t.cap(on(0.04), seat, [0.15, 0.1], SHORTS, 0.35);
+  const z = neck[2] - 0.01, top = eye + 0.11;
+  h.tube(neck, [0, eye - 0.13, z], [0.056, 0.058], [0.05, 0.056], SKIN);
+  h.tube([0, eye - 0.13, z], [0, eye - 0.06, z - 0.005], [0.058, 0.075], [0.074, 0.092], SKIN);
+  h.tube([0, eye - 0.06, z - 0.005], [0, eye + 0.03, z], [0.074, 0.092], [0.078, 0.098], SKIN, HAIR);
+  h.tube([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.078, 0.098], [0.062, 0.08], HAIR);
+  h.cap([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.062, 0.08], HAIR, 0.55);
+  return joints;
+}
+
+/**
  * How far your eyes are ahead of where they are when you stand upright looking level (metres). The solver
  * works in a frame hung from the eye; in it, as you bend your head to look down, or squat, the body moves
  * back from the eye. On the ground it is the other way about: the feet stay where they are and the head goes

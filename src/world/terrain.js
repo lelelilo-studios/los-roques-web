@@ -410,7 +410,7 @@ void main() {
   // The sand round you as you have left it (sim/patch.js): where you have pressed it, it is smooth.
   // (Only as far as a pixel is not much bigger than its texels, two millimetres: beyond that the stamps do.)
   float pxLong = max(length(ddx), length(ddy));           // (a pixel's reach along the ground, the long way: at a low angle, much more than across)
-  float inPatch = pxLong < 0.008 && sand > 0.5 ? lrPatchIn(d) * (1.0 - smoothstep(0.0042, 0.008, pxLong)) : 0.0;
+  float inPatch = pxLong < 0.008 && sand > 0.5 ? lrPatchIn(d) * (1.0 - smoothstep(0.0042, 0.008, pxLong)) : 0.0, patchSteep = 0.0;
   if (inPatch > 0.0) lumpy *= 1.0 - inPatch * min(lrPatch(d).a, 1.0);
   vec2 at = d;                                              // where on the sand this pixel lands, once its relief is counted
   float hollow = 0.0;                                       // how far down in a hollow of trodden ground (0..1)
@@ -488,6 +488,7 @@ void main() {
     float h = lrPatchHeight(p);
     vec2 grad = vec2(lrPatchHeight(p + vec2(e2, 0.0)) - lrPatchHeight(p - vec2(e2, 0.0)), lrPatchHeight(p + vec2(0.0, e2)) - lrPatchHeight(p - vec2(0.0, e2))) / (2.0 * e2) * inPatch;
     n = normalize(vec3(n.x - grad.x, n.y, n.z - grad.y));
+    patchSteep = smoothstep(0.08, 0.35, length(grad));
     // Its own shadows: a rim shades the print beside it, a heap its far side.
     if (uSunDir.y > 0.02) {
       vec2 s = normalize(uSunDir.xz + 1e-5);
@@ -562,6 +563,9 @@ void main() {
     float gloss = wetLine * max(exp(-sw.age / 3.0), (0.5 + 0.5 * patchy) * (1.0 - smoothstep(0.0, 0.5 * sw.top + 0.02, -water)));
     // (Ripple marks: the film lies in the troughs and the crests stand clear of it.)
     gloss = mix(gloss, max(gloss, 0.92) * smoothstep(0.25, 0.7, troughs), smoothstep(0.0, 0.3, marks) * wetLine);
+    // (The wall of a print is not a mirror: a film does not stand on a slope. Without this the side of every
+    // hollow in wet sand flashed white with the sun.)
+    gloss *= 1.0 - patchSteep;
     // (Rain: a film in patches while it falls, a dull damp surface after.)
     gloss = max(gloss, uWet * (0.12 + 0.5 * uRain) * patchy * sand);
     // Puddles: on the hard-trodden streets of the village the rain stands in the hollows (beach sand drinks it).

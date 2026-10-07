@@ -289,7 +289,8 @@ export class Hand {
     if (this.ik <= 0) return null;
     // Where: on the line of your look, as far as the arm goes. (In dry sand the fingers go in; on wet sand they
     // press on it; in water the hand goes to the bottom if that is within a hand's length, or under by that much.)
-    const far = Math.min(0.6, Math.max(0.3, Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx = 0.1, lz = -far;
+    // (Sitting, your legs lie where it would go: it works beside your right thigh.)
+    const far = Math.min(c.sitting ? 0.45 : 0.6, Math.max(0.3, Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx = c.sitting ? 0.33 : 0.1, lz = -far;
     const wx = c.x + lx * c.cy - lz * c.sy, wz = c.z + lx * c.sy + lz * c.cy, g = c.groundAt(wx, wz), depth = Math.max(c.surf - g, 0);
     if (!this.down && this.lift < 0.05 && this.amount < 0.02) this.kind = depth > 0.015 ? 'water' : c.wetAt(wx, wz, g) ? 'wet' : 'dry';
     const y = this.kind === 'water' ? Math.max(g + 0.004, c.surf - 0.17) : this.kind === 'dry' ? g - 0.012 - 0.012 * this.grip : g - 0.003 - 0.006 * this.grip;
@@ -299,7 +300,7 @@ export class Hand {
     const L = [0, sl, -cl], U = [0, cl, sl], eye = [0, c.body, 0];
     // (Far enough out, and near enough to the middle of what you see, that the hand, what falls from it and the
     // place where that lands are all in view.)
-    const wrist = [eye[0] + 0.085, eye[1] + L[1] * 0.31 - U[1] * 0.075, eye[2] + L[2] * 0.31 - U[2] * 0.075];
+    const wrist = [eye[0] + (c.sitting ? 0.27 : 0.085), eye[1] + L[1] * 0.31 - U[1] * 0.075, eye[2] + L[2] * 0.31 - U[2] * 0.075];
     // (A hand held out is never quite still: it rises and falls a little with your breath.)
     wrist[1] += 0.003 * Math.sin(c.time * 1.45); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1);
     // (No lower than the arm can hold it level, crouched: above your knees.)

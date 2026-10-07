@@ -1,7 +1,7 @@
 // Your own body: what you see when you look down, and what casts your shadow. The shape and its pose are in
 // bodyshape.js; this wraps them in two meshes that are refilled every frame (no model file, no skinning).
 import * as THREE from 'three';
-import { BODY_VERTICES, BODY_VERTICES_DETAIL, HEAD_VERTICES, Tubes, poseBody, poseSwim } from './bodyshape.js';
+import { BODY_VERTICES, BODY_VERTICES_DETAIL, HEAD_VERTICES, Tubes, poseBody, poseSit, poseSwim } from './bodyshape.js';
 
 export class Body {
   /**
@@ -29,7 +29,7 @@ export class Body {
   pose(p) {
     const q = this.detail ? { ...p, detail: true } : p;
     /** Where the joints are in the body's own frame (see poseBody / poseSwim). */
-    this.joints = p.swim ? poseSwim(this.body.t, this.head.t, q) : poseBody(this.body.t, this.head.t, q);
+    this.joints = p.swim ? poseSwim(this.body.t, this.head.t, q) : p.sit ? poseSit(this.body.t, this.head.t, q) : poseBody(this.body.t, this.head.t, q);
     for (const { t, m } of [this.body, this.head]) {
       const a = m.geometry.attributes;
       a.position.needsUpdate = true; a.normal.needsUpdate = true; a.color.needsUpdate = true;

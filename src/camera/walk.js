@@ -39,6 +39,7 @@ export class Walker {
     this.x = 0; this.z = 0; this.yaw = 0; this.look = 0;       // radians; yaw clockwise from north, look above the horizon
     // (How high your eyes are standing and crouched, and your legs against the 0.87 m the paces are for: your body's, see app.js.)
     this.stand = STAND; this.crouch = CROUCH; this.legs = 1;
+    this.sit = 0.83; this.sitting = false;                        // seated eye height; whether you are sitting on the sand
     this.eyeY = STAND; this.body = STAND; this.surf = 0; this.vx = 0; this.vz = 0;
     this.diving = false; this.diveTimer = 0; this.phase = 0; this.bob = 0; this.bobAmount = 1;
     this.pinned = false;                                          // a test pose holds the eye where it was put
@@ -59,7 +60,7 @@ export class Walker {
   /** How far down you are, 0 standing .. 1 in a full crouch. */
   get crouched() { return Math.min(1, Math.max(0, (this.stand - this.body) / (this.stand - this.crouch))); }
   place({ x, z, yaw = this.yaw, look = this.look, height = this.stand, eye = null }) {
-    Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0 });
+    Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
     this.body = height;
@@ -81,7 +82,7 @@ export class Walker {
   step(dt, input) {
     const steps = [];
     if (dt <= 0) return steps;
-    const moving = Math.abs(input.fwd) + Math.abs(input.right) > 0.01 || input.up || input.down;
+    const moving = Math.abs(input.fwd) + Math.abs(input.right) > 0.01 || input.up || input.down || input.sit;
     if (this.pinned && !moving) return steps;
     this.pinned = false;
 
@@ -90,6 +91,10 @@ export class Walker {
     const d = Math.max(this.surf - g, 0);
     this.depth = d;
 
+    // Sitting down and getting up (the key is taken once a press): on sand, in water no deeper than a hand.
+    if (input.sit && !this.sat) this.sitting = !this.sitting && !this.diving && !this.afloat && d < 0.25;
+    this.sat = !!input.sit;
+    if (this.sitting && (this.diving || d > 0.4)) this.sitting = false;
     // Where the legs (or arms) want to take us.
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     let wx = input.fwd * sy + input.right * cy, wz = -input.fwd * cy + input.right * sy, vy = 0;
@@ -109,6 +114,7 @@ export class Walker {
     // (Crouched you shuffle along at less than half the pace.)
     const crouch = this.crouched;
     if (onGround) speed *= 1 - 0.55 * crouch;
+    if (this.sitting) speed = 0;                       // (seated, the same keys move your legs: see app.js)
     const k = 1 - Math.exp(-dt * (onGround ? 9 : 3.5));
     this.vx += (wx * speed - this.vx) * k; this.vz += (wz * speed - this.vz) * k;
 
@@ -133,7 +139,7 @@ export class Walker {
     // The eye.
     const g2 = this.ground.heightAt(this.x, this.z);
     // (Crouched, reaching down to touch, you lean in over your hand: the eye comes a hand's breadth lower.)
-    const want = input.down && !this.diving && d < 0.9 ? this.crouch - (input.hand ? 0.12 : 0) : this.stand;
+    const want = this.sitting ? this.sit - (input.hand ? 0.06 : 0) : input.down && !this.diving && d < 0.9 ? this.crouch - (input.hand ? 0.12 : 0) : this.stand;
     this.body += (want - this.body) * (1 - Math.exp(-dt * 10));
     this.afloat = this.surf + FLOAT > g2 + this.body;
     if (!this.diving) {
@@ -243,7 +249,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
       if (k === 'Tab' || (k === 'Escape' && document.pointerLockElement !== el)) { e.preventDefault(); onLeave(); return; }
       // (Ctrl is not among them, though many crouch with it by habit: with W, forward, it is the browser's "close
       // this tab", which no page can prevent. Crouching or diving while going forward closed the page.)
-      if (['w', 'a', 's', 'd', 'c', 'q', 'e', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
+      if (['w', 'a', 's', 'd', 'c', 'q', 'e', 'x', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
     }),
     on(window, 'keyup', e => held.delete(key(e))),
     on(window, 'blur', () => held.clear()),
@@ -286,6 +292,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
         right: Math.max(-1, Math.min(1, h('d') + h('ArrowRight') - h('a') - h('ArrowLeft') + touch.vec[0])),
         run: held.has('Shift') || pressed.has('run') || Math.hypot(touch.vec[0], touch.vec[1]) > 0.97,
         down: held.has('c') || pressed.has('down'), up: held.has(' ') || pressed.has('up'),
+        sit: held.has('x') || pressed.has('sit'),      // sit down on the sand, or get up
         open: grasp.open,                                // how far your fingers are parted, 0 together .. 1
         hand: !!touch.look,                              // the mouse button (or a finger on the right of the screen) held: crouched, your hand goes down to touch
       };

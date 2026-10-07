@@ -117,12 +117,13 @@ export function buildPanel(root, app) {
 export function buildWalkHud(root, onLeave, onSound, soundOn) {
   const touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || matchMedia('(max-width: 640px)').matches;
   const hud = el('div', { class: 'walk-hud' },
-    el('p', { class: 'walk-hint', text: touch ? 'Left thumb walks · right thumb looks' : 'Click to look around · W A S D walk · Shift run · C crouch or dive · crouched, hold the mouse button to take a handful of sand or water; let go and it runs out between your fingers · the wheel (or Q / E) closes and parts them · Space come up · Tab leaves' }),
+    el('p', { class: 'walk-hint', text: touch ? 'Left thumb walks · right thumb looks' : 'Click to look around · W A S D walk · Shift run · C crouch or dive · X sit down or get up (seated: S draws your legs up, W stretches them out, A D your feet, Space your toes) · crouched or seated, hold the mouse button to take a handful of sand or water; let go and it runs out between your fingers · the wheel (or Q / E) closes and parts them · Space come up · Tab leaves' }),
     el('button', { class: 'chip walk-leave', text: 'Back to the air', onclick: onLeave }),
     el('button', { class: 'chip walk-sound', text: soundOn ? 'Sound on' : 'Sound off', 'aria-pressed': String(!!soundOn), title: 'Waves, wind and your steps', onclick: e => onSound(e.currentTarget.getAttribute('aria-pressed') !== 'true') }),
     el('div', { class: 'walk-pad' },
       el('button', { class: 'icon', 'data-walk': 'up', 'aria-label': 'Come up', text: '▲' }),
-      el('button', { class: 'icon', 'data-walk': 'down', 'aria-label': 'Crouch or dive', text: '▼' })));
+      el('button', { class: 'icon', 'data-walk': 'down', 'aria-label': 'Crouch or dive', text: '▼' }),
+      el('button', { class: 'icon', 'data-walk': 'sit', 'aria-label': 'Sit down or get up', text: '⌄' })));
   if (!touch) hud.classList.add('desktop');
   root.append(hud);
   return hud;

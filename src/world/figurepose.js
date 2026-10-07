@@ -136,7 +136,9 @@ export class FigureRig {
       // heel up the toes stay flat on the ground.
       const foot = j.feet ? j.feet[i] : { pitch: -0.9 }, Rf = about([1, 0, 0], foot.pitch);
       this.hinge(s.bone.foot, Rf);
-      for (const t of s.toes) this.hinge(t, foot.pitch < 0 && j.feet ? IDENTITY : Rf);
+      // (With the heel up the toes stay flat on the ground; otherwise they go with the foot, and can curl up or grip.)
+      const Rtoes = foot.pitch < 0 && j.feet ? IDENTITY : foot.toes ? mul(Rf, about([1, 0, 0], foot.toes)) : Rf;
+      for (const t of s.toes) this.hinge(t, Rtoes);
 
       // The arm: the shoulder joint goes where the solver has it (it comes forward when you reach).
       const S = j.shoulders[i], wrist = j.wrists[i].slice(), elbowTo = sub(j.elbows[i], [(S[0] + wrist[0]) / 2, (S[1] + wrist[1]) / 2, (S[2] + wrist[2]) / 2]);
