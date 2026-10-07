@@ -150,8 +150,14 @@ export class Waves {
 
   /** Standard deviation (m) of each cascade for a wave-map sample: `fetchLog` and `swell` in 0..1 as stored there. */
   weightsAt(fetchLog, swell, out = [0, 0, 0, 0]) {
-    const u = Math.round(Math.min(1, Math.max(0, fetchLog)) * (LUT_W - 1)), v = Math.round(Math.min(1, Math.max(0, swell)) * (LUT_H - 1)), o = (v * LUT_W + u) * 4;
-    for (let i = 0; i < 4; i++) out[i] = this.weights[o + i];
+    // Between the entries of the table, as the shader's (linear) lookup does: the nearest entry alone is up to
+    // a third out in a sheltered lagoon, and what floats on these numbers would ride a different sea.
+    const u = Math.min(1, Math.max(0, fetchLog)) * (LUT_W - 1), v = Math.min(1, Math.max(0, swell)) * (LUT_H - 1);
+    const u0 = Math.min(LUT_W - 2, Math.floor(u)), v0 = Math.min(LUT_H - 2, Math.floor(v)), fu = u - u0, fv = v - v0, w = this.weights;
+    for (let i = 0; i < 4; i++) {
+      const a = (v0 * LUT_W + u0) * 4 + i, b = a + LUT_W * 4;
+      out[i] = (w[a] * (1 - fu) + w[a + 4] * fu) * (1 - fv) + (w[b] * (1 - fu) + w[b + 4] * fu) * fv;
+    }
     return out;
   }
 

@@ -23,6 +23,7 @@ import { Turtle, buildStatue } from './world/creatures.js';
 import { buildConchMounds, buildShoreLife } from './world/shorelife.js';
 import { buildPlants } from './world/plants.js';
 import { Sound, measure, runup } from './audio/ambience.js';
+import { shoreCrest } from './data/shoreCPU.js';
 import { createObjectMaterial } from './world/landmarks.js';
 import { Body } from './world/body.js';
 import * as THREE from 'three';
@@ -150,19 +151,19 @@ export async function start(canvas, onProgress = () => {}) {
   // ---- first person
   const surfaceAt = (x, z) => {
     const sea = shared.uSeaLevel.value;
-    return sea + waves.heightAt(x, z, clock.time, boats.weightsAt(x, z, sea - ground.heightAt(x, z)), 3);
+    // (Near a shore the little waves coming in ride on top: without them their crests would wash over a swimmer's eyes.)
+    return sea + waves.heightAt(x, z, clock.time, boats.weightsAt(x, z, sea - ground.heightAt(x, z)), 3) + shoreCrest(x, z, ground.shoreAt(x, z), seaAt(x, z).hs, clock.time);
   };
   // ---- sound (walking only)
   const sound = new Sound(), raw = [0, 0, 0, 0];
   /** Height of the waves arriving at a place, and how loud the reef's surf is there (from the wave map). */
   function seaAt(x, z) {
-    const m = data.cpu.waveMap, u = (x - rect.x) / rect.w, v = (z - rect.z) / rect.h;
-    if (u < 0 || u > 1 || v < 0 || v > 1) { waves.weightsAt(1, 1, raw); return { hs: 4 * Math.hypot(raw[0], raw[1], raw[2]), reef: 0 }; }
-    const i = (Math.min(m.height - 1, Math.floor(v * m.height)) * m.width + Math.min(m.width - 1, Math.floor(u * m.width))) * 4;
-    waves.weightsAt(m.rgba[i + 1] / 255, m.rgba[i] / 255, raw);
-    const hs = 4 * Math.hypot(raw[0], raw[1], raw[2]), far = (m.rgba[i + 2] / 255) ** 2 * 250;
-    return { hs, reef: m.rgba[i + 3] / 255 * Math.exp(-far / 80) * Math.min(1, hs / 0.6) };
+    const m = boats.mapAt(x, z, seaMap);
+    waves.weightsAt(m[1], m[0], raw);
+    const hs = 4 * Math.hypot(raw[0], raw[1], raw[2]), far = m[2] * m[2] * 250;
+    return { hs, reef: m[3] * Math.exp(-far / 80) * Math.min(1, hs / 0.6) };
   }
+  const seaMap = [0, 0, 0, 0];
   let shoreTimer = 0, shorePoints = [];
   function soundScene(dt) {
     shoreTimer -= dt;
@@ -351,12 +352,17 @@ export async function start(canvas, onProgress = () => {}) {
     shared.uWaveHere.value.fromArray(boats.weightsAt(rig.eye.x, rig.eye.z, 3));
     // Shadows of things: round the walker (and of the walker), or round what the orbit camera looks at.
     const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
-    body.mesh.visible = standing;
+    // Your body: walking on the bottom, or swimming where the water carries you (tipped along your look when dived).
+    body.mesh.visible = walking;
     if (standing) { body.pose({ phase: walker.phase, stride: walker.stride, eye: walker.body, look: walker.look }); body.place(walker.eyeY - walker.body, walker.yaw); }
+    else if (walking) {
+      const under = walker.diving ? 1 : 0;
+      body.pose({ swim: true, stroke: walker.stroke, under }); body.place(walker.eyeY + walker.bob, walker.yaw, under * walker.look);
+    }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: ground.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup], standing ? [body.headMesh] : [], casters);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup], walking ? [body.headMesh] : [], casters);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
@@ -400,6 +406,9 @@ export async function start(canvas, onProgress = () => {}) {
   const api = {
     errors,
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
+    /** For tests: your own body (world/body.js). */
+    body,
+    shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
     life,
     umbrellas: landmarks.umbrellas,
@@ -447,6 +456,7 @@ export async function start(canvas, onProgress = () => {}) {
       // environment, because the pose depends on the sea level.
       if (s.walk !== undefined) { if (s.walk) app.setWalk(true, s.walk, true); else app.setWalk(false); }
       // stroll: { seconds, input, turn (degrees), pitch }: walk on from the pose, then turn and look (to see the prints left).
+      if (s.stroke !== undefined) walker.stroke = s.stroke * 2 * Math.PI;      // (place in the swimming stroke, 0..1)
       if (s.stroll) {
         api.walkFor(s.stroll.seconds, s.stroll.input || { fwd: 1 });
         walker.yaw += (s.stroll.turn || 0) * Math.PI / 180;

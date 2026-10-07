@@ -1,7 +1,7 @@
 // Your own body: what you see when you look down, and what casts your shadow. The shape and its pose are in
 // bodyshape.js; this wraps them in two meshes that are refilled every frame (no model file, no skinning).
 import * as THREE from 'three';
-import { BODY_VERTICES, HEAD_VERTICES, Tubes, poseBody } from './bodyshape.js';
+import { BODY_VERTICES, HEAD_VERTICES, Tubes, poseBody, poseSwim } from './bodyshape.js';
 
 export class Body {
   /** @param {THREE.Material} material  an object material with smooth normals (landmarks.js) */
@@ -21,9 +21,9 @@ export class Body {
     this.pose({ phase: 0, stride: 0, eye: 1.65 });
   }
 
-  /** See poseBody: { phase, stride, eye, look }. */
+  /** Walking: see poseBody ({ phase, stride, eye, look }). Swimming: { swim: true, stroke, under } (see poseSwim). */
   pose(p) {
-    poseBody(this.body.t, this.head.t, p);
+    if (p.swim) poseSwim(this.body.t, this.head.t, p); else poseBody(this.body.t, this.head.t, p);
     for (const { t, m } of [this.body, this.head]) {
       const a = m.geometry.attributes;
       a.position.needsUpdate = true; a.normal.needsUpdate = true; a.color.needsUpdate = true;
@@ -31,8 +31,12 @@ export class Body {
     }
   }
 
-  /** Places both meshes: `feet` is the height of the ground under you, `yaw` the walker's heading (radians). */
-  place(feet, yaw) {
-    for (const m of [this.mesh, this.headMesh]) { m.position.set(0, feet, 0); m.rotation.set(0, -yaw, 0); m.updateMatrix(); m.matrixWorld.copy(m.matrix); }
+  /**
+   * Places both meshes. Walking: `y` is the height of the ground under you. Swimming: the height of the eye,
+   * and `pitch` (radians above the horizon) tips the body along the way you look when dived.
+   * `yaw` is the walker's heading (radians).
+   */
+  place(y, yaw, pitch = 0) {
+    for (const m of [this.mesh, this.headMesh]) { m.position.set(0, y, 0); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix); }
   }
 }

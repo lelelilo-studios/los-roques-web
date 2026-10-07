@@ -18,6 +18,15 @@ float lrLift(float dist) { return min(0.002 + uLift.x * dist + uLift.y * dist * 
 // neighbouring stretches of beach drift further out of step the longer the page stays open.
 const float LR_SWASH_T = 4.6;
 
+// How far behind (in cycles) a stretch of shore runs: neighbouring stretches are out of step, so the edge of the
+// sea is scalloped. Sums of sines, not a hash: data/shoreCPU.js computes the same thing for the walker and
+// the sound, and a hash comes out differently in 32-bit arithmetic here and in JavaScript.
+float lrShoreLag(vec2 wxz) {
+  vec2 a = wxz / 13.0, b = wxz / 41.0;
+  return 1.3 * (0.5 + 0.25 * (sin(a.x * 1.7 + 1.3 * sin(a.y * 1.1)) + sin(a.y * 2.3 + 1.7 * sin(a.x * 0.9 + 2.0))))
+       + 2.6 * (0.5 + 0.25 * (sin(b.x * 1.9 + 1.1 * sin(b.y * 1.3 + 4.0)) + sin(b.y * 2.1 + 1.5 * sin(b.x * 1.2 + 1.0))));
+}
+
 // How high (vertically) the swash of waves of height 'hs' climbs (Stockdon et al. 2006: about 0.8 hs on a 1:9
 // foreshore). 'hs' is the sea arriving off the beach; what reaches the sand has broken on the shallow terrace
 // in front of it (half a metre of water carries a wave of a hand's breadth or two), hence the cap.
@@ -58,8 +67,7 @@ LrSwash lrBeach(vec2 wxz, float shore, float hs, float a, float fine) {
   float flat_ = max(-shore - max(a, 0.0) / 0.08, 0.0), R = lrRunup(hs) * fine * mix(0.1, 1.0, s.open), run = R / 0.11 + 0.3;
   R *= 1.0 - smoothstep(1.2 * run, 3.0 * run, flat_);
   // Neighbouring stretches are out of step (noise along the shore), so the edge of the sea is scalloped.
-  float c = uTime / LR_SWASH_T - 1.3 * lrNoise(wxz / 13.0) - 2.6 * lrNoise(wxz / 41.0)
-          + (2.2 * (sqrt(max(shore, 0.0) + 1.0) - 1.0) - flat_ / 1.5) / LR_SWASH_T;
+  float c = uTime / LR_SWASH_T - lrShoreLag(wxz) + (2.2 * (sqrt(max(shore, 0.0) + 1.0) - 1.0) - flat_ / 1.5) / LR_SWASH_T;
   float n = floor(c);
   s.p = c - n;
   vec2 q = wxz / 7.0;

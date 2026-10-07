@@ -33,6 +33,7 @@ export class Walker {
     this.pinned = false;                                          // a test pose holds the eye where it was put
     this.depth = 0; this.afloat = false;
     this.stride = 0;                                              // pace against an easy walk: 0 standing, 1 walking, about 2 running
+    this.stroke = 0;                                              // phase of the swimming stroke, radians
   }
 
   /**
@@ -48,7 +49,8 @@ export class Walker {
     this.eyeY = eye !== null ? Math.max(this.surf + eye, g + 0.2) : Math.max(g + height, this.surf + FLOAT);
     this.diving = this.eyeY < this.surf;
     this.depth = Math.max(this.surf - g, 0);
-    this.afloat = this.surf + FLOAT > g + this.body;
+    // (A test pose with the eye lower than you could stand is a swimmer.)
+    this.afloat = this.pinned ? this.eyeY < g + height - 0.05 && !this.diving : this.surf + FLOAT > g + this.body;
   }
 
   /** True when the eye is under the sea surface. */
@@ -137,6 +139,8 @@ export class Walker {
       if (after !== before) steps.push({ x: this.x, z: this.z, yaw: this.yaw, side: after & 1, depth: Math.max(this.surf - g2, 0), stride: this.stride });
     }
     const stride = onGround ? Math.min(1, Math.hypot(this.vx, this.vz) / 1.2) : 0;
+    // Afloat: a stroke every second and a half when swimming along, a slow scull when lying still.
+    if (!onGround) this.stroke += (0.22 + 0.45 * Math.min(1, Math.hypot(this.vx, this.vz) / 0.7)) * dt * 2 * Math.PI;
     this.stride += ((onGround ? Math.hypot(this.vx, this.vz) / 1.4 : 0) - this.stride) * (1 - Math.exp(-dt * 8));
     this.bob += (0.022 * this.bobAmount * stride * Math.abs(Math.sin(this.phase)) - this.bob) * (1 - Math.exp(-dt * 12));
     return steps;

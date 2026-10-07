@@ -116,8 +116,20 @@ void main() {
     // Seen from below (the alpha of -3000 tells the composite this pixel is looked at through water). Inside a
     // cone 97 degrees wide ("Snell's window") the whole sky is squeezed in, bent by the waves; outside it the
     // surface is a mirror for what lies below: the bed, seen through the water on the way down to it.
-    vec2 sl = vec2(0.0);
-    for (int i = 0; i < 4; i++) sl += vWeights[i] * textureGrad(tWaveB, vec3(lrWaveUV(vGrid, i), float(i)), gx / uWaveTile[i], gy / uWaveTile[i]).xy;
+    // (The same surface as from above: the cascades, the ripples finer than them in their gusts, the rain's rings.)
+    vec2 sl = vec2(0.0), roughness = vec2(0.0);
+    float gust = lrGust(wxz), nearby = 1.0 - smoothstep(0.03, 0.15, px), spray = 0.0;
+    for (int i = 0; i < 4; i++) {
+      vec4 b = textureGrad(tWaveB, vec3(lrWaveUV(vGrid, i), float(i)), gx / uWaveTile[i], gy / uWaveTile[i]);
+      float w = vWeights[i] * (i == 3 ? gust : 1.0);
+      sl += w * b.xy; roughness += w * w * max(b.zw - b.xy * b.xy, 0.0);
+    }
+    if (nearby > 0.0) {
+      vec2 uv = lrWaveUV(vGrid, 3), t = vec2(uWaveTile[3]), gain = vWeights.w * gust * LR_FINE_GAIN * nearby;
+      sl += gain.x * lrFineTurn1(textureGrad(tWaveB, vec3(LR_FINE_1 * uv, 3.0), LR_FINE_1 * gx / t, LR_FINE_1 * gy / t).xy)
+          + gain.y * lrFineTurn2(textureGrad(tWaveB, vec3(LR_FINE_2 * uv, 3.0), LR_FINE_2 * gx / t, LR_FINE_2 * gy / t).xy);
+      if (uRain > 0.01) sl += lrRainRings(vGrid + uCamMod.xy, uRain, spray) * nearby;
+    }
     vec3 nd = -normalize(vec3(-sl.x, 1.0, -sl.y)), up = normalize(vec3(vRel.x, vRel.y - uCamY, vRel.z));
     vec3 outDir = refract(up, nd, 1.34);
     float shoreU, deep = max(uSeaLevel - lrGround(wxz, px, shoreU), 0.05), lagoon = texture(tWaterType, lrMapUV(wxz)).r;
@@ -128,8 +140,13 @@ void main() {
     vec3 c = below;
     if (dot(outDir, outDir) > 0.0) {
       float f = lrFresnel(dot(outDir, -nd));
-      c = mix(lrEnv(normalize(vec3(outDir.x, abs(outDir.y) + 0.02, outDir.z)), 1e-3) + uSunE * 40.0 * pow(lrSaturate(dot(outDir, uSunDir)), 600.0) * lrCloudShadow(wxz), below, f);
+      // The sun through the window: its disc, broken up by every ripple into darting flakes of light (the
+      // roughness inside a pixel spreads it), with a glow round it from the water's own scattering.
+      float spread = 0.00004 + 0.3 * max(roughness.x, roughness.y), miss = 1.0 - lrSaturate(dot(outDir, uSunDir));
+      vec3 sun = uSunE * (0.00004 / spread * 5000.0 * exp(-miss / spread) + 6.0 * exp(-miss / 0.004)) * lrCloudShadow(wxz) * step(0.0, uSunDir.y);
+      c = mix(lrEnv(normalize(vec3(outDir.x, abs(outDir.y) + 0.02, outDir.z)), 1e-3) + min(sun, vec3(4000.0)), below, f);
     }
+    c += spray * nearby * daylight / PI * 0.3;
     outColor = vec4(c, -3000.0);
     return;
   }
@@ -227,7 +244,10 @@ void main() {
     vec3 hit = vRel + T * mix(min(depth0, 25.0) / max(-T.y, 0.35), column / max(dot(T.xz, bedSlope) - T.y, 0.25), near);
     vec4 clip = uViewProj * vec4(hit.x, hit.y - lrCurveDrop(hit.xz), hit.z, 1.0);
     bed = texture(tRefr, clip.xy / clip.w * 0.5 + 0.5);
-    if (clip.w <= 0.0 || bed.a <= -LR_WET_BAND) bed = bed0;           // the bent ray left the water (or the screen): look straight through
+    // The bent ray left the water (or the screen), or landed on something far shallower than what lies straight
+    // below (a hull, a swimmer's arm, a fish near the surface: smeared over the sea if taken for the bed): look
+    // straight through instead.
+    if (clip.w <= 0.0 || bed.a <= -LR_WET_BAND || (hasBed0 && bed.a < 0.45 * bed0.a - 0.05)) bed = bed0;
   }
   bool hasBed = bed.a > -LR_WET_BAND;
   // bed.a is the depth below STILL water of what we see; add how far the surface here stands above still water.

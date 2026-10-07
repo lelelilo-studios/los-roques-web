@@ -8,25 +8,10 @@
 //
 // update() takes the scene as numbers; nothing here knows about three or the DOM.
 
-const fract = v => v - Math.floor(v), clamp01 = v => Math.min(1, Math.max(0, v));
-const smooth = (a, b, v) => { const t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
+import { runup, swashPhase } from '../data/shoreCPU.js';
 
-/** The shader's lrHash12 / lrNoise (common.glsl.js), so the swash heard is the swash seen. */
-function hash12(x, y) {
-  let a = fract(x * 0.1031), b = fract(y * 0.1031), c = a;
-  const d = a * (b + 33.33) + b * (c + 33.33) + c * (a + 33.33);
-  a += d; b += d; c += d;
-  return fract((a + b) * c);
-}
-export function noise2(x, y) {
-  const i = Math.floor(x), j = Math.floor(y), f = x - i, g = y - j, u = f * f * (3 - 2 * f), v = g * g * (3 - 2 * g);
-  return (hash12(i, j) * (1 - u) + hash12(i + 1, j) * u) * (1 - v) + (hash12(i, j + 1) * (1 - u) + hash12(i + 1, j + 1) * u) * v;
-}
-export const SWASH_T = 4.6;                                   // LR_SWASH_T in shore.glsl.js
-/** Where a point of the waterline is in its swash cycle at time t (0 as a wave arrives): lrBeach() at the waterline. */
-export const swashPhase = (x, z, t) => fract(t / SWASH_T - 1.3 * noise2(x / 13, z / 13) - 2.6 * noise2(x / 41, z / 41));
-/** How high the swash of waves of height hs runs (lrRunup in shore.glsl.js). */
-export const runup = hs => 0.8 * Math.min(hs, 0.22) + 0.015;
+const clamp01 = v => Math.min(1, Math.max(0, v));
+const smooth = (a, b, v) => { const t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
 
 function noiseBuffer(ctx, seconds, colour) {
   const n = Math.floor(ctx.sampleRate * seconds), buffer = ctx.createBuffer(1, n, ctx.sampleRate), d = buffer.getChannelData(0);
@@ -209,3 +194,5 @@ export async function measure(seconds, scene, steps = []) {
   for (let i = Math.floor(rate * 0.5); i < d.length; i++) { const v = d[i]; if (!Number.isFinite(v)) bad = true; sum += v * v; peak = Math.max(peak, Math.abs(v)); }
   return { rms: Math.sqrt(sum / (d.length - rate * 0.5)), peak, bad };
 }
+
+export { runup, swashPhase };

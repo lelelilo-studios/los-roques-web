@@ -56,11 +56,18 @@ void main() {
   vec3 albedo = glow > 0.5 ? vec3(0.05) : vColor;
   // Sun, sky, and the light the pale ground throws back up (what keeps a shaded wall from going sky-blue).
   vec3 bounce = (uSunE * lrSaturate(uSunDir.y) + uSkyE) * vec3(0.46, 0.43, 0.36) * 0.5;
-  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * lrCloudShadow(uCamXZ + vRel.xz) * lrShadow(vRel, n) + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
+  float sunLit = lrCloudShadow(uCamXZ + vRel.xz) * lrShadow(vRel, n);
+  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * sunLit + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
+  vec3 sheen = vec3(0.0);
+#ifdef LR_SMOOTH
+  // (Skin has a sheen, and catches the sky along its edges.)
+  vec3 e = normalize(toEye);
+  sheen = uSunE * sunLit * 0.05 * pow(lrSaturate(dot(reflect(-e, n), uSunDir)), 30.0) + uSkyE / PI * 0.25 * pow(1.0 - lrSaturate(dot(n, e)), 4.0);
+#endif
   float water = uSeaLevel - vRel.y;
   // Same convention as the terrain: under water write reflectance and depth, above it radiance.
   if (water > 0.0) outColor = vec4(albedo * light / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), water);
-  else outColor = vec4(albedo * light / PI + glow * (vColor - 1.0) * uNight * 0.02, -1000.0);
+  else outColor = vec4(albedo * light / PI + sheen + glow * (vColor - 1.0) * uNight * 0.02, -1000.0);
 }`;
 
 export function createObjectMaterial(shadowTaps = 8, smooth = false) {

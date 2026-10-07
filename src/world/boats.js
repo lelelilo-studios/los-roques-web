@@ -94,13 +94,31 @@ export class Boats {
     this._w = [0, 0, 0, 0];
   }
 
-  /** Local wave heights (std dev of each cascade) at a world point, as the shader computes them. */
+  /**
+   * The wave map at a world point, as the shader's lrWaveMap reads it: [share of ocean swell arriving, upwind
+   * fetch (log), distance to the nearest breaker line (sqrt-encoded), breaker strength], each 0..1, linear
+   * between texels, and open sea beyond the map (blended in over its outer tenth).
+   */
+  mapAt(x, z, out = [0, 0, 0, 0]) {
+    const m = this.waveMap, u = (x - this.rect.x) / this.rect.w, v = (z - this.rect.z) / this.rect.h;
+    const e = Math.max(Math.abs(u - 0.5), Math.abs(v - 0.5)) * 2, k = Math.min(1, Math.max(0, (e - 0.8) / 0.19)), open = k * k * (3 - 2 * k);
+    const px = Math.min(m.width - 1, Math.max(0, u * m.width - 0.5)), pz = Math.min(m.height - 1, Math.max(0, v * m.height - 0.5));
+    const i0 = Math.min(m.width - 2, Math.floor(px)), j0 = Math.min(m.height - 2, Math.floor(pz)), fx = px - i0, fz = pz - j0, a = (j0 * m.width + i0) * 4, b = a + m.width * 4, d = m.rgba;
+    for (let c = 0; c < 4; c++) {
+      const t = ((d[a + c] * (1 - fx) + d[a + 4 + c] * fx) * (1 - fz) + (d[b + c] * (1 - fx) + d[b + 4 + c] * fx) * fz) / 255;
+      out[c] = t + ((c < 3 ? 1 : 0) - t) * open;
+    }
+    return out;
+  }
+
+  /** Local wave heights (std dev of each cascade) at a world point, as the shader computes them (lrWaveWeights). */
   weightsAt(x, z, depth) {
-    const m = this.waveMap, u = (x - this.rect.x) / this.rect.w, v = (z - this.rect.z) / this.rect.h, w = this._w;
-    if (u < 0 || u > 1 || v < 0 || v > 1) this.waves.weightsAt(1, 1, w);
-    else { const i = (Math.min(m.height - 1, Math.floor(v * m.height)) * m.width + Math.min(m.width - 1, Math.floor(u * m.width))) * 4; this.waves.weightsAt(m.rgba[i + 1] / 255, m.rgba[i] / 255, w); }
-    const cap = Math.min(1, 0.4 * Math.max(depth, 0) / Math.max(2 * Math.hypot(w[0], w[1], w[2]), 1e-4));
-    for (let i = 0; i < 4; i++) w[i] *= cap;
+    const w = this._w, m = this.mapAt(x, z, this._map ??= [0, 0, 0, 0]);
+    this.waves.weightsAt(m[1], m[0], w);
+    // A wave cannot stand much taller than the water is deep; the ripples are capped on their own (lrWaveCap).
+    const room = 0.2 * Math.max(depth, 0), cap = Math.min(1, room / Math.max(Math.hypot(w[0], w[1], w[2]), 1e-4));
+    for (let i = 0; i < 3; i++) w[i] *= cap;
+    w[3] *= Math.min(1, room / Math.max(w[3], 1e-5));
     return w;
   }
 

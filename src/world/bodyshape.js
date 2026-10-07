@@ -1,7 +1,7 @@
 // The shape of your body, as plain arrays (no three, so it can be measured in a test): a jointed figure of
 // tapered tubes posed from the walker's gait. Legs reach by two bones for where each foot is in its pace, arms
 // swing against them, knees fold as you crouch, and the trunk moves back from the eye as you bend your head
-// to look down.
+// to look down. In water deep enough to carry you the same figure swims breaststroke (poseSwim).
 //
 // Proportions are those of a person whose eyes are 1.65 m above the ground: 1.76 m tall, hips at 0.93 m,
 // shoulders 0.48 m across at 1.43 m, a 0.25 m foot. Local frame: +x right, +y up, forward is -z; the eye is
@@ -158,4 +158,76 @@ export function poseBody(t, h, { phase, stride, eye, look = 0 }) {
   h.tube([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.078, 0.098], [0.062, 0.08], SKIN);
   h.cap([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.062, 0.08], SKIN, 0.55);
   return { ...joints, hip, shoulder };
+}
+
+const UPPER_ARM = 0.29, FOREARM = 0.25, HAND = 0.17;
+const lerp3 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+const ease = (a, b, v) => { const k = Math.min(1, Math.max(0, (v - a) / (b - a))); return k * k * (3 - 2 * k); };
+
+/**
+ * Fills `t` and `h` with the body swimming breaststroke: lying in the water behind the eye, arms reaching
+ * forward, sweeping out and back and tucking in under the chest; legs drawing up and kicking as the arms
+ * recover. Here the eye is the origin (forward is -z): place the meshes at the eye.
+ * @param {object} p
+ * @param {number} p.stroke  phase of the stroke, radians (2 pi per stroke)
+ * @param {number} [p.under]  0 at the surface (the body slopes down behind the head), 1 dived (it lies along the way you look)
+ */
+export function poseSwim(t, h, { stroke, under = 0 }) {
+  t.n = 0; h.n = 0;
+  const u = stroke / (2 * Math.PI) - Math.floor(stroke / (2 * Math.PI));
+  // (At the surface only the head is out of the water: the shoulders ride a hand's breadth under it, and the
+  // arms work below the surface, seen through it. Dived, the body lies in line with the head.)
+  const chest = [0, -0.3 + 0.14 * under, 0.1], sink = 0.34 - 0.3 * under, hip = [0, chest[1] - TORSO * sink, chest[2] + TORSO * Math.sqrt(1 - sink * sink)];
+  const joints = { hips: [], knees: [], ankles: [], shoulders: [], elbows: [], wrists: [], hip, chest };
+  // How far through each part of the stroke: the pull (hands out and back), the tuck (hands in under the chest,
+  // knees drawn up), the reach (hands shoot forward as the legs kick).
+  const pull = ease(0.38, 0.68, u), tuck = ease(0.68, 0.84, u), shoot = ease(0.84, 1.0, u), drawn = ease(0.6, 0.84, u) * (1 - ease(0.86, 0.98, u));
+  for (const side of [-1, 1]) {
+    // Arms.
+    const sh = [side * SHOULDER, chest[1] + 0.02, chest[2]];
+    const ahead = [sh[0] - side * 0.11, sh[1] - 0.05, sh[2] - 0.5], out = [sh[0] + side * 0.27, sh[1] - 0.08, sh[2] - 0.24], inn = [sh[0] - side * 0.07, sh[1] - 0.19, sh[2] - 0.13];
+    const target = lerp3(lerp3(lerp3(ahead, out, pull), inn, tuck), ahead, shoot);
+    const elbow = reach(sh, target, UPPER_ARM, FOREARM, [side * 0.8, -0.6, 0.1]);
+    const dir = [target[0] - elbow[0], target[1] - elbow[1], target[2] - elbow[2]], dl = Math.hypot(...dir) || 1;
+    const tip = [target[0] + dir[0] / dl * HAND, target[1] + dir[1] / dl * HAND, target[2] + dir[2] / dl * HAND];
+    const sleeve = lerp3(sh, elbow, 0.3);                               // (short sleeves, pushed up by the water)
+    t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
+    t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
+    t.tube(elbow, target, [0.036, 0.04], [0.026, 0.03], SKIN);
+    t.tube(target, tip, [0.04, 0.016], [0.034, 0.011], SKIN);            // the hand, flat like a paddle
+    t.cap(target, tip, [0.034, 0.011], SKIN);
+    t.tube([sh[0], sh[1], sh[2]], [side * 0.08, chest[1] + 0.05, chest[2] - 0.01], [0.05, 0.058], [0.05, 0.05], SHIRT);
+    joints.shoulders.push(sh); joints.elbows.push(elbow); joints.wrists.push(target);
+    // Legs: trailing straight, drawn up with the knees apart, kicked back.
+    const hipJ = [side * HIP, hip[1], hip[2]], back = [hip[2] - chest[2], hip[1] - chest[1]], bl = Math.hypot(back[0], back[1]) || 1, bz = back[0] / bl, by = back[1] / bl;
+    const straight = [hipJ[0] + side * 0.03, hipJ[1] + by * 0.84 + 0.03, hipJ[2] + bz * 0.84], up = [hipJ[0] + side * 0.3, hipJ[1] + by * 0.4 - 0.06, hipJ[2] + bz * 0.4];
+    const ankle = lerp3(straight, up, drawn), knee = reach(hipJ, ankle, THIGH, SHIN, [side * 0.9, -0.5, -0.2]);
+    const hem = lerp3(hipJ, knee, 0.55), calf = lerp3(knee, ankle, 0.35);
+    t.tube(hipJ, hem, [0.088, 0.092], [0.074, 0.076], SHORTS);
+    t.tube(hem, knee, [0.07, 0.072], [0.056, 0.058], SKIN);
+    t.tube(knee, calf, [0.054, 0.056], [0.052, 0.058], SKIN);
+    t.tube(calf, ankle, [0.052, 0.058], [0.034, 0.038], SKIN);
+    // (The foot trails along the shin, toes pointed.)
+    const shin = [ankle[0] - knee[0], ankle[1] - knee[1], ankle[2] - knee[2]], sl = Math.hypot(...shin) || 1;
+    const toes = [ankle[0] + shin[0] / sl * 0.21 + side * 0.03 * drawn, ankle[1] + shin[1] / sl * 0.21, ankle[2] + shin[2] / sl * 0.21];
+    t.tube(ankle, toes, [0.036, 0.04], [0.046, 0.013], SKIN);
+    t.cap(ankle, toes, [0.046, 0.013], SKIN, 0.4);
+    joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
+  }
+  const on = k => lerp3(hip, chest, k), seat = lerp3(hip, chest, -0.18);
+  t.tube(seat, on(0.04), [0.15, 0.1], [0.172, 0.118], SHORTS);
+  t.tube(on(0.04), on(0.2), [0.172, 0.118], [0.16, 0.112], SHORTS);
+  t.tube(on(0.2), on(0.42), [0.162, 0.114], [0.148, 0.106], SHIRT);
+  t.tube(on(0.42), on(0.74), [0.148, 0.106], [0.172, 0.12], SHIRT);
+  t.tube(on(0.74), on(1.0), [0.172, 0.12], [0.168, 0.11], SHIRT);
+  const collar = [0, -0.09, 0.07];
+  t.tube(on(1.0), collar, [0.168, 0.11], [0.07, 0.066], SHIRT);
+  t.cap(on(1.0), collar, [0.07, 0.066], SHIRT, 0.25);
+  t.cap(on(0.04), seat, [0.15, 0.1], SHORTS, 0.35);
+  // The head, round the eye (only ever drawn into the shadow map).
+  h.tube(collar, [0, -0.07, 0.03], [0.056, 0.058], [0.058, 0.075], SKIN);
+  h.tube([0, -0.07, 0.03], [0, 0.03, 0.03], [0.074, 0.092], [0.078, 0.098], SKIN);
+  h.tube([0, 0.03, 0.03], [0, 0.085, 0.035], [0.078, 0.098], [0.062, 0.08], SKIN);
+  h.cap([0, 0.03, 0.03], [0, 0.085, 0.035], [0.062, 0.08], SKIN, 0.55);
+  return joints;
 }
