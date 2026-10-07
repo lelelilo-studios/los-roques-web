@@ -75,7 +75,10 @@ export class Birds {
         const heading = Math.atan2(-vz, vx), bank = b.line ? 0 : -0.35 * Math.sign(b.speed);
         // Frigatebirds hold their wings out and barely move them; pelicans give a few slow beats, then glide.
         const beat = b.line ? Math.max(0, Math.sin(t * 0.9 + b.phase * 40)) * Math.sin(t * 5.5 + i) * 0.55 : Math.sin(t * 1.3 + i * 2.1) * 0.06;
-        const y = b.alt + (b.line ? 0.4 * Math.sin(t * 0.5 + b.phase * 30) : 6 * Math.sin(t * 0.11 + i));
+        let y = b.alt + (b.line ? 0.4 * Math.sin(t * 0.5 + b.phase * 30) : 6 * Math.sin(t * 0.11 + i));
+        // (A bird does not skim past someone standing on the beach at arm's length: it rises over you as it
+        // comes near. They are a few flat triangles, made to be seen at a distance.)
+        if (eye.y < 30) { const near = Math.hypot(dx + b.cx + x, dz + b.cz + z); y += 14 * (1 - Math.min(1, Math.max(0, (near - 25) / 45)) ** 2) * (b.line ? 1 : 0.4); }
         this._e.set(bank, heading, 0, 'YXZ');
         this._q.setFromEuler(this._e);
         this._p.set(b.cx + x, y, b.cz + z);

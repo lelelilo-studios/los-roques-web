@@ -19,6 +19,7 @@ export const shared = {
   uRing: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -1e9, 0)) },     // rings you send out wading: x, z (wrapped to 64 m), time, strength
   tShadow: { value: null }, uShadowC: { value: new THREE.Vector3() }, uShadowR: { value: new THREE.Vector3(1, 0, 0) }, uShadowU: { value: new THREE.Vector3(0, 0, 1) },
   uShadowP: { value: new THREE.Vector4(1, 1, 0, 0) },
+  tShadowB: { value: null }, uShadowB: { value: new THREE.Vector4(0, 0, 0, 1) }, uShadowBP: { value: new THREE.Vector2(1, 0) },      // your own shadow's map (world/shadow.js)
   uShadowZ: { value: new THREE.Vector2(100, 0) },         // depth of the shadow map along the light (m), 1 if the depth buffer is reversed
   uCamTexel: { value: new THREE.Vector4() },
   uCamTexelShore: { value: new THREE.Vector4() },
@@ -84,7 +85,7 @@ export const CHUNK_UNIFORMS = {
   shore: ['uLift'],
   detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
   rings: ['uRing', 'uLeg'],
-  shadow: ['tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP'],
+  shadow: ['tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP', 'tShadowB', 'uShadowB', 'uShadowBP'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
   atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa', 'tEnv'],
   clouds: ['tCloudShape', 'tCloudDetail', 'uCloudLayer', 'uCloudWind'],

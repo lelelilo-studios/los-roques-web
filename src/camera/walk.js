@@ -44,6 +44,9 @@ export class Walker {
     this.stride = 0;                                              // pace against an easy walk: 0 standing, 1 walking, about 2 running
     this.stroke = 0;                                              // phase of the swimming stroke, radians
     this.sway = 0;                                                // the head's swing to the side of the planted foot, metres (to the right positive)
+    this.roll = 0;                                                // and its lean over that foot, radians
+    this.thud = 0;                                                // the jolt of a heel coming down, 1 fading to 0
+    this.turned = 0;                                              // how fast you are turning on the spot, as a pace (see stride)
   }
 
   /**
@@ -51,7 +54,7 @@ export class Walker {
    * surface at that spot at that moment (negative = under water) and stays fixed until the walker moves.
    */
   place({ x, z, yaw = this.yaw, look = this.look, height = STAND, eye = null }) {
-    Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, diveTimer: 0, stride: 0 });
+    Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0 });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
     this.body = height;
@@ -146,19 +149,28 @@ export class Walker {
       const before = Math.floor(this.phase / Math.PI);
       this.phase += travelled / paceLength(travelled / dt, crouch) * Math.PI;
       const after = Math.floor(this.phase / Math.PI);
-      if (after !== before) steps.push({ x: this.x, z: this.z, yaw: this.yaw, side: after & 1, depth: Math.max(this.surf - g2, 0), stride: this.stride });
+      if (after !== before) { steps.push({ x: this.x, z: this.z, yaw: this.yaw, side: after & 1, depth: Math.max(this.surf - g2, 0), stride: this.stride }); this.thud = Math.min(1.4, 0.4 + this.stride); }
     }
+    // Turning on the spot you shift your feet: small paces in place, faster the faster you turn.
+    const swung = Math.abs(Math.atan2(Math.sin(this.yaw - (this.lastYaw ?? this.yaw)), Math.cos(this.yaw - (this.lastYaw ?? this.yaw))));
+    this.lastYaw = this.yaw;
+    this.turned += ((onGround && dt > 0 ? Math.min(0.42, swung / dt * 0.16) : 0) - this.turned) * (1 - Math.exp(-dt * 6));
+    if (onGround && travelled < 0.2 * dt) this.phase += swung * 1.6;
     const stride = onGround ? Math.min(1, Math.hypot(this.vx, this.vz) / 1.2) : 0;
     // Afloat: a stroke every second and a half when swimming along, a slow scull when lying still.
     if (!onGround) this.stroke += (0.22 + 0.45 * Math.min(1, Math.hypot(this.vx, this.vz) / 0.7)) * dt * 2 * Math.PI;
     this.stride += ((onGround ? Math.hypot(this.vx, this.vz) / 1.4 : 0) - this.stride) * (1 - Math.exp(-dt * 8));
-    this.bob += (0.022 * this.bobAmount * stride * Math.abs(Math.sin(this.phase)) - this.bob) * (1 - Math.exp(-dt * 12));
-    // (Your weight goes over each foot in turn: the head swings a centimetre and a half from side to side.)
-    this.sway += (0.014 * this.bobAmount * stride * Math.sin(this.phase) - this.sway) * (1 - Math.exp(-dt * 10));
+    // The head rises as you pass over the planted leg and is lowest as the next heel comes down (three and a half
+    // centimetres at a walk); your weight goes over each foot in turn, the head swinging two centimetres to that
+    // side and leaning a quarter of a degree; and each heel lands with a small jolt.
+    this.bob += (0.035 * this.bobAmount * stride * Math.abs(Math.sin(this.phase)) - this.bob) * (1 - Math.exp(-dt * 14));
+    this.sway += (0.02 * this.bobAmount * stride * Math.sin(this.phase) - this.sway) * (1 - Math.exp(-dt * 10));
+    this.roll += (0.0045 * this.bobAmount * stride * Math.sin(this.phase) - this.roll) * (1 - Math.exp(-dt * 10));
+    this.thud *= Math.exp(-dt * 9);
     // (Whatever happened above, you are somewhere. A position that is not a number would stay one, and black
     // the picture out for good: go back to the last place that was.)
-    if (Number.isFinite(this.x + this.z + this.yaw + this.look + this.eyeY + this.bob + this.sway)) this.safe = [this.x, this.z, this.yaw, this.look];
-    else if (this.safe) { this.bob = this.sway = this.stride = 0; this.place({ x: this.safe[0], z: this.safe[1], yaw: this.safe[2], look: this.safe[3] }); }
+    if (Number.isFinite(this.x + this.z + this.yaw + this.look + this.eyeY + this.bob + this.sway + this.roll + this.thud + this.turned)) this.safe = [this.x, this.z, this.yaw, this.look];
+    else if (this.safe) { this.bob = this.sway = this.stride = this.roll = this.thud = this.turned = 0; this.place({ x: this.safe[0], z: this.safe[1], yaw: this.safe[2], look: this.safe[3] }); }
     return steps;
   }
 }
@@ -222,7 +234,9 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
       if (!active() || typing(e)) return;
       const k = key(e);
       if (k === 'Tab' || (k === 'Escape' && document.pointerLockElement !== el)) { e.preventDefault(); onLeave(); return; }
-      if (['w', 'a', 's', 'd', 'c', ' ', 'Shift', 'Control', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
+      // (Ctrl is not among them, though many crouch with it by habit: with W, forward, it is the browser's "close
+      // this tab", which no page can prevent. Crouching or diving while going forward closed the page.)
+      if (['w', 'a', 's', 'd', 'c', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
     }),
     on(window, 'keyup', e => held.delete(key(e))),
     on(window, 'blur', () => held.clear()),
@@ -260,7 +274,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
         fwd: Math.max(-1, Math.min(1, h('w') + h('ArrowUp') - h('s') - h('ArrowDown') + touch.vec[1])),
         right: Math.max(-1, Math.min(1, h('d') + h('ArrowRight') - h('a') - h('ArrowLeft') + touch.vec[0])),
         run: held.has('Shift') || pressed.has('run') || Math.hypot(touch.vec[0], touch.vec[1]) > 0.97,
-        down: held.has('c') || held.has('Control') || pressed.has('down'), up: held.has(' ') || pressed.has('up'),
+        down: held.has('c') || pressed.has('down'), up: held.has(' ') || pressed.has('up'),
       };
     },
     release() { held.clear(); pressed.clear(); touch.stick = touch.look = null; touch.vec = [0, 0]; if (document.pointerLockElement === el) document.exitPointerLock?.(); },

@@ -10,7 +10,8 @@ import { loadData } from './data/loader.js';
 import { Ground } from './data/geoCPU.js';
 import { CameraRig, attachOrbitInput } from './camera/rig.js';
 import { OVERVIEW, shotFor, walkSpotFor } from './camera/bookmarks.js';
-import { Walker, attachWalkInput, buildingBlocker } from './camera/walk.js';
+import { Walker, attachWalkInput, buildingBlocker, paceLength } from './camera/walk.js';
+import { footfall } from './world/bodyshape.js';
 import { Terrain } from './world/terrain.js';
 import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
@@ -62,10 +63,13 @@ export async function start(canvas, onProgress = () => {}) {
 
   // ---- when something goes wrong: say so on the page, and carry on or start again
   let noticeBox = null;
-  /** Shows a line of text at the foot of the page, with an optional button ([label, action]); no text hides it. */
-  function notice(text, button = null) {
+  /** Shows a line of text at the foot of the page, with an optional button ([label, action]), for `seconds` if given; no text hides it. */
+  let noticeTimer = 0;
+  function notice(text, button = null, seconds = 0) {
     if (!params.ui) return;
+    clearTimeout(noticeTimer);
     if (!text) { noticeBox?.remove(); noticeBox = null; return; }
+    if (seconds) noticeTimer = setTimeout(() => notice(''), seconds * 1000);
     noticeBox ??= document.body.appendChild(Object.assign(document.createElement('div'), { className: 'notice' }));
     noticeBox.replaceChildren(Object.assign(document.createElement('span'), { textContent: text }));
     if (button) noticeBox.append(Object.assign(document.createElement('button'), { textContent: button[0], onclick: button[1] }));
@@ -279,8 +283,11 @@ export async function start(canvas, onProgress = () => {}) {
       shared.uRing.value[rings++ % 6].set(wrap64(step.x), wrap64(step.z), clock.time, Math.min(1, 0.4 + step.depth * 2));
       return;
     }
-    // The print is where that foot came down: a hip's width to its side, and ahead of you by the reach of the pace (see world/body.js).
-    const side = step.side ? 0.1 : -0.1, ahead = 0.34 * Math.min(step.stride ?? 1, 1.6) - 0.08, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
+    // The print is where that foot came down: under the foot itself as it was posed a moment ago (the middle of
+    // the sole is 6 cm ahead of the ankle), or, when nothing is being drawn (a test walking on fast), a hip's
+    // width to the side and ahead of you by the reach of the pace.
+    const landed = frames - posedAt <= 1 ? body.joints?.ankles?.[step.side] : null, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
+    const side = landed ? landed[0] + (step.side ? 0.007 : -0.007) : step.side ? 0.1 : -0.1, ahead = landed ? 0.06 - landed[2] : footfall(step.stride ?? 1);
     shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), Math.atan2(Math.sin(step.yaw), Math.cos(step.yaw)) + (step.side ? 0.12 : -0.12) + (feetWet() ? 64 : 0), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
   }
@@ -443,7 +450,7 @@ export async function start(canvas, onProgress = () => {}) {
   resize();
 
   let adapt = 1;                                            // how far the eye has opened up for a cloud's shade (1 in the sun)
-  let frames = 0, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
+  let frames = 0, posedAt = -9, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
   function frame(dt = 0) {
     frames++;
     if (env.playing && dt > 0) {
@@ -505,7 +512,12 @@ export async function start(canvas, onProgress = () => {}) {
       const fx = Math.sin(walker.yaw), fz = -Math.cos(walker.yaw), g = (dx, dz) => footing.heightAt(walker.x + dx, walker.z + dz);
       const slope = [(g(fx * 0.3, fz * 0.3) - g(-fx * 0.3, -fz * 0.3)) / 0.6, (g(-fz * 0.2, fx * 0.2) - g(fz * 0.2, -fx * 0.2)) / 0.4];
       const wade = Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4));
-      body.pose({ phase: walker.phase, stride: walker.stride, eye: walker.body, look: walker.look, slope, wade, breath: Math.sin(clock.time * 1.45) }); body.place(walker.eyeY - walker.body, walker.yaw);
+      // (The planted foot goes back under you at exactly the rate you travel, so it stays where it was put; your
+      // weight presses it a centimetre into dry sand, less into wet; turning on the spot you shift your feet.)
+      const speed = Math.hypot(walker.vx, walker.vz), firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5;
+      body.pose({ phase: walker.phase, stride: Math.max(walker.stride, walker.turned), eye: walker.body, look: walker.look, slope, wade, breath: Math.sin(clock.time * 1.45),
+        pace: speed > 0.3 ? paceLength(speed, Math.min(1, Math.max(0, (1.65 - walker.body) / 0.9))) : null, sink: onDeck(walker.x, walker.z) ? 0 : firm ? 0.004 : 0.011 });
+      posedAt = frames; body.place(walker.eyeY - walker.body, walker.yaw);
     }
     else if (walking) {
       const under = walker.diving ? 1 : 0;
@@ -529,7 +541,9 @@ export async function start(canvas, onProgress = () => {}) {
     if (shadows.enabled && (walking || rig.dist < 1500)) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup], walking ? [body.headMesh] : [], casters);
+      // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
+      const figure = walking ? { meshes: [body.mesh, body.headMesh], centre: standing ? { x: 0, y: walker.eyeY - walker.body + 0.9, z: 0 } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, ...(walking ? [body.mesh] : [])], [], casters, figure);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
@@ -550,6 +564,17 @@ export async function start(canvas, onProgress = () => {}) {
     // (Arriving by a link there was no click yet: the first one in first person starts the sound.)
     for (const type of ['pointerdown', 'keydown']) addEventListener(type, () => { if (rig.mode === 'walk' && !sound.on) sound.start(); });
     walkInput = attachWalkInput(walker, canvas, { active: () => rig.mode === 'walk', onLeave: () => app.setWalk(false), buttons: [...hud.querySelectorAll('[data-walk]')] });
+    // Ctrl with W (forward) closes the tab, and no page can stop that. People crouch with Ctrl by habit: say
+    // which key does it, and for as long as Ctrl is down have the browser ask before the page goes.
+    let ctrlAt = -1e9;
+    addEventListener('keydown', e => {
+      if (e.key !== 'Control' || rig.mode !== 'walk') return;
+      if (performance.now() - ctrlAt > 4000) notice('Crouch or dive with C. Ctrl is left alone here: Ctrl+W would close the tab.', null, 6);
+      ctrlAt = performance.now();
+    });
+    addEventListener('keyup', e => { if (e.key === 'Control') ctrlAt = -1e9; });
+    addEventListener('blur', () => { ctrlAt = -1e9; });
+    addEventListener('beforeunload', e => { if (rig.mode === 'walk' && performance.now() - ctrlAt < 1500) { e.preventDefault(); e.returnValue = ''; } });
   }
   attachOrbitInput(rig, canvas, rect, saveHash);
   if (walkLink) app.setWalk(true, walkLink, true);
@@ -571,6 +596,29 @@ export async function start(canvas, onProgress = () => {}) {
       env.hours = hour; applyEnv(); app.setWalk(true, bar, true);
     }
     if (software) notice('This browser is drawing without the graphics card (software rendering), so you get the simplest, slow form of the simulation. In Chrome or Chromium the page chrome://gpu says why.', ['OK', () => notice('')]);
+    // A note of how each visit ends, kept in this browser. If the last one stopped without the page being closed
+    // (the tab or the browser died under it), say so on the next start and offer what was noted, to pass on.
+    {
+      const KEY = 'lr-last-run', log = { build: null, started: new Date().toISOString(), ended: false };
+      let last = null;
+      try { last = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { /* no storage */ }
+      fetch('build.json').then(r => (r.ok ? r.json() : null)).then(b => { log.build = b?.build ?? null; }).catch(() => {});
+      const keep = () => {
+        Object.assign(log, { seconds: Math.round(performance.now() / 1000), frames, doing: rig.mode !== 'walk' ? 'in the air' : walker.diving ? 'diving' : walker.afloat ? 'swimming' : walker.depth > 0.05 ? 'wading' : 'on foot',
+          at: [Math.round(walker.x), Math.round(walker.z)], tier: tierName, scale: +dynamic.scale.toFixed(2), frameMs: Math.round(dynamic.pace * 1000), gpu: gpuName.slice(0, 120), software,
+          sound: sound.ctx?.state || 'off', lost, hidden: document.hidden, errors: errors.slice(-3).map(t => String(t).slice(0, 200)) });
+        try { localStorage.setItem(KEY, JSON.stringify(log)); } catch { /* no storage */ }
+      };
+      setInterval(keep, 2000);
+      addEventListener('pagehide', () => { log.ended = true; keep(); });
+      if (last && !last.ended && !last.hidden && last.seconds > 8) {
+        const text = JSON.stringify(last);
+        notice(`Last time this page stopped without being closed (${last.seconds} s in, ${last.doing}).`, ['Copy the details', () => {
+          const done = () => notice('Copied. Paste them to whoever looks after this page.', null, 8);
+          if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, () => prompt('Copy these details:', text)); else prompt('Copy these details:', text);
+        }]);
+      }
+    }
     let lastFrame = performance.now(), failures = 0;
     const loop = now => {
       requestAnimationFrame(loop);                         // (first: nothing that goes wrong below may end the animation)

@@ -89,10 +89,11 @@ export class CameraRig {
     let dirX, dirY, dirZ;
     if (walking) {
       // First person: the walker owns the eye. The ground detail is centred a few metres ahead of the feet.
-      const w = this.walker, cl = Math.cos(w.look);
-      eye.x = w.x + cy * w.sway; eye.z = w.z + sy * w.sway; eye.y = w.eyeY + w.bob;
+      // (A heel coming down drops the eye half a centimetre and nods it a third of a degree, for an instant.)
+      const w = this.walker, jolt = (w.thud || 0) * (w.bobAmount ?? 1), look = w.look - 0.006 * jolt, cl = Math.cos(look);
+      eye.x = w.x + cy * w.sway; eye.z = w.z + sy * w.sway; eye.y = w.eyeY + w.bob - 0.005 * jolt;
       this.target.x = w.x; this.target.z = w.z; this.target.y = eye.y;
-      dirX = sy * cl; dirY = Math.sin(w.look); dirZ = -cy * cl;
+      dirX = sy * cl; dirY = Math.sin(look); dirZ = -cy * cl;
       this.focus.x = w.x + sy * 6; this.focus.z = w.z - cy * 6;
       // 65 degrees across the short side of the screen.
       cam.fov = aspect >= 1 ? 65 : 2 * Math.atan(Math.tan(32.5 * DEG) / aspect) / DEG;
@@ -117,8 +118,8 @@ export class CameraRig {
     cam.aspect = aspect;
     cam.position.set(0, eye.y, 0);
     // An up vector square to the view direction: well defined even looking straight down.
-    const h = Math.hypot(dirX, dirZ);
-    cam.up.set(-sy * dirY, h, cy * dirY);
+    const h = Math.hypot(dirX, dirZ), roll = walking ? this.walker.roll || 0 : 0, cr = Math.cos(roll), sr = Math.sin(roll);
+    cam.up.set(-sy * dirY * cr + cy * sr, h * cr, cy * dirY * cr + sy * sr);
     _look.set(dirX, eye.y + dirY, dirZ);
     cam.lookAt(_look);
     cam.updateProjectionMatrix();
