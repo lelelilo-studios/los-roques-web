@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { Clipmap, clipmapFragment, clipmapVertex } from '../core/clipmap.js';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
+import { detailGLSL } from './detail.js';
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -50,6 +51,8 @@ const fragmentShader = /* glsl */`
 #include <lr_cloud_shadow>
 ${wavesGLSL}
 ${clipmapFragment}
+${detailGLSL}
+uniform vec4 uRing[6];        // rings you send out wading: x, z (detail coordinates), time, strength
 uniform sampler2D tRefr;      // copy of the opaque scene: rgb = lit bottom reflectance, a = water depth
 uniform sampler2D tWaterType; // 1 = lagoon water, 0 = clear ocean water
 uniform mat4 uViewProj;
@@ -105,7 +108,7 @@ void main() {
     vec3 c = below;
     if (dot(outDir, outDir) > 0.0) {
       float f = lrFresnel(dot(outDir, -nd));
-      c = mix(lrSkyRadiance(normalize(vec3(outDir.x, abs(outDir.y) + 0.02, outDir.z))) + uSunE * 40.0 * pow(lrSaturate(dot(outDir, uSunDir)), 600.0) * lrCloudShadow(wxz), below, f);
+      c = mix(lrEnv(normalize(vec3(outDir.x, abs(outDir.y) + 0.02, outDir.z)), 1e-3) + uSunE * 40.0 * pow(lrSaturate(dot(outDir, uSunDir)), 600.0) * lrCloudShadow(wxz), below, f);
     }
     outColor = vec4(c, -3000.0);
     return;
@@ -152,21 +155,41 @@ void main() {
   // ---- The water surface. Mean slope of the waves inside this pixel, and how much they vary within it.
   vec2 slope = vec2(0.0), var = vec2(0.0);
   float fold = 0.0;
+  vec4 weights = vec4(vWeights.xyz, vWeights.w * lrGust(wxz));                  // (the ripples come in gusts)
   for (int i = 0; i < 4; i++) {
     float t = uWaveTile[i];
     vec3 uvw = vec3(lrWaveUV(vGrid, i), float(i));
     vec4 b = textureGrad(tWaveB, uvw, gx / t, gy / t);
-    slope += vWeights[i] * b.xy;
-    var += vWeights[i] * vWeights[i] * max(b.zw - b.xy * b.xy, 0.0);
-    if (i < 2) fold += vWeights[i] * textureGrad(tWaveA, uvw, gx / t, gy / t).w;
+    slope += weights[i] * b.xy;
+    var += weights[i] * weights[i] * max(b.zw - b.xy * b.xy, 0.0);
+    if (i < 2) fold += weights[i] * textureGrad(tWaveA, uvw, gx / t, gy / t).w;
   }
-  // Capillary ripples too small for the cascades, where there is wind on the water at all.
-  var += 2e-4 + 0.5 * (0.0006 + 0.0003 * uWind.z) * lrSaturate(vWeights.w * 200.0) + 0.012 * uRain;      // raindrops pock the surface
-  // Water a finger deep running over sand is wrinkled by it (a film thinner than that is a mirror, and deeper
-  // water has its own waves).
-  var += 0.005 * smoothstep(0.0, 0.015, column) * (1.0 - smoothstep(0.06, 0.3, column));
+  // Ripples too small for the cascades. Close up they are drawn (the last cascade read twice more, smaller);
+  // from further off only the roughness they add is left, where there is wind on the water at all.
+  float close = 1.0 - smoothstep(0.03, 0.15, px);
+  if (close > 0.0) {
+    // (Water a finger deep running over sand is wrinkled by it, whatever the wind; a film thinner still is a mirror.)
+    float least = 0.0012 * smoothstep(0.0, 0.012, column) * (1.0 - smoothstep(0.08, 0.3, column));
+    vec2 uv = lrWaveUV(vGrid, 3), t = vec2(uWaveTile[3]), gain = max(weights.w, least) * LR_FINE_GAIN * close;
+    vec4 b1 = textureGrad(tWaveB, vec3(LR_FINE_1 * uv, 3.0), LR_FINE_1 * gx / t, LR_FINE_1 * gy / t);
+    vec4 b2 = textureGrad(tWaveB, vec3(LR_FINE_2 * uv, 3.0), LR_FINE_2 * gx / t, LR_FINE_2 * gy / t);
+    slope += gain.x * lrFineTurn1(b1.xy) + gain.y * lrFineTurn2(b2.xy);
+    var += gain.x * gain.x * max(0.5 * (b1.z + b1.w) - 0.5 * dot(b1.xy, b1.xy), 0.0) + gain.y * gain.y * max(0.5 * (b2.z + b2.w) - 0.5 * dot(b2.xy, b2.xy), 0.0);
+  }
+  var += 2e-4 + 0.5 * (0.0006 + 0.0003 * uWind.z) * lrSaturate(weights.w * 200.0) * (1.0 - close) + 0.012 * uRain;      // raindrops pock the surface
+  var += 0.004 * smoothstep(0.0, 0.015, column) * (1.0 - smoothstep(0.06, 0.3, column)) * (1.0 - close);
   // On the beach face the sheet lies on the sand, and an advancing front stands up from it.
   if (aboveStill > 0.0) slope += lrSheetSlope(bedSlope, aboveStill, sw);
+  if (close > 0.0) {
+    // Rings spreading from where you wade: a short train of ripples that widens and fades.
+    for (int i = 0; i < 6; i++) {
+      float age = uTime - uRing[i].z;
+      if (age < 0.0 || age > 5.0) continue;
+      vec2 q = mod(spot + uCamMod.xy - uRing[i].xy + 32.0, 64.0) - 32.0;
+      float r = length(q), x = r - 0.06 - 0.3 * age;
+      slope += q / max(r, 1e-3) * uRing[i].w * close * 0.22 / (1.0 + 2.5 * age) * exp(-x * x / (0.004 + 0.012 * age)) * cos(55.0 * x);
+    }
+  }
   vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
   float cosV = max(dot(n, V), 0.0), sigma = sqrt(max(var.x, var.y));
   float fresnel = lrMeanFresnel(cosV, sigma);
@@ -203,7 +226,7 @@ void main() {
     // 6 = wave weights, 7 = mean slope and roughness, 8 = surface height / bed depth / wave height, 9 = swash sheet / phase / shore distance.
     vec3 col;
     if (uDebug.x < 5.5) col = vec3(film ? 1.0 : 0.0, film ? 0.0 : 1.0, column * 5.0) * 2.0;
-    else if (uDebug.x < 6.5) col = vWeights.yzw * 60.0;
+    else if (uDebug.x < 6.5) col = weights.yzw * 60.0;
     else if (uDebug.x > 7.5 && uDebug.x < 8.5) col = vec3(surface * 5.0 + 0.5, -aboveStill * 2.0, vWaveY * 5.0 + 0.5);
     else if (uDebug.x > 8.5) col = vec3(sw.e * 20.0, sw.p, shore / 10.0);
     else col = vec3(slope * 4.0 + 0.5, sigma * 4.0) * 2.0;
@@ -212,20 +235,18 @@ void main() {
   if (uDebug.x > 3.5) { outColor = vec4(leaving / (1.0 - fresnel) * 0.979, -1000.0); return; }   // 4: only the light leaving the water (for comparing with the satellite)
   vec3 R = reflect(-V, n);
   R.y = abs(R.y) + 0.01;
-  vec3 reflected = lrSkyRadiance(normalize(R)) * fresnel;
+  vec3 reflected = lrEnv(normalize(R), max(var.x, var.y)) * fresnel;
   vec3 glitter = uSunE * min(lrSunGlitter(V, n, uSunDir, var), 400.0) * step(0.0, uSunDir.y) * shade;
   vec3 col = leaving + reflected + glitter;
 
   // ---- Foam.
   // Whitecaps: where the long waves pile the surface together (their horizontal motion converges at breaking crests).
   float foam = smoothstep(0.55, 0.85, -fold) * lrSaturate(uWind.z / 7.0 - 0.5);
-  // Swash: a band of bubbles right behind the front while it runs up, a thinner veil trailing it, both
-  // dissolving as the sheet drains.
-  float rush = (1.0 - smoothstep(0.25, 0.75, sw.p)) * smoothstep(0.0, 0.06, sw.p);
-  float nearShore = fine * (1.0 - smoothstep(2.0, 12.0, shore));
-  float front = exp(-max(sw.behind, 0.0) / ((0.12 * sw.reach + 0.003) * steep));
-  float veil = 0.3 * rush * (1.0 - smoothstep(0.0, sw.reach * steep + 1e-4, sw.behind));
-  foam = max(foam, nearShore * max(front * (0.25 + 0.55 * rush), veil) * smoothstep(0.02, 0.12, vHs));
+  // Swash: a raft of bubbles made at the front as it runs up, thinning as they burst; out in the water only
+  // where it is shallow enough for the little bore to break.
+  float nearShore = fine * (1.0 - smoothstep(2.0, 12.0, shore)) * smoothstep(0.02, 0.12, vHs) * sw.open * (1.0 - smoothstep(0.0, 0.3, -aboveStill));
+  float front = 0.92 * (1.0 - smoothstep(0.24, 0.36, sw.p)) * exp(-max(sw.behind, 0.0) / (0.007 * steep));
+  float swash = nearShore * max(front, 0.8 * exp(-lrSwashFoamAge(aboveStill, sw) / 1.6) * smoothstep(0.0, 0.05, sw.p));
   // Surf on the reef crests: white water where the swell breaks, torn into streaks that drift downwind and
   // pulse as each wave arrives.
   float dBreak = vWaveMap.b * vWaveMap.b * 250.0, lee = 1.0 - smoothstep(0.35, 0.8, vWaveMap.r);
@@ -242,6 +263,13 @@ void main() {
     float cover = lrFoamPattern(spot, lrSaturate(foam), px);
     col = mix(col, 0.82 * lit / PI, cover);
   }
+  if (swash > 0.003) {
+    // (The bubbles ride with the water: the pattern is read where the water came from.)
+    float tilt = length(bedSlope);
+    vec2 uphill = tilt > 1e-4 ? bedSlope / tilt : vec2(0.0);
+    vec2 f = lrFoam(spot + uCamMod.xy - uphill * lrSwashCarry(sw.behind + aboveStill, tilt), swash, px, gx, gy);
+    col = mix(col, 0.85 * f.y * lit / PI, f.x);
+  }
   if (uDebug.x > 0.5) {
     // Debug views: 1 = what the bed lookup found (red: bent ray, green: straight through, blue: nothing),
     // 2 = depth used / 100 m, 3 = bottom reflectance used.
@@ -257,7 +285,7 @@ export class Water {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-4, 4] });
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide,
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
         'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);

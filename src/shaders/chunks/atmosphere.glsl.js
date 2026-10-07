@@ -10,6 +10,7 @@ uniform sampler2D tMultiScatter;    // 32 x 32
 uniform sampler2D tSkyView;         // 192 x 108
 uniform float uMieScale;            // amount of haze (1 = clear maritime air)
 uniform vec3 uSunToa;               // sun irradiance above the atmosphere
+uniform sampler2D tEnv;             // the sky with its clouds: a panorama of the upper half (world/env.js)
 
 const float ATMO_BOTTOM = 6360.0;
 const float ATMO_TOP = 6460.0;
@@ -107,6 +108,13 @@ vec3 lrSkyRadiance(vec3 d) {
   vec2 uv = lrSkyViewUV(d, uSunDir);
   uv.y = clamp(uv.y, 0.5 / 108.0, 1.0 - 0.5 / 108.0);
   return uSunToa * textureLod(tSkyView, uv, 0.0).rgb;
+}
+
+// The sky with its clouds in direction d (taken into the upper half), as a surface whose slopes vary by 'var'
+// mirrors it: the rougher, the more blurred.
+vec3 lrEnv(vec3 d, float var) {
+  vec2 uv = vec2(atan(d.x, -d.z) * 0.15915494, sqrt(asin(clamp(abs(d.y), 0.0, 1.0)) * 0.63661977));
+  return textureLod(tEnv, uv, log2(max(4.0 * sqrt(var) / 0.0123, 1.0))).rgb;
 }
 
 // What the air does to light coming from 'dist' metres away in direction 'dir': dims it and adds its own glow.

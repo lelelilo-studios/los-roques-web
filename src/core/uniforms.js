@@ -15,6 +15,7 @@ export const shared = {
   uDetailMean: { value: [new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5)] },
   uFoot: { value: Array.from({ length: 24 }, () => new THREE.Vector4(0, 0, 0, -1e9)) },   // your footprints: x, z (wrapped to 64 m), heading, time made
   uFootCount: { value: 0 },
+  uRing: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -1e9, 0)) },     // rings you send out wading: x, z (wrapped to 64 m), time, strength
   uCamTexel: { value: new THREE.Vector4() },
   uCamTexelShore: { value: new THREE.Vector4() },
   uLift: { value: new THREE.Vector2(2e-4, 0) },   // how far the sea's mesh rides above the beach face: per metre, per metre squared
@@ -26,7 +27,7 @@ export const shared = {
   uSkyE: { value: new THREE.Vector3(0.35, 0.5, 0.75) },
   uSunToa: { value: new THREE.Vector3(10, 10, 10) },         // sun irradiance above the atmosphere (sets the scene's scale)
   uMieScale: { value: 1 },
-  tTransmittance: { value: null }, tMultiScatter: { value: null }, tSkyView: { value: null },
+  tTransmittance: { value: null }, tMultiScatter: { value: null }, tSkyView: { value: null }, tEnv: { value: null },
   uNearFar: { value: new THREE.Vector2(0.1, 200000) },
   uInvResolution: { value: new THREE.Vector2(1, 1) },
   // Water optics (1/m; R, G, B). Starting values; the data manifest and the validation pass refine them.
@@ -40,6 +41,7 @@ export const shared = {
   // Waves (set by world/waves.js).
   tWaveA: { value: null }, tWaveB: { value: null }, tWaveC: { value: null }, tWaveLUT: { value: null },
   uWaveTile: { value: new THREE.Vector4(499, 97, 19, 3.7) },
+  uWaveCurve: { value: new THREE.Vector4(1, 1, 1, 1) },
   uWaveCamMod: { value: [new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2()] },
   uWind: { value: new THREE.Vector3(-0.97, 0.26, 7) },
   uViewProj: { value: new THREE.Matrix4() },                  // of the camera-relative frame
@@ -73,8 +75,9 @@ export const CHUNK_UNIFORMS = {
   geo: ['tHeight', 'tShore', 'uMapTexels', 'uMpp', 'uCamTexel', 'uCamTexelShore'],
   shore: ['uLift'],
   detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
+  rings: ['uRing'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
-  atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa'],
+  atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa', 'tEnv'],
   clouds: ['tCloudShape', 'tCloudDetail', 'uCloudLayer', 'uCloudWind'],
   cloudShadow: ['tCloudShadow', 'uCloudShadow'],
 };

@@ -16,7 +16,9 @@ vec3 lrWaterRrs(vec3 rho, float H, float muS, float muV, vec3 a, vec3 bb) {
   vec3 duC = 1.03 * sqrt(1.0 + 2.4 * u), duB = 1.04 * sqrt(1.0 + 5.4 * u);
   vec3 rrsDeep = (0.084 + 0.170 * u) * u;
   vec3 rrs = rrsDeep * (1.0 - exp(-(1.0 / muS + duC / muV) * k * H)) + rho / PI * exp(-(1.0 / muS + duB / muV) * k * H);
-  return 0.52 * rrs / (1.0 - 1.7 * rrs);
+  // (The denominator is light bounced back down by the surface and up again: it follows the bed's ordinary
+  // brightness, not the lines where the waves focus the sun to several times that, so it is held there.)
+  return 0.52 * rrs / (1.0 - 1.7 * min(rrs, 0.33));
 }
 
 // Cosine of a direction after refraction into water, from its cosine in air.

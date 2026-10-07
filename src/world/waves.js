@@ -128,6 +128,7 @@ export class Waves {
   setWind(speed, from) {
     this.wind = { speed, from };
     this.components = CASCADES.map((c, i) => buildComponents(c, i, this.wind));
+    shared.uWaveCurve.value.set(...this.components.map(list => Math.sqrt(list.reduce((s, w) => s + w.a * w.a / 2 * w.k ** 4, 0))));
     // Lookup: u = upwind fetch (log, 10 m .. 20 km as in the wave map), v = share of ocean swell arriving.
     // Each texel holds the standard deviation in metres of the four cascades.
     const U = Math.max(speed, 0.5), kOcean = peakOcean(U), weights = this.weights = new Float32Array(LUT_W * LUT_H * 4);
@@ -167,7 +168,7 @@ export class Waves {
       }
       this.passes.forEach((pass, m) => {
         if (m === 0 && i === 3) return;                     // ripples do not move the mesh
-        if (m === 2 && (i === 0 || i === 3)) return;        // caustics come from cascades 1 and 2
+        if (m === 2 && i === 0) return;                     // the swell is too long to focus light on the bed
         pass.render(renderer, this.targets[m], i);
       });
       // Camera position wrapped to each tile (in doubles), so tile coordinates stay exact far from the origin.
@@ -200,6 +201,7 @@ uniform sampler2D tWaveMap;
 uniform vec4 uWaveTile;                // tile size of each cascade, metres
 uniform vec2 uWaveCamMod[4];           // camera xz wrapped to each tile
 uniform vec3 uWind;                    // xy = direction the wind blows towards (east, south), z = speed m/s
+uniform vec4 uWaveCurve;               // rms curvature (1/m) of each cascade's pattern at unit height
 
 // Tile coordinates of cascade i for a point 'rel' metres from the camera.
 vec2 lrWaveUV(vec2 rel, int i) { return (rel + uWaveCamMod[i]) / uWaveTile[i]; }
@@ -216,11 +218,23 @@ vec4 lrWaveWeightsRaw(vec4 wm) {
   return textureLod(tWaveLUT, vec2(wm.g, wm.r) * vec2(63.0 / 64.0, 15.0 / 16.0) + vec2(0.5 / 64.0, 0.5 / 16.0), 0.0);
 }
 // A wave cannot stand much taller than the water is deep (crest ~ 2 sigma, breaking at ~0.4 of the depth).
+// The ripples are small enough to live in a hand's breadth of water: they are capped on their own.
 vec4 lrWaveCap(vec4 w, float depth) {
-  return w * min(1.0, 0.4 * max(depth, 0.0) / max(2.0 * length(w.xyz), 1e-4));
+  float room = 0.2 * max(depth, 0.0);
+  return vec4(w.xyz * min(1.0, room / max(length(w.xyz), 1e-4)), w.w * min(1.0, room / max(w.w, 1e-5)));
 }
 vec4 lrWaveWeights(vec2 wxz, float depth) { return lrWaveCap(lrWaveWeightsRaw(lrWaveMap(wxz)), depth); }
 // Significant wave height of the sea arriving at a place (before the shallows take it down).
 float lrWaveHs(vec4 raw) { return 4.0 * length(raw.xyz); }
+
+// Ripples come in gusts: patches of ruffled water drifting downwind with glassy streaks between them.
+float lrGust(vec2 wxz) { return 0.5 + lrNoise(wxz / 7.0 - uWind.xy * uTime * 0.4) * 0.6 + lrNoise(wxz / 2.3 - uWind.xy * uTime * 0.55) * 0.4; }
+
+// Ripples finer than the last cascade: its pattern is read twice more through whole-number similarity
+// transforms (2.24 and 5 times smaller, turned 27 and 53 degrees), which still tile and keep the slopes.
+const mat2 LR_FINE_1 = mat2(2.0, -1.0, 1.0, 2.0), LR_FINE_2 = mat2(3.0, -4.0, 4.0, 3.0);
+const vec2 LR_FINE_GAIN = vec2(0.8, 0.6);                    // their slope against the cascade's own
+vec2 lrFineTurn1(vec2 s) { return vec2(2.0 * s.x - s.y, s.x + 2.0 * s.y) * 0.4472; }      // slopes read through them, turned back
+vec2 lrFineTurn2(vec2 s) { return vec2(3.0 * s.x - 4.0 * s.y, 4.0 * s.x + 3.0 * s.y) * 0.2; }
 `;
-export const WAVE_UNIFORMS = ['tWaveA', 'tWaveB', 'tWaveC', 'tWaveLUT', 'tWaveMap', 'uWaveTile', 'uWaveCamMod', 'uWind'];
+export const WAVE_UNIFORMS = ['tWaveA', 'tWaveB', 'tWaveC', 'tWaveLUT', 'tWaveMap', 'uWaveTile', 'uWaveCamMod', 'uWind', 'uWaveCurve'];

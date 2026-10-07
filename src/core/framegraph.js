@@ -116,7 +116,7 @@ void main() {
       vec3 sea = lrWaterRrs(vec3(0.0), 1000.0, lrCosInWater(lrSaturate(uSunDir.y)), lrCosInWater(mu), uAbsOcean, uBbOcean)
                * (uSunE * lrSaturate(uSunDir.y) + uSkyE) * (1.0 - fresnel);
       vec3 refl = reflect(-V, up);
-      sea += lrSkyRadiance(normalize(vec3(refl.x, abs(refl.y) + 0.01, refl.z))) * fresnel;
+      sea += lrEnv(normalize(vec3(refl.x, abs(refl.y) + 0.01, refl.z)), var.x) * fresnel;
       sea += uSunE * min(lrSunGlitter(V, up, uSunDir, var), 400.0) * step(0.0, uSunDir.y);
       col = lrAerial(sea, dir, min((uCamY - uSeaLevel) / max(-dir.y, 1e-4), 400000.0));
     }

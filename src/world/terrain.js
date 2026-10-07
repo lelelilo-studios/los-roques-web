@@ -80,15 +80,29 @@ layout(location = 0) out vec4 outColor;
 
 // Sunlight focused and spread by the waves above a bed point 'water' metres down: the wavy surface acts as a
 // sheet of weak lenses, and the brightness is one over the area a bundle of rays is squeezed into. Each ray is
-// traced back to where it entered; the sun's width blurs the pattern with depth (a coarser mip).
+// traced back to where it entered; the sun's width blurs the pattern with depth (a coarser mip). Chop draws
+// the broad bands in waist-deep water, ripples the fine bright net in water to the ankle. A band of waves bent
+// past its focus would turn the estimate inside out: each band is held back as it gets there.
 float lrCaustics(vec2 rel, float water, float px) {
   vec3 s = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
   float path = water / max(-s.y, 0.3);
   vec2 entry = rel - s.xz * path;
   float blur = path * 0.0093 + px, kd = 0.254 * path;
   vec3 h = vec3(0.0);
-  for (int i = 1; i < 3; i++) {
-    h += vWeights[i] * textureLod(tWaveC, vec3(lrWaveUV(entry, i), float(i)), log2(max(blur * 256.0 / uWaveTile[i], 1.0))).xyz;
+  for (int i = 1; i < 4; i++) {
+    float w = vWeights[i] * (i == 3 ? lrGust(uCamXZ + entry) : 1.0), bend = kd * w * uWaveCurve[i];
+    h += w / (1.0 + bend * bend) * textureLod(tWaveC, vec3(lrWaveUV(entry, i), float(i)), log2(max(blur * 256.0 / uWaveTile[i], 1.0))).xyz;
+  }
+  if (px < 0.05) {
+    // (The finer ripples: the last cascade through its two similarity transforms. Curvature grows with the
+    // shrinking: h(Sx)/s has s times the curvature, turned.)
+    float w = vWeights.w * lrGust(uCamXZ + entry) * (1.0 - smoothstep(0.02, 0.05, px)), lod = log2(max(blur * 256.0 / uWaveTile[3], 1.0));
+    vec2 uv = lrWaveUV(entry, 3);
+    vec3 c1 = textureLod(tWaveC, vec3(LR_FINE_1 * uv, 3.0), lod + 1.16).xyz, c2 = textureLod(tWaveC, vec3(LR_FINE_2 * uv, 3.0), lod + 2.32).xyz;
+    float b1 = kd * w * LR_FINE_GAIN.x * 2.236 * uWaveCurve[3], b2 = kd * w * LR_FINE_GAIN.y * 5.0 * uWaveCurve[3];
+    // Hessians turned back: R^T H R with R = S / s.
+    h += w * LR_FINE_GAIN.x * 2.236 / (1.0 + b1 * b1) * vec3(0.8 * c1.x + 0.2 * c1.y - 0.8 * c1.z, 0.2 * c1.x + 0.8 * c1.y + 0.8 * c1.z, 0.4 * (c1.x - c1.y) + 0.6 * c1.z);
+    h += w * LR_FINE_GAIN.y * 5.0 / (1.0 + b2 * b2) * vec3(0.36 * c2.x + 0.64 * c2.y - 0.96 * c2.z, 0.64 * c2.x + 0.36 * c2.y + 0.96 * c2.z, 0.48 * (c2.x - c2.y) - 0.28 * c2.z);
   }
   float det = (1.0 + kd * h.x) * (1.0 + kd * h.y) - kd * kd * h.z * h.z;
   return min(1.0 / max(abs(det), 0.08), 6.0);
@@ -334,7 +348,21 @@ void main() {
     vec3 mirror = reflect(-V, nf);
     mirror.y = abs(mirror.y) + 0.01;
     col *= mix(vec3(1.0), lrWetSand(albedo * light / lit), wetness) * mix(1.0, (1.0 - fresnel) / 0.979, gloss);
-    col += gloss * (fresnel * lrSkyRadiance(normalize(mirror)) + uSunE * min(lrSunGlitter(V, nf, uSunDir, vec2(rough)), 400.0) * step(0.0, uSunDir.y) * shade);
+    col += gloss * (fresnel * lrEnv(normalize(mirror), rough) + uSunE * min(lrSunGlitter(V, nf, uSunDir, vec2(rough)), 400.0) * step(0.0, uSunDir.y) * shade);
+    // What the sheet leaves behind: its last bubbles, bursting within a second or so, and a line of them at the
+    // top of each wave's run (this wave's, and fainter the one before).
+    if (px < 0.3 && sw.top > 1e-4) {
+      float a = -water, tilt = length(nG.xz / nG.y), since = lrSwashFoamAge(a, sw) - sw.age;        // how old the foam was when the sea left it
+      float left = 0.8 * exp(-max(since, 0.0) / 1.6) * exp(-sw.age / 0.9) * step(sw.age, 20.0);
+      float line = exp(-abs(a - sw.reach) / 0.003) * step(0.28, sw.p) * exp(-(sw.p - 0.28) * LR_SWASH_T / 4.0)
+                 + 0.5 * exp(-abs(a - sw.last) / 0.003) * exp(-(sw.p + 0.72) * LR_SWASH_T / 4.0);
+      float amount = max(left, 0.8 * line) * fine * sw.open * smoothstep(0.02, 0.12, vHs);
+      if (amount > 0.003) {
+        vec2 uphill = tilt > 1e-4 ? -nG.xz / nG.y / tilt : vec2(0.0);
+        vec2 f = lrFoam(d - uphill * lrSwashCarry(a, tilt), amount, px, ddx, ddy);
+        col = mix(col, 0.85 * f.y * lit / PI, f.x);
+      }
+    }
   }
   outColor = vec4(col, -1000.0);
 }`;

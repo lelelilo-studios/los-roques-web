@@ -16,6 +16,7 @@ import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
 import { Waves } from './world/waves.js';
 import { Detail } from './world/detail.js';
+import { EnvMap } from './world/env.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
@@ -66,6 +67,7 @@ export async function start(canvas, onProgress = () => {}) {
   const graph = new FrameGraph(R);
   const sky = new Sky(renderer, { syncReadback: params.freeze });
   const waves = new Waves(renderer);
+  const envMap = new EnvMap(renderer, tier.clouds);
   const detail = new Detail(renderer);
   shared.tDetail.value = detail.texture;
   detail.means.forEach((m, i) => shared.uDetailMean.value[i].copy(m));
@@ -128,8 +130,13 @@ export async function start(canvas, onProgress = () => {}) {
   // Your footprints: the last 24 paces on sand, left and right of the line walked.
   let prints = 0;
   const wrap64 = v => ((v % 64) + 64) % 64;
+  let rings = 0;
   function stamp(step) {
-    if (step.depth > 0.03) return;
+    if (step.depth > 0.03) {
+      // Wading: each pace sends a ring out over the water.
+      shared.uRing.value[rings++ % 6].set(wrap64(step.x), wrap64(step.z), clock.time, Math.min(1, 0.4 + step.depth * 2));
+      return;
+    }
     const side = step.side ? 0.085 : -0.085, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
     shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side), wrap64(step.z + sy * side), step.yaw + (step.side ? 0.12 : -0.12), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
@@ -253,6 +260,7 @@ export async function start(canvas, onProgress = () => {}) {
     waves.update(clock.time, view.cam);
     clouds.bakeSome(4);
     clouds.update(dt, waves.wind, env.cloud);
+    envMap.update(clouds.enabled && clouds.ready && env.cloud > 0.01, dt === 0);
     terrain.update(view, rect);
     water.update(view);
     // Night: the eye (the exposure) opens up as the sun goes down, and lamps come on.

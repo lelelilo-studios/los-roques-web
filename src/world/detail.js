@@ -112,9 +112,9 @@ vec4 relief(vec2 uv) {
 // ---- 2: the shore. Foam is a raft of bubbles; as it dies, holes open in the middle of the big ones and the
 // walls between them are the last to go.
 vec4 shore(vec2 uv) {
-  vec4 big = worley(uv, 18.0), mid = worley(uv + 0.23, 56.0), small = worley(uv + 0.61, 190.0);
-  float wallBig = smoothstep(0.0, 0.16, big.y - big.x), wallMid = smoothstep(0.0, 0.2, mid.y - mid.x), wallSmall = smoothstep(0.0, 0.3, small.y - small.x);
-  float order = 0.5 * wallBig * (0.6 + 0.4 * h1(big.zw)) + 0.3 * wallMid * (0.5 + 0.5 * h1(mid.zw)) + 0.12 * wallSmall + 0.08 * vn(uv, 64.0);
+  vec4 big = worley(uv, 12.0), mid = worley(uv + 0.23, 40.0), small = worley(uv + 0.61, 150.0);
+  float wallBig = smoothstep(0.0, 0.2, big.y - big.x), wallMid = smoothstep(0.0, 0.25, mid.y - mid.x), wallSmall = smoothstep(0.0, 0.3, small.y - small.x);
+  float order = 0.6 * wallBig * (0.55 + 0.45 * h1(big.zw)) + 0.26 * wallMid * (0.5 + 0.5 * h1(mid.zw)) + 0.08 * wallSmall + 0.06 * vn(uv, 64.0);
   // Light on the bubbles: each small one a bright dome with a darker rim.
   float shade = 0.55 + 0.45 * (1.0 - smoothstep(0.0, 0.55, small.x)) - 0.25 * (1.0 - wallSmall) + 0.15 * (vn(uv, 24.0) - 0.5);
   // Holes in wet sand: air escaping leaves pin holes 1-3 mm across, in loose groups; now and then a crab's burrow.
@@ -148,6 +148,16 @@ const mat2 LR_RELIEF_A = mat2(24.0, 0.0, 0.0, 24.0) / 64.0, LR_RELIEF_B = mat2(2
 vec4 lrDetailTap(vec2 d, mat2 m, float layer, vec2 ddx, vec2 ddy) { return textureGrad(tDetail, vec3(m * d, layer), m * ddx, m * ddy); }
 // (Slopes read through the rotated copy, turned back to world axes.)
 vec2 lrUnturn(vec2 s) { return vec2(0.8682 * s.x - 0.4961 * s.y, 0.4961 * s.x + 0.8682 * s.y); }
+
+// Foam at p (detail coordinates) where 'amount' (0..1) of the raft of bubbles is left: x = how much of the
+// pixel it covers, y = the light on its bubbles (about 1). As foam dies, holes open in the big bubbles and
+// the walls between them go last. From afar (pixel footprint px) only the average is left.
+vec2 lrFoam(vec2 p, float amount, float px, vec2 ddx, vec2 ddy) {
+  vec4 a = lrDetailTap(p, LR_GRAIN_A, 2.0, ddx, ddy), b = lrDetailTap(p, LR_GRAIN_B, 2.0, ddx, ddy);
+  float turn = smoothstep(0.35, 0.65, lrNoiseTile(p * 0.375 + 3.0, 24.0)), order = mix(a.r, b.r, turn);
+  float cover = smoothstep(0.0, 0.1, amount * 1.05 - order);
+  return vec2(mix(cover, amount * amount, smoothstep(0.02, 0.14, px)), 0.55 + 0.6 * mix(a.g, b.g, turn));
+}
 `;
 
 export class Detail {

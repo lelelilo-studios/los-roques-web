@@ -103,10 +103,21 @@ vec2 lrSheetSlope(vec2 sandSlope, float a, LrSwash s) {
   return sandSlope * smoothstep(0.0, 0.02, a) * (1.0 - s.lip * (1.0 - smoothstep(0.22, 0.34, s.p)));
 }
 
+// Foam of the swash. Bubbles are made at the front as it runs up, ride with the water (up the beach and back),
+// and burst over a couple of seconds; what the sheet leaves behind on the sand lasts a moment longer.
+// 'made' is how long ago (s) the front passed the point where the sand stands 'a' above still water.
+float lrSwashFoamAge(float a, LrSwash s) {
+  float passed = a > 0.0 ? 0.28 * asin(lrSaturate(a / max(s.reach, 1e-4))) / 1.5708 : 0.0;
+  return max(s.p - passed, 0.0) * LR_SWASH_T;
+}
+// How far the water (and the foam on it) has been carried up the beach from where it would lie at still
+// water, in metres along the slope's direction: 'level' metres of rise on sand sloping at 'slope'.
+float lrSwashCarry(float level, float slope) { return 0.8 * level / clamp(slope, 0.04, 0.3); }
+
 // Wet sand: what leaves a bottom of reflectance 'x' (per unit of light on it) under water of no depth at all,
 // as a share of what the same sand gives dry. This is the shallow-water model in lr_optics at H = 0, so sand
 // just uncovered and sand under a vanishing film are the same colour.
-vec3 lrWetSand(vec3 x) { return 0.52 / (1.0 - 1.7 * x / PI); }
+vec3 lrWetSand(vec3 x) { return 0.52 / (1.0 - 1.7 * min(x / PI, 0.33)); }
 // Sand soaked through is darker still (light is trapped between the grains: wet sand gives back about half of
 // what dry sand does). This is applied to the sand itself, wet or under the swash, so it too is seamless.
 const float LR_SOAKED = 0.72;
