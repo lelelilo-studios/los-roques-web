@@ -27,12 +27,15 @@ float lrShoreLag(vec2 wxz) {
        + 2.6 * (0.5 + 0.25 * (sin(b.x * 1.9 + 1.1 * sin(b.y * 1.3 + 4.0)) + sin(b.y * 2.1 + 1.5 * sin(b.x * 1.2 + 1.0))));
 }
 
-// An irregular field, -0.5..0.5, with features one to four metres across and no grid showing (two lattices
-// turned against each other, one warped by the other): thresholded, plain lattice noise drew boxy shapes.
-float lrRagged(vec2 p) {
-  vec2 a = mat2(0.866, 0.5, -0.5, 0.866) * p / 3.1, b = mat2(0.5, -0.866, 0.866, 0.5) * p / 1.3;
-  a += 0.6 * vec2(sin(b.y * 1.3), sin(b.x * 1.7));
-  return 0.62 * lrNoise(a) + 0.38 * lrNoise(b + 7.0) - 0.5;
+// An irregular field, -0.5..0.5, with features one to four metres across and no grid showing: two lattices
+// of different pitch, each bent by waves of another length (thresholded, plain lattice noise drew boxy shapes).
+// 'pw' is a pattern coordinate (the camera wrapped to 1024 m, plus the offset from it); everything here repeats
+// in 1024 m.
+float lrRagged(vec2 pw) {
+  vec2 w = pw * (6.2831853 / 1024.0);
+  vec2 a = pw * (330.0 / 1024.0) + 0.6 * vec2(sin(w.y * 263.0 + 1.3 * sin(w.x * 97.0)), sin(w.x * 229.0 + 1.7 * sin(w.y * 113.0)));
+  vec2 b = pw * (788.0 / 1024.0) + 0.4 * vec2(sin(w.x * 401.0), sin(w.y * 367.0)) + 7.0;
+  return 0.62 * lrNoiseTile(a, 330.0) + 0.38 * lrNoiseTile(b, 788.0) - 0.5;
 }
 
 // How high (vertically) the swash of waves of height 'hs' climbs (Stockdon et al. 2006: about 0.8 hs on a 1:9
@@ -59,37 +62,47 @@ struct LrSwash {
   float open;    // 1 on a shore of open water, 0 round a puddle or creek too small to carry waves
 };
 
-// The swash at a point of the beach whose sand stands 'a' metres above still water (negative: below it),
-// 'shore' metres out from the still waterline (negative: up the beach).
+// The swash at a point 'rel' (east and south of the camera, metres) of the beach, whose sand stands 'a' metres
+// above still water (negative: below it), 'shore' metres out from the still waterline (negative: up the beach).
 // 'fine' fades it out where it is far too small to see (1 near, 0 from the air).
+//
+// The irregularities (each wave's reach, the ragged front over flats) are lattice noise, and lattice noise must
+// not be fed positions twenty kilometres from the origin (see lr_common): it is read at 'pw', the camera's
+// position wrapped to 1024 m plus rel, with lattices that repeat in 1024 m. Fed world positions, some lattice
+// lines came out as jumps, and the damp edge of the sand drew them as hairlines across the beach.
 //
 // Each wave is one cycle of a clock. The clock runs early offshore (the wave is there before it reaches the
 // waterline) and late across flat sand (the front takes time to cross it, and dies out on the way), so a wave
 // is a front that travels in, steepens into a little bore at the waterline and runs on up the face, or sweeps
 // some metres over a sand bar that is barely above the sea.
-LrSwash lrBeach(vec2 wxz, float shore, float hs, float a, float fine) {
+LrSwash lrBeach(vec2 rel, float shore, float hs, float a, float fine) {
+  vec2 wxz = uCamXZ + rel, pw = rel + uCamMod.zw;
   LrSwash s = LrSwash(0.0, -a, 0.0, 1000.0, 0.0, 0.0, 0.0, 0.0, 1.0);
   if (a > LR_WET_BAND || shore > 60.0) { s.age = a < 0.0 ? 0.0 : 1000.0; return s; }
   s.open = lrOpenWater(wxz, shore);
   // (Flat sand: how much further from the waterline this point is than a beach face would put it.)
   float flat_ = max(-shore - max(a, 0.0) / 0.08, 0.0), R = lrRunup(hs) * fine * mix(0.1, 1.0, s.open), run = R / 0.11 + 0.3;
+  // Neighbouring stretches are out of step (noise along the shore), so the edge of the sea is scalloped.
+  float c = uTime / LR_SWASH_T - lrShoreLag(wxz) + (2.2 * (sqrt(max(shore, 0.0) + 1.0) - 1.0) - flat_ / 1.5) / LR_SWASH_T;
+  // (From the air there is no swash to draw, only the waves coming in, which need the place in the cycle.)
+  if (R <= 0.0) { s.p = fract(c); s.age = a <= 0.0 ? 0.0 : 1000.0; return s; }
   // (Over sand within a few centimetres of still water the sheet runs on four times as far: as the tide comes
   // up to the crest of a low bar the waves begin to wash right across, first where it is narrow, and those
   // from its two sides meet along its middle. A hand's breadth of freeboard and they stop short as on any beach.)
   run *= 1.0 + 3.0 * (1.0 - smoothstep(0.03, 0.2, max(a, 0.0) / max(R, 1e-4)));
   // (How far a sheet gets over a flat is ragged: tongues a few steps wide run on ahead, bays lag behind. Without
   // this the sand left dry on top of a bar was a perfect oval.)
-  float ragged = flat_ + step(1e-3, flat_) * 3.8 * lrRagged(wxz);
+  float ragged = flat_ + smoothstep(0.0, 1.0, flat_) * 3.8 * lrRagged(pw);
   R *= 1.0 - smoothstep(1.2 * run, 3.0 * run, ragged);
-  // Neighbouring stretches are out of step (noise along the shore), so the edge of the sea is scalloped.
-  float c = uTime / LR_SWASH_T - lrShoreLag(wxz) + (2.2 * (sqrt(max(shore, 0.0) + 1.0) - 1.0) - flat_ / 1.5) / LR_SWASH_T;
   float n = floor(c);
   s.p = c - n;
-  vec2 q = wxz / 7.0;
+  // Every wave reaches a different height, differently along the shore (the sequence repeats after 64 waves).
+  vec2 q = pw * (146.0 / 1024.0);
   const vec2 hop = vec2(17.31, 5.17);
-  s.reach = R * (0.72 + 0.28 * lrNoise(q + n * hop));
-  s.last = R * (0.72 + 0.28 * lrNoise(q + (n - 1.0) * hop));
-  s.top = (R * (1.0 + 0.05 * lrNoise(wxz / 2.3)) + 0.02 * fine) * step(1e-4, R);      // (the sand above the last wave is still wet from bigger ones)
+  s.reach = R * (0.72 + 0.28 * lrNoiseTile(q + mod(n, 64.0) * hop, 146.0));
+  s.last = R * (0.72 + 0.28 * lrNoiseTile(q + mod(n - 1.0, 64.0) * hop, 146.0));
+  // (The sand above the last wave is still wet from bigger ones.)
+  s.top = (R * (1.0 + 0.05 * lrNoiseTile(pw * (445.0 / 1024.0), 445.0)) + 0.02 * fine) * smoothstep(0.0, 0.01, R);
   float level = s.reach * lrSwashCurve(s.p), h = max(a, 0.0);
   // The sheet: a blunt front a few centimetres high on the way up, a film feathering out to nothing on the way
   // down. Out in the water the same rise is spread out: a low swell that sharpens as it comes into the shallows.
@@ -103,7 +116,7 @@ LrSwash lrBeach(vec2 wxz, float shore, float hs, float a, float fine) {
   // When the water last left: on this wave's way down, or the wave before, or the one before that.
   if (over > 0.0 || a <= 0.0) s.age = 0.0;
   else {
-    float before = R * (0.72 + 0.28 * lrNoise(q + (n - 2.0) * hop)), left = lrSwashDrain(a / max(s.reach, 1e-5));
+    float before = R * (0.72 + 0.28 * lrNoiseTile(q + mod(n - 2.0, 64.0) * hop, 146.0)), left = lrSwashDrain(a / max(s.reach, 1e-5));
     if (a < s.reach && s.p >= left) s.age = (s.p - left) * LR_SWASH_T;
     else if (a < s.last) s.age = (s.p + 1.0 - lrSwashDrain(a / s.last)) * LR_SWASH_T;
     else if (a < before) s.age = (s.p + 2.0 - lrSwashDrain(a / before)) * LR_SWASH_T;

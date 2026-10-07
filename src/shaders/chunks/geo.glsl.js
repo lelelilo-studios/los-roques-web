@@ -16,18 +16,19 @@ uniform vec4 uCamTexelShore; // the same in the shore map (which may be finer th
 uniform vec4 uSandbar;       // the sandbar of Cayo de Agua: the two ends of its crest (world xz, xz)
 uniform vec2 uSandbarP;      // how far to either side it reaches (m; 0 = none), and the height of its crest (m)
 
-// The lowest a beach's berm can be: 0.22 m, so that no beach is under still water at the highest tide
-// (+0.17 m); except along the sandbar of Cayo de Agua, which is lower than any beach and goes under at an
-// autumn high water. Set by lrGround / lrGroundFine for the point in hand before the profile is taken.
-float lrBermMin = 0.22;
+// A beach's berm follows the mapped ground, no lower than 0.22 m (so that no beach is under still water at the
+// highest tide, +0.17 m). The sandbar of Cayo de Agua is lower than any beach and goes under at an autumn high
+// water: along it the berm is capped at the bar's own crest height, the cap easing away to either side.
+// lrBermCap is set by lrGround / lrGroundFine for the point in hand before the profile is taken (1 = no cap).
+float lrBermCap = 1.0;
 // Slope of the shore-distance field at the point last looked up close (lrGroundFine): 1 on an ordinary
 // beach, falling to nothing along the middle of a sandbar, where the water is as near on one side as the other.
 float lrShoreSlope = 1.0;
-float lrBermMinAt(vec2 wxz) {
-  if (uSandbarP.x <= 0.0) return 0.22;
+float lrBermCapAt(vec2 wxz) {
+  if (uSandbarP.x <= 0.0) return 1.0;
   vec2 ab = uSandbar.zw - uSandbar.xy, ap = wxz - uSandbar.xy;
   float along = clamp(dot(ap, ab) / dot(ab, ab), 0.06, 0.94);            // (its roots at either end are the cays' own beaches)
-  return mix(uSandbarP.y, 0.22, smoothstep(0.5 * uSandbarP.x, uSandbarP.x, length(ap - ab * along)));
+  return mix(uSandbarP.y, 1.0, smoothstep(0.5 * uSandbarP.x, uSandbarP.x, length(ap - ab * along)));
 }
 
 // Bicubic B-spline with four bilinear taps (the texture must be linear-filtered, single channel).
@@ -43,11 +44,11 @@ float lrBicubic(sampler2D tex, vec2 uv, vec2 size) {
 
 // Height of a sand shore at signed distance s from the waterline (s > 0 is seaward), relative to mean sea level.
 // Land side: rises at 0.11 m/m and levels off at a berm whose height follows the mapped ground there, between
-// 0.22 and 1 m (lower along the sandbar of Cayo de Agua: see lrBermMin).
+// 0.22 and 1 m (lower along the sandbar of Cayo de Agua: see lrBermCap).
 // Sea side: a step to -0.5 m a few metres out, then a 1:50 terrace.
 float lrShoreProfile(float s, float mapHeight) {
   float berm = clamp(mapHeight * 1.2 + 0.05, 0.22, 1.0);
-  berm = min(berm, mix(1.0, lrBermMin, step(lrBermMin, 0.2199)));       // (on the sandbar: its own crest height)
+  berm = min(berm, lrBermCap);                               // (on the sandbar: its own crest height)
   float up = berm * (1.0 - exp(min(s, 0.0) * 0.11 / berm));
   float dn = -0.11 * s / (1.0 + 0.22 * max(s, 0.0)) - max(s - 4.0, 0.0) * 0.02;
   return s < 0.0 ? up : dn;
@@ -70,7 +71,7 @@ float lrGround(vec2 wxz, float cell, out float shore) {
   float inside = 1.0 - smoothstep(0.985, 1.0, max(e.x, e.y));
   h = mix(-64.0, h, inside);
   shore = mix(300.0, shore, inside);
-  lrBermMin = lrBermMinAt(wxz);
+  lrBermCap = lrBermCapAt(wxz);
   return lrGroundBlend(h, shore);
 }
 
@@ -91,14 +92,16 @@ vec3 lrGroundNormal(vec2 wxz, float cell, float d) {
 // sandbar that gradient is nothing but rounding, and the probe fell short besides: the answer changed from one
 // hand's breadth of sand to the next, and the reach of the swash with it, in steps.)
 float lrOpenWater(vec2 wxz, float shore) {
-  if (shore > 8.0 || lrBermMin < 0.2199) return 1.0;       // (the sandbar of Cayo de Agua has the sea on both sides)
+  if (shore > 8.0) return 1.0;
+  float bar = 1.0 - smoothstep(0.3, 0.7, lrBermCap);        // (the sandbar of Cayo de Agua has the sea on both sides)
+  if (bar >= 1.0) return 1.0;
   float r = 8.0 - shore, far = -300.0;
   for (int k = 0; k < 6; k++) {
     float a = 1.0471976 * float(k) + 0.3;
     vec2 d = vec2(cos(a), sin(a));
     far = max(far, max(textureLod(tShore, lrMapUV(wxz + d * r), 0.0).r, textureLod(tShore, lrMapUV(wxz + d * (2.0 * r + 4.0)), 0.0).r));
   }
-  return smoothstep(1.0, 5.0, far);
+  return max(smoothstep(1.0, 5.0, far), bar);
 }
 
 // The ground seen from close by. lrBicubic leans on the GPU's bilinear filter, whose weights have 8 bits: at
@@ -132,7 +135,7 @@ float lrGroundFine(vec2 rel, out float shore, out vec3 normal) {
   h = vec3(mix(-64.0, h.x, inside), h.yz * inside); s = vec3(mix(300.0, s.x, inside), s.yz * inside);
   shore = s.x;
   lrShoreSlope = length(s.yz);
-  lrBermMin = lrBermMinAt(uCamXZ + rel);
+  lrBermCap = lrBermCapAt(uCamXZ + rel);
   const float d = 0.25;
   float gx = lrGroundBlend(h.x + h.y * d, s.x + s.y * d) - lrGroundBlend(h.x - h.y * d, s.x - s.y * d);
   float gz = lrGroundBlend(h.x + h.z * d, s.x + s.z * d) - lrGroundBlend(h.x - h.z * d, s.x - s.z * d);

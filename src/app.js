@@ -195,14 +195,20 @@ export async function start(canvas, onProgress = () => {}) {
   function soundScene(dt) {
     shoreTimer -= dt;
     if (shoreTimer <= 0) {
-      // Three points of the nearest waterline: straight to the sea and nine metres along the shore either way.
+      // Three points of the waterline: straight to the nearest sea and nine metres along the shore either way.
       shoreTimer = 0.25; shorePoints = [];
       const near = Math.abs(ground.shoreAt(walker.x, walker.z)) < 160 ? ground.findShore(walker.x, walker.z, 0) : null;
       if (near) {
         const a = near.yaw * Math.PI / 180, sea = [Math.sin(a), -Math.cos(a)];
-        for (const along of [0, -9, 9]) {
-          const q = along ? ground.findShore(near.x + sea[1] * -along, near.z + sea[0] * along, 0) : near;
+        // (On a sandbar the sea is on both sides of you: the second point is then the far shore, behind you as
+        // you face the near one.)
+        const inland = -ground.shoreAt(walker.x, walker.z);
+        const far = inland > 0 && inland < 30 ? ground.findShore(walker.x - sea[0] * (2 * inland + 8), walker.z - sea[1] * (2 * inland + 8), 0) : null;
+        const across = far && Math.hypot(far.x - near.x, far.z - near.z) > 8 && Math.hypot(far.x - walker.x, far.z - walker.z) < 50 ? far : null;
+        for (const along of across ? [0, 'across', 9] : [0, -9, 9]) {
+          const q = along === 'across' ? across : along ? ground.findShore(near.x + sea[1] * -along, near.z + sea[0] * along, 0) : near;
           if (!q) continue;
+          if (along === 'across') { const b = q.yaw * Math.PI / 180; shorePoints.push({ x: q.x, z: q.z, hs: seaAt(q.x + Math.sin(b) * 12, q.z - Math.cos(b) * 12).hs, dist: 0, bearing: 0 }); continue; }
           // (A puddle or a creek carries no waves: see lrOpenWater.)
           const open = ground.shoreAt(q.x + sea[0] * 8, q.z + sea[1] * 8) > 3 ? 1 : 0.1;
           shorePoints.push({ x: q.x, z: q.z, hs: seaAt(q.x + sea[0] * 12, q.z + sea[1] * 12).hs * open, dist: 0, bearing: 0 });
@@ -530,6 +536,8 @@ export async function start(canvas, onProgress = () => {}) {
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
     life,
     umbrellas: landmarks.umbrellas, people: landmarks.people,
+    /** For tests: where the surf you hear is coming from ([{ x, z, hs, dist, bearing }]). */
+    shoresHeard: () => soundScene(1).shores.map(q => ({ ...q })),
     /** For tests: where the statue stands and where the turtle is now. */
     statue: statue ? { ...statue.userData.world, depth: statue.userData.depth } : null,
     turtleAt: () => (turtle.mesh ? turtle.at(clock.time, shared.uSeaLevel.value) : null),

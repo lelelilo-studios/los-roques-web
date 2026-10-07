@@ -234,7 +234,12 @@ vec4 lrWaveWeights(vec2 wxz, float depth) { return lrWaveCap(lrWaveWeightsRaw(lr
 float lrWaveHs(vec4 raw) { return 4.0 * length(raw.xyz); }
 
 // Ripples come in gusts: patches of ruffled water drifting downwind with glassy streaks between them.
-float lrGust(vec2 wxz) { return 0.5 + lrNoise(wxz / 7.0 - uWind.xy * uTime * 0.4) * 0.6 + lrNoise(wxz / 2.3 - uWind.xy * uTime * 0.55) * 0.4; }
+// ('rel' is the point's offset from the camera. Lattice noise is read at the camera's position wrapped to
+// 1024 m plus rel, on lattices that repeat in 1024 m: never at positions kilometres from the origin.)
+float lrGust(vec2 rel) {
+  vec2 pw = rel + uCamMod.zw;
+  return 0.5 + lrNoiseTile(pw * (146.0 / 1024.0) - uWind.xy * uTime * 0.4, 146.0) * 0.6 + lrNoiseTile(pw * (445.0 / 1024.0) - uWind.xy * uTime * 0.55, 445.0) * 0.4;
+}
 
 // Ripples finer than the last cascade: its pattern is read twice more through whole-number similarity
 // transforms (2.24 and 5 times smaller, turned 27 and 53 degrees), which still tile and keep the slopes.

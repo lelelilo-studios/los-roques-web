@@ -70,7 +70,9 @@ export function buildShoreLife(textures, fp) {
   // The tide line: what the highest water of the last days carried is left in a wandering line a few metres up
   // the beach from the waterline; beyond it only the odd piece.
   const line = `${SAND} float above = -water, off = shore + 3.6 + 1.6 * (lrNoise(wxz / 6.0) - 0.5) + 0.8 * (lrNoise(wxz / 1.7) - 0.5);
-    keep = sand * step(0.1, above) * max(1.0 - smoothstep(0.15, 0.7, abs(off)), 0.01 * step(above, 2.0));`;
+    // (In clumps with gaps between them: an unbroken row of bits read as a pencil line drawn along the beach.)
+    float clump = smoothstep(0.4, 0.62, lrNoise(wxz / 2.7 + 3.0)) * (0.5 + 0.5 * lrNoise(wxz / 9.0 + 11.0));
+    keep = sand * step(0.1, above) * max((1.0 - smoothstep(0.15, 0.7, abs(off))) * clump, 0.01 * step(above, 2.0));`;
   return [
     make({ geometry: coralBits(), cell: 0.3, grid: n(60), seed: 21, size: [0.7, 1.8], lift: 0.002, rule: `${line} keep *= 0.55;` }),
     make({ geometry: shells(), cell: 0.42, grid: n(48), seed: 22, size: [0.8, 1.7], lift: 0.002, rule: `${line} keep *= 0.5;` }),

@@ -34,7 +34,7 @@ void main() {
     d += w[i] * textureLod(tWaveA, vec3(lrWaveUV(rel, i), float(i)), lod).xyz;
   }
   float hs = lrWaveHs(raw), a = ground - uSeaLevel;
-  LrSwash sw = lrBeach(wxz, shore, hs, a, 1.0);
+  LrSwash sw = lrBeach(rel, shore, hs, a, 1.0);
   float y = uSeaLevel + d.y + lrShoreSurface(shore, min(a, 0.0), hs, sw);
   // Over the strip of beach the swash can reach, ride just above the sand: the sheet is drawn on this.
   if (a > -0.3 && a < 1.0) y = max(y, ground + lrLift(length(vec3(rel.x, uCamY - ground, rel.y))) + sw.e);
@@ -125,7 +125,7 @@ void main() {
     // surface is a mirror for what lies below: the bed, seen through the water on the way down to it.
     // (The same surface as from above: the cascades, the ripples finer than them in their gusts, the rain's rings.)
     vec2 sl = vec2(0.0), roughness = vec2(0.0);
-    float gust = lrGust(wxz), nearby = 1.0 - smoothstep(0.03, 0.15, px), spray = 0.0;
+    float gust = lrGust(vRel.xz), nearby = 1.0 - smoothstep(0.03, 0.15, px), spray = 0.0;
     for (int i = 0; i < 4; i++) {
       vec4 b = textureGrad(tWaveB, vec3(lrWaveUV(vGrid, i), float(i)), gx / uWaveTile[i], gy / uWaveTile[i]);
       float w = vWeights[i] * (i == 3 ? gust : 1.0);
@@ -172,7 +172,7 @@ void main() {
   if (!hasBed0 && aboveStill > -0.25 - 0.15 * px) discard;
   // (From far away the swash and its foam are much thinner than a pixel: they fade out.)
   float fine = 1.0 - smoothstep(0.5, 4.0, px);
-  LrSwash sw = lrBeach(wxz, shore, vHs, aboveStill, fine);
+  LrSwash sw = lrBeach(vRel.xz, shore, vHs, aboveStill, fine);
   // Water standing over this point right now: still level + waves + swash, minus the ground.
   float surface = vWaveY + lrShoreSurface(shore, aboveStill, vHs, sw), column = surface - aboveStill;
   float lift = lrLift(length(vec3(vGrid.x, uCamY - ground, vGrid.y)));
@@ -187,7 +187,7 @@ void main() {
     float dy = vRel.y - uCamY;
     spot = vRel.xz * (abs(dy) > 1e-3 ? clamp((uSeaLevel + aboveStill - uCamY) / dy, 1.0, 1.6) : 1.0);
     lrGroundAt(spot, px, aboveStill > 0.0, shore, sandN);
-    sw = lrBeach(uCamXZ + spot, shore, vHs, aboveStill, fine);
+    sw = lrBeach(spot, shore, vHs, aboveStill, fine);
     surface = vWaveY + lrShoreSurface(shore, aboveStill, vHs, sw);
     column = max(surface - aboveStill, 1e-4);
   }
@@ -199,7 +199,7 @@ void main() {
   // ---- The water surface. Mean slope of the waves inside this pixel, and how much they vary within it.
   vec2 slope = vec2(0.0), var = vec2(0.0);
   float fold = 0.0;
-  vec4 weights = vec4(vWeights.xyz, vWeights.w * lrGust(wxz));                  // (the ripples come in gusts)
+  vec4 weights = vec4(vWeights.xyz, vWeights.w * lrGust(vRel.xz));                  // (the ripples come in gusts)
   for (int i = 0; i < 4; i++) {
     float t = uWaveTile[i];
     vec3 uvw = vec3(lrWaveUV(vGrid, i), float(i));

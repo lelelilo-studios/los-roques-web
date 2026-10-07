@@ -97,13 +97,13 @@ float lrCaustics(vec2 rel, float water, float px) {
   float blur = path * 0.0093 + px, kd = 0.254 * path;
   vec3 h = vec3(0.0);
   for (int i = 1; i < 4; i++) {
-    float w = vWeights[i] * (i == 3 ? lrGust(uCamXZ + entry) : 1.0), bend = kd * w * uWaveCurve[i];
+    float w = vWeights[i] * (i == 3 ? lrGust(entry) : 1.0), bend = kd * w * uWaveCurve[i];
     h += w / (1.0 + bend * bend) * textureLod(tWaveC, vec3(lrWaveUV(entry, i), float(i)), log2(max(blur * 256.0 / uWaveTile[i], 1.0))).xyz;
   }
   if (px < 0.05) {
     // (The finer ripples: the last cascade through its two similarity transforms. Curvature grows with the
     // shrinking: h(Sx)/s has s times the curvature, turned.)
-    float w = vWeights.w * lrGust(uCamXZ + entry) * (1.0 - smoothstep(0.02, 0.05, px)), lod = log2(max(blur * 256.0 / uWaveTile[3], 1.0));
+    float w = vWeights.w * lrGust(entry) * (1.0 - smoothstep(0.02, 0.05, px)), lod = log2(max(blur * 256.0 / uWaveTile[3], 1.0));
     vec2 uv = lrWaveUV(entry, 3);
     vec3 c1 = textureLod(tWaveC, vec3(LR_FINE_1 * uv, 3.0), lod + 1.16).xyz, c2 = textureLod(tWaveC, vec3(LR_FINE_2 * uv, 3.0), lod + 2.32).xyz;
     float b1 = kd * w * LR_FINE_GAIN.x * 2.236 * uWaveCurve[3], b2 = kd * w * LR_FINE_GAIN.y * 5.0 * uWaveCurve[3];
@@ -190,12 +190,12 @@ void main() {
   vec4 land = texture(tLand, uv);
   // In the village a pixel of the satellite picture is roofs, their shade and the street all mixed: dark grey.
   // Near the eye, where the houses are drawn one by one, the streets get their own colour: pale trodden sand.
-  albedo = mix(albedo, vec3(0.47, 0.43, 0.36) * (0.92 + 0.16 * lrNoise(wxz / 3.1)), smoothstep(0.3, 0.6, land.b) * (1.0 - smoothstep(1.5, 8.0, px)) * step(water, 0.0));
+  albedo = mix(albedo, vec3(0.47, 0.43, 0.36) * (0.92 + 0.16 * lrNoiseTile(lrDetailXZFar(vRel.xz) * (330.0 / 1024.0), 330.0)), smoothstep(0.3, 0.6, land.b) * (1.0 - smoothstep(1.5, 8.0, px)) * step(water, 0.0));
   float stand = smoothstep(0.34, 0.62, land.r + (lrNoise(wxz / 11.0) - 0.5) * 0.5 * (1.0 - smoothstep(4.0, 16.0, px)));
   // (Where the trees themselves are drawn, the ground under them shows instead: dark mud and leaf litter.)
   float trees = uTreesNear * (1.0 - smoothstep(24.0, 40.0, length(vec3(vRel.x, uCamY - ground, vRel.z))));
   float sift = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-  if (stand > 0.5 && sift < trees) albedo = mix(vec3(0.07, 0.055, 0.04), vec3(0.11, 0.09, 0.05), lrNoise(wxz * 1.7));
+  if (stand > 0.5 && sift < trees) albedo = mix(vec3(0.07, 0.055, 0.04), vec3(0.11, 0.09, 0.05), lrNoiseTile(lrDetailXZ(vRel.xz) * 1.75, 112.0));
   else if (vCanopy > 0.3 || stand > 0.5) {
     // Tree canopy: dark leaves, shaded by the bumps of the crowns (from the same noise that shapes them) and
     // darker down between them.
@@ -238,7 +238,7 @@ void main() {
   LrSwash sw = LrSwash(0.0, 0.0, 0.0, 1000.0, 0.0, 0.0, 0.0, 0.0, 1.0);
   float wetness = 0.0, wetLine = 0.0, fine = 1.0 - smoothstep(0.5, 4.0, px);
   if (beach) {
-    sw = lrBeach(wxz, shore, vHs, -water, fine);
+    sw = lrBeach(vRel.xz, shore, vHs, -water, fine);
     covered = sw.behind > 0.0;
     // Wet up to the highest line the waves reach (a sharp edge), with a damp halo above it.
     // (The edge is taken as a distance on the ground, the height difference over its own gradient: as crisp on a
@@ -280,7 +280,9 @@ void main() {
     // (The swash smooths the sand it runs over: no wind ripples below the wet line.)
     float spacing = wetBed ? 0.5 : 0.09, tall = wetBed ? 0.004 * (1.0 - smoothstep(2.0, 5.0, water)) : 0.0012 * dryLand * (1.0 - trodden) * step(water, 0.0);
     float patches = smoothstep(0.35, 0.65, lrNoiseTile(d * 0.21875 + 9.0, 14.0));
-    float phase = dot(d, wd) * 6.2832 / spacing + (wetBed ? 22.0 : 55.0) * lrNoiseTile(d * (wetBed ? 0.25 : 0.5), wetBed ? 16.0 : 32.0) + 3.0 * lrNoiseTile(d * 0.875, 56.0) + 1.2 * lrNoiseTile(d * 2.875, 184.0);
+    // (The crests' wave vector is rounded to one that fits a whole number of times into 64 m each way, where
+    // the detail coordinates wrap: otherwise a hairline crossed the sand at every wrap.)
+    float phase = dot(d, round(wd * 64.0 / spacing) / 64.0) * 6.2832 + (wetBed ? 22.0 : 55.0) * lrNoiseTile(d * (wetBed ? 0.25 : 0.5), wetBed ? 16.0 : 32.0) + 3.0 * lrNoiseTile(d * 0.875, 56.0) + 1.2 * lrNoiseTile(d * 2.875, 184.0);
     n = normalize(n + vec3(wd.x, 0.0, wd.y) * tall * 6.2832 / spacing * sin(phase) * sandy * patches);
     albedo *= 1.0 + 0.035 * sin(phase + 1.2) * sandy * patches * step(1e-5, tall);      // (darker, heavier grains gather in the troughs)
   }
@@ -289,7 +291,7 @@ void main() {
   float ridged = sand * dryLand * (1.0 - trodden) * step(water, -0.25) * (1.0 - smoothstep(0.03, 0.12, px)) * smoothstep(6.0, 14.0, -shore);
   if (ridged > 0.01) {
     vec2 wd = normalize(uWind.xy + 1e-4);
-    float spacing = 0.44, ph = dot(d, wd) / spacing + 2.6 * lrNoiseTile(d * 0.1875 + 4.0, 12.0) + 0.7 * lrNoiseTile(d * 0.4375, 28.0) + 0.25 * lrNoiseTile(d * 1.3125 + 7.0, 84.0), f = fract(ph);
+    float spacing = 0.44, ph = dot(d, round(wd * 64.0 / spacing) / 64.0) + 2.6 * lrNoiseTile(d * 0.1875 + 4.0, 12.0) + 0.7 * lrNoiseTile(d * 0.4375, 28.0) + 0.25 * lrNoiseTile(d * 1.3125 + 7.0, 84.0), f = fract(ph);
     // (Height over one ridge: rising over 80 % of it, falling over 20 %; its slope along the wind.)
     // (Crests are short: they start, fork and die out within a few steps, never a line you could follow.)
     float rise = f < 0.8 ? 1.0 / 0.8 : -1.0 / 0.2, there = smoothstep(0.3, 0.6, lrNoiseTile(d * 0.15625 + 13.0, 10.0)) * smoothstep(0.3, 0.65, lrNoiseTile(d * 0.5625 + 21.0, 36.0));
@@ -405,7 +407,8 @@ void main() {
     vec3 lit = max(uSunE * lrSaturate(uSunDir.y) * shade + uSkyE, vec3(1e-4));
     // (The standing film is patchy, and as a film thins the grains come through it and break the mirror up.)
     float patchy = px < 0.3 ? smoothstep(0.3, 0.62, lrDetailTap(d, mat2(40.0, 0.0, 0.0, 40.0) / 64.0, 2.0, ddx, ddy).a + 0.3 * lrNoiseTile(d * 0.1875 + 2.0, 12.0)) : 0.7;
-    float gloss = wetLine * max(exp(-sw.age / 3.0), 0.85 * patchy * (1.0 - smoothstep(0.0, 0.3 * sw.top + 0.01, -water)));
+    // (Sand a hand's breadth above the sea is soaked through: the film stays, thinner in patches, and mirrors the sky.)
+    float gloss = wetLine * max(exp(-sw.age / 3.0), (0.5 + 0.5 * patchy) * (1.0 - smoothstep(0.0, 0.5 * sw.top + 0.02, -water)));
     // (Rain: a film in patches while it falls, a dull damp surface after.)
     gloss = max(gloss, uWet * (0.12 + 0.5 * uRain) * patchy * sand);
     // Puddles: on the hard-trodden streets of the village the rain stands in the hollows (beach sand drinks it).
