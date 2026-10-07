@@ -86,6 +86,22 @@ void main() {
 
   vec2 wxz = uCamXZ + vRel.xz;
   float px = (length(gx) + length(gy)) * 0.5;
+  if (uCamY < vRel.y) {
+    // Seen from below. Inside a cone 97 degrees wide ("Snell's window") the whole sky is squeezed in, bent by
+    // the waves; outside it the surface is a mirror for the water below.
+    vec2 sl = vec2(0.0);
+    for (int i = 0; i < 4; i++) sl += vWeights[i] * textureGrad(tWaveB, vec3(lrWaveUV(vGrid, i), float(i)), gx / uWaveTile[i], gy / uWaveTile[i]).xy;
+    vec3 nd = -normalize(vec3(-sl.x, 1.0, -sl.y)), up = normalize(vec3(vRel.x, vRel.y - uCamY, vRel.z));
+    vec3 outDir = refract(up, nd, 1.34);
+    vec3 below = uSkyE / PI * 0.25 * vec3(0.25, 0.8, 1.0);            // what the mirror shows: the dim water beneath
+    vec3 c = below;
+    if (dot(outDir, outDir) > 0.0) {
+      float f = lrFresnel(dot(outDir, -nd));
+      c = mix(lrSkyRadiance(normalize(vec3(outDir.x, abs(outDir.y) + 0.02, outDir.z))) + uSunE * 40.0 * pow(lrSaturate(dot(outDir, uSunDir)), 600.0) * lrCloudShadow(wxz), below, f);
+    }
+    outColor = vec4(c, -1000.0);
+    return;
+  }
   float shore;
   float ground = lrGround(wxz, px, shore);
   float aboveStill = ground - uSeaLevel;

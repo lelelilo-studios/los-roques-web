@@ -40,6 +40,7 @@ uniform float uCloudOn;
 uniform float uStarTurn;       // radians the star field has turned
 uniform vec3 uWind;
 uniform float uRain;
+uniform sampler2D tWaterType;
 
 // Falling rain as streaks in screen space: three sheets at different distances, slanted by the wind.
 float lrRainStreaks(vec2 uv) {
@@ -62,6 +63,23 @@ void main() {
   vec3 ray = uCamFwd + (vUv.x * 2.0 - 1.0) * uCamRight + (vUv.y * 2.0 - 1.0) * uCamUp;
   vec3 dir = normalize(ray);
   vec3 col;
+  if (uCamY < uSeaLevel) {
+    // Under water. Things write reflectance and their depth below the surface (alpha): light them with what
+    // daylight is left at that depth, then let the water between dim them and add its own glow.
+    float lagoon = texture(tWaterType, lrMapUV(uCamXZ)).r;
+    vec3 a = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon), kd = a + bb, c = a + 4.0 * bb;
+    vec3 surfaceLight = uSunE * lrSaturate(uSunDir.y) + uSkyE;
+    float far = lrIsSky(depth) ? 1e4 : lrViewZ(depth) * length(ray);
+    vec3 seen = scene.a > -0.6 ? scene.rgb / PI * surfaceLight * 0.9 * exp(-kd * max(scene.a, 0.0)) : scene.rgb;
+    if (lrIsSky(depth)) seen = vec3(0.0);
+    // The water's own glow: daylight scattered back towards the eye, brighter looking up, darker looking down.
+    float eyeDepth = uSeaLevel - uCamY;
+    vec3 glow = surfaceLight * 0.9 * exp(-kd * max(eyeDepth - dir.y * 3.0, 0.0)) * bb / kd * 0.5;
+    vec3 through = exp(-c * far);
+    col = seen * through + glow * (1.0 - through);
+    outColor = vec4(col, 1.0);
+    return;
+  }
   if (lrIsSky(depth)) {
     // The horizon of a round Earth sits a little below eye level; under it lies open sea.
     float dip = -sqrt(2.0 * max(uCamY - uSeaLevel, 0.0) * uInvEarthR);
@@ -165,7 +183,7 @@ export class FrameGraph {
     const { targets } = R;
     this.copy = new FullscreenPass(copyFragment, { tSrc: { value: targets.scene.texture } });
     this.composite = new FullscreenPass(compositeFragment, uniformsFor(
-      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain'],
+      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType'],
       { tScene: { value: targets.scene.texture }, tDepth: { value: targets.scene.depthTexture }, tCloud: { value: null }, uCloudOn: { value: 0 }, uStarTurn: { value: 0 } }));
     this.bloom = new Bloom(6);
     this.tonemap = new FullscreenPass(tonemapFragment, uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, 'uExposure'],

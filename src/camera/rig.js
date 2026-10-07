@@ -22,6 +22,18 @@ export class CameraRig {
     this.eye = { x: 0, y: 1, z: 0 };
     this.ground = null;       // data/geoCPU.js Ground, for keeping the eye above the terrain
     this.flight = null;
+    // Snorkel view: the eye is in the water at `target`, `depth` metres under the surface, looking along
+    // yaw and `look` (radians above the horizontal).
+    this.snorkel = false; this.depth = 0.7; this.look = -0.25; this.seaLevel = 0;
+  }
+
+  /** Enters or leaves the snorkel view. Returns false if there is not enough water at the target to swim in. */
+  setSnorkel(on) {
+    if (on && this.ground && this.ground.heightAt(this.target.x, this.target.z) > this.seaLevel - 1.0) return false;
+    if (on && !this.snorkel) { this.cancelFlight(); this.saved = { dist: this.dist, pitch: this.pitch }; this.depth = 0.7; this.look = -0.25; }
+    if (!on && this.snorkel && this.saved) { this.dist = Math.max(this.saved.dist, 60); this.pitch = Math.max(this.saved.pitch, 12 * DEG); }
+    this.snorkel = on;
+    return true;
   }
 
   /** Starts a smooth flight to an orbit state ({x, z, dist, yaw, pitch} in metres/degrees). */
@@ -66,23 +78,37 @@ export class CameraRig {
     this.pitch = Math.min(L.maxPitch, Math.max(L.minPitch, this.pitch));
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch), sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const eye = this.eye;
-    // The orbit centre sits on the ground (or the sea surface), so hills are orbited around their own height.
-    if (this.ground) this.target.y = Math.max(this.ground.heightAt(this.target.x, this.target.z), 0);
-    eye.x = this.target.x - sy * cp * this.dist;
-    eye.z = this.target.z + cy * cp * this.dist;
-    eye.y = this.target.y + sp * this.dist;
-    // Never under the ground, never inside the sea surface.
-    eye.y = Math.max(eye.y, (this.ground ? Math.max(this.ground.heightAt(eye.x, eye.z), 0) : 0) + 0.6);
+    let dirX, dirY, dirZ;
+    if (this.snorkel) {
+      // In the water: under the surface, above the bed.
+      const bed = this.ground ? this.ground.heightAt(this.target.x, this.target.z) : -5;
+      this.depth = Math.min(Math.max(this.depth, 0.35), Math.max(0.35, this.seaLevel - bed - 0.4));
+      this.look = Math.min(1.45, Math.max(-1.45, this.look));
+      eye.x = this.target.x; eye.z = this.target.z; eye.y = Math.max(this.seaLevel - this.depth, bed + 0.35);
+      this.target.y = eye.y;
+      const cl = Math.cos(this.look);
+      dirX = sy * cl; dirY = Math.sin(this.look); dirZ = -cy * cl;
+    } else {
+      // The orbit centre sits on the ground (or the sea surface), so hills are orbited around their own height.
+      if (this.ground) this.target.y = Math.max(this.ground.heightAt(this.target.x, this.target.z), this.seaLevel);
+      eye.x = this.target.x - sy * cp * this.dist;
+      eye.z = this.target.z + cy * cp * this.dist;
+      eye.y = this.target.y + sp * this.dist;
+      // Never under the ground, never inside the sea surface.
+      eye.y = Math.max(eye.y, (this.ground ? Math.max(this.ground.heightAt(eye.x, eye.z), this.seaLevel) : this.seaLevel) + 0.6);
+      const dx = this.target.x - eye.x, dy = this.target.y - eye.y, dz = this.target.z - eye.z, dl = Math.hypot(dx, dy, dz) || 1;
+      dirX = dx / dl; dirY = dy / dl; dirZ = dz / dl;
+    }
 
     // Reversed float depth has precision to spare. The ordinary 24-bit path needs the near plane pushed out with height.
     cam.near = reversed ? 0.1 : Math.min(50, Math.max(0.3, 0.05 * eye.y));
     cam.far = reversed ? 200000 : 150000;
     cam.aspect = aspect;
     cam.position.set(0, eye.y, 0);
-    cam.up.set(sy * sp, cp, -cy * sp);                        // the exact up vector: well defined even looking straight down
-    // Look at the orbit centre (the eye may have been pushed up by the ground).
-    const dx = this.target.x - eye.x, dy = this.target.y - eye.y, dz = this.target.z - eye.z, dl = Math.hypot(dx, dy, dz) || 1;
-    _look.set(dx / dl, eye.y + dy / dl, dz / dl);
+    // An up vector square to the view direction: well defined even looking straight down.
+    const h = Math.hypot(dirX, dirZ);
+    cam.up.set(-sy * dirY, h, cy * dirY);
+    _look.set(dirX, eye.y + dirY, dirZ);
     cam.lookAt(_look);
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld(true);
@@ -103,7 +129,7 @@ export class CameraRig {
 
   /** What the clipmaps need: camera and focus in world metres, the eye-to-focus range, the frustum. */
   view() {
-    const range = Math.hypot(this.eye.x - this.target.x, this.eye.y - this.target.y, this.eye.z - this.target.z);
+    const range = this.snorkel ? 6 : Math.hypot(this.eye.x - this.target.x, this.eye.y - this.target.y, this.eye.z - this.target.z);
     const reach = 2 * Math.sqrt(2 * EARTH_RADIUS * Math.max(this.eye.y, 1)) + 70000;   // generous: how far geometry can matter
     return { cam: this.eye, focus: this.target, range, frustum: this.frustum, drop: Math.min(reach, 70000) ** 2 / (2 * EARTH_RADIUS) };
   }
@@ -150,7 +176,13 @@ export function attachOrbitInput(rig, el, rect, onChange) {
     if (!p) return;
     const dx = e.clientX - p.x, dy = e.clientY - p.y;
     p.x = e.clientX; p.y = e.clientY;
-    if (pointers.size === 2) {
+    if (rig.snorkel) {
+      if (pointers.size === 2) {
+        const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch) pan(0, (d - pinch) * 0.03);                       // pinch out to swim forward
+        pinch = d;
+      } else { rig.yaw += dx * 0.004; rig.look += dy * 0.004; }
+    } else if (pointers.size === 2) {
       const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
       if (pinch) rig.dist *= pinch / d;
       pinch = d;
@@ -162,21 +194,26 @@ export function attachOrbitInput(rig, el, rect, onChange) {
     }
     changed();
   });
-  el.addEventListener('wheel', e => { e.preventDefault(); rig.dist *= Math.exp(Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120) * 0.0015); changed(); }, { passive: false });
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    const d = Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY), 120);
+    if (rig.snorkel) pan(0, -d * 0.02); else rig.dist *= Math.exp(d * 0.0015);
+    changed();
+  }, { passive: false });
   el.addEventListener('dblclick', e => {
     const p = pick(e.clientX, e.clientY);
-    if (p) { rig.flyTo({ x: p.x, z: p.z, dist: Math.max(MIN_DIST * 10, rig.dist * 0.45) }, 1.6); onChange(); }
+    if (p && !rig.snorkel) { rig.flyTo({ x: p.x, z: p.z, dist: Math.max(MIN_DIST * 10, rig.dist * 0.45) }, 1.6); onChange(); }
   });
   el.addEventListener('keydown', e => {
-    const step = 60 * scale(), k = e.key.toLowerCase();
+    const step = rig.snorkel ? 1.2 : 60 * scale(), k = e.key.toLowerCase();
     if (k === 'arrowleft' || k === 'a') pan(-step, 0);
     else if (k === 'arrowright' || k === 'd') pan(step, 0);
     else if (k === 'arrowup' || k === 'w') pan(0, step);
     else if (k === 'arrowdown' || k === 's') pan(0, -step);
     else if (k === 'q') rig.yaw -= 0.08;
     else if (k === 'e') rig.yaw += 0.08;
-    else if (k === 'r') rig.pitch += 0.05;
-    else if (k === 'f') rig.pitch -= 0.05;
+    else if (k === 'r') { if (rig.snorkel) rig.depth -= 0.3; else rig.pitch += 0.05; }
+    else if (k === 'f') { if (rig.snorkel) rig.depth += 0.3; else rig.pitch -= 0.05; }
     else if (k === '+' || k === '=') rig.dist *= 0.85;
     else if (k === '-') rig.dist /= 0.85;
     else return;

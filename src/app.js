@@ -124,7 +124,9 @@ export async function start(canvas, onProgress = () => {}) {
       }
       applyEnv(); syncPanel?.(status); saveHash();
     },
-    flyToPlace(p) { rig.flyTo(shotFor(p), 4.5); },
+    flyToPlace(p) { rig.setSnorkel(false); status.snorkel = false; rig.flyTo(shotFor(p), 4.5); syncPanel?.(status); },
+    /** Into the water at the point the camera is looking at (if it is deep enough to swim), or back out. */
+    setSnorkel(on) { status.snorkel = rig.setSnorkel(on) && on; status.snorkelNote = on && !status.snorkel ? 'Look at open water first (at least a metre deep).' : ''; syncPanel?.(status); },
     async setCompare(x) {
       if (x >= 0 && !satellite) { satellite = await data.loadSatellite(); shared.tSatellite.value = satellite; }
       shared.uCompareX.value = status.compare = x;
@@ -173,6 +175,7 @@ export async function start(canvas, onProgress = () => {}) {
     }
     if (rig.step(dt)) saveHash();
     shared.uTime.value = clock.time;
+    rig.seaLevel = shared.uSeaLevel.value;
     rig.update(R.size.width / R.size.height, R.reversed);
     sky.overcast = Math.min(1, Math.max(0, (env.cloud - 0.45) / 0.4));
     sky.update();
@@ -230,6 +233,7 @@ export async function start(canvas, onProgress = () => {}) {
      * weather, wind (m/s), sun: {azimuth, elevation}|null, seaLevel, exposure, compare (0..1 or -1), show: {water, terrain} }
      */
     async setState(s = {}) {
+      if (s.snorkel !== undefined) { rig.seaLevel = shared.uSeaLevel.value; app.setSnorkel(!!s.snorkel); if (s.snorkel && typeof s.snorkel === 'object') Object.assign(rig, s.snorkel); }
       if (s.cam) { rig.cancelFlight(); rig.set(s.cam); }
       if (s.time !== undefined) clock.time = s.time;
       if (s.seaLevel !== undefined) env.seaLevelOverride = s.seaLevel;
