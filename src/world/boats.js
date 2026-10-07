@@ -29,6 +29,9 @@ function penero() {
   for (const x of [-1.6, 0.2, 1.8]) mb.box(x, 0.42, 0, 0.16, 0.03, 0.82, [0.8, 0.78, 0.7]);     // thwarts
   mb.box(-3.95, 0.55, 0, 0.2, 0.35, 0.22, [0.08, 0.08, 0.09]);                                  // outboard
   mb.box(-4.0, -0.15, 0, 0.07, 0.4, 0.07, [0.1, 0.1, 0.1]);
+  // The sun canopy the boatmen rig over the passengers: a flat awning on four posts.
+  for (const [x, z] of [[-2.0, -0.82], [-2.0, 0.82], [1.6, -0.74], [1.6, 0.74]]) mb.tube(x, z, 0.6, 2.05, 0.022, 0.022, 4, [0.75, 0.75, 0.75]);
+  mb.box(-0.2, 2.07, 0, 2.0, 0.025, 0.95, white, 0, [0.92, 0.92, 0.9]);
   return mb.geometry();
 }
 function catamaran() {

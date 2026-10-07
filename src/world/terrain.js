@@ -26,6 +26,7 @@ ${wavesGLSL}
 ${clipmapVertex}
 ${crownsGLSL}
 uniform sampler2D tLand;   // r mangrove, g scrub, b built-up, a canopy height / 25.5 m
+uniform float uTreesNear;  // 1 when mangroves are drawn as trees near the eye
 out vec3 vRel;      // position relative to the camera in x/z, absolute height in y (before the curvature drop)
 out float vViewZ;
 out vec4 vWeights;  // local wave heights (for the caustics)
@@ -46,6 +47,8 @@ void main() {
   // From far away the trees are too small to matter as geometry (and coarse cells would smear the shell over
   // sand and water): there the canopy is only shaded, per pixel.
   vCanopy = stand * max(land.a * 25.5, 3.0) * mix(lrCrowns(wxz), 1.0, smoothstep(1.0, 3.0, cell)) * (1.0 - smoothstep(4.0, 10.0, cell));
+  // (Near the eye the mangroves are trees of their own, world/plants.js: the shell sinks away under them.)
+  vCanopy *= mix(1.0, smoothstep(24.0, 40.0, length(vec3(rel.x, uCamY - h, rel.y))), uTreesNear);
   h += vCanopy;
   vRel = vec3(rel.x, h, rel.y);
   vec4 view = viewMatrix * vec4(rel.x, h - lrCurveDrop(rel), rel.y, 1.0);
@@ -71,6 +74,7 @@ uniform sampler2D tAlbedo;
 uniform sampler2D tSatellite;
 uniform sampler2D tBenthic;   // r seagrass, g coral/algae, b rubble, a confidence
 uniform sampler2D tLand;      // r mangrove, g scrub, b built-up, a canopy height / 25.5 m
+uniform float uTreesNear;
 uniform float uCompareX;
 ${crownsGLSL}
 in vec3 vRel;
@@ -181,7 +185,11 @@ void main() {
   vec3 albedo = texture(tAlbedo, uv).rgb;
   vec4 land = texture(tLand, uv);
   float stand = smoothstep(0.34, 0.62, land.r + (lrNoise(wxz / 11.0) - 0.5) * 0.5 * (1.0 - smoothstep(4.0, 16.0, px)));
-  if (vCanopy > 0.3 || stand > 0.5) {
+  // (Where the trees themselves are drawn, the ground under them shows instead: dark mud and leaf litter.)
+  float trees = uTreesNear * (1.0 - smoothstep(24.0, 40.0, length(vec3(vRel.x, uCamY - ground, vRel.z))));
+  float sift = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  if (stand > 0.5 && sift < trees) albedo = mix(vec3(0.07, 0.055, 0.04), vec3(0.11, 0.09, 0.05), lrNoise(wxz * 1.7));
+  else if (vCanopy > 0.3 || stand > 0.5) {
     // Tree canopy: dark leaves, shaded by the bumps of the crowns (from the same noise that shapes them) and
     // darker down between them.
     float c0 = lrCrowns(wxz), e = 0.6, tall = max(vCanopy, land.a * 25.5);
@@ -379,7 +387,7 @@ export class Terrain {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain']),
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uTreesNear']),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

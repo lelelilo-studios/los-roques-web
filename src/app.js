@@ -18,6 +18,10 @@ import { Waves } from './world/waves.js';
 import { Detail } from './world/detail.js';
 import { EnvMap } from './world/env.js';
 import { Shadows } from './world/shadow.js';
+import { buildSeaLife } from './world/sealife.js';
+import { Turtle, buildStatue } from './world/creatures.js';
+import { buildConchMounds, buildShoreLife } from './world/shorelife.js';
+import { buildPlants } from './world/plants.js';
 import { Sound, measure, runup } from './audio/ambience.js';
 import { MeshBuilder } from './world/landmarks.js';
 import * as THREE from 'three';
@@ -137,7 +141,17 @@ export async function start(canvas, onProgress = () => {}) {
   })();
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
   const shadows = new Shadows(renderer, tier.fp.shadowMap, R.reversed);
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, figure);
+  const statue = buildStatue(places, ground, landmarks.material), turtle = new Turtle(places, ground, landmarks.material);
+  if (statue) landmarks.group.add(statue);
+  // Small things near the eye (world/scatter.js): they cast no shadows of their own.
+  const mounds = buildConchMounds(places, ground, landmarks.material);
+  if (mounds) landmarks.group.add(mounds);
+  const life = [...buildSeaLife(data.textures, tier.fp), ...buildShoreLife(data.textures, tier.fp), ...buildPlants(data.textures, tier.fp)], lifeGroup = new THREE.Group();
+  shared.uTreesNear.value = tier.fp.life ? 1 : 0;
+  lifeGroup.matrixAutoUpdate = false;
+  for (const kind of life) lifeGroup.add(kind.mesh);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, figure, lifeGroup);
+  if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
   let syncPanel = null, labels = null, hud = null, walkInput = null;
 
@@ -337,6 +351,9 @@ export async function start(canvas, onProgress = () => {}) {
     graph.starTurn = env.hours / 24 * 2 * Math.PI;
     boats.update(rig.eye, clock.time, shared.uSeaLevel.value);
     birds.update(rig.eye, clock.time);
+    for (const kind of life) kind.update(rig.eye);
+    turtle.update(rig.eye, clock.time, shared.uSeaLevel.value);
+    shared.uWaveHere.value.fromArray(boats.weightsAt(rig.eye.x, rig.eye.z, 3));
     // Shadows of things: round the walker (and of the walker), or round what the orbit camera looks at.
     const walking = rig.mode === 'walk';
     if (shadows.enabled && (walking || rig.dist < 1500)) {
@@ -347,7 +364,7 @@ export async function start(canvas, onProgress = () => {}) {
       }
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: ground.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group], standing ? [figure] : []);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup], standing ? [figure] : []);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
@@ -392,6 +409,9 @@ export async function start(canvas, onProgress = () => {}) {
     errors,
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
     umbrellas: landmarks.umbrellas,
+    /** For tests: where the statue stands and where the turtle is now. */
+    statue: statue ? { ...statue.userData.world, depth: statue.userData.depth } : null,
+    turtleAt: () => (turtle.mesh ? turtle.at(clock.time, shared.uSeaLevel.value) : null),
     /** Renders a few scenes of sound offline and measures them: [{ name, rms, peak, bad }]. */
     async soundCheck() {
       const shore = (hs, dist) => [{ x: 10, z: 20, hs, dist, bearing: 0.4 }, { x: 19, z: 20, hs, dist: dist + 4, bearing: -0.6 }];
@@ -412,7 +432,7 @@ export async function start(canvas, onProgress = () => {}) {
       return out;
     },
     sound,
-    groundAt: (x, z) => ({ height: ground.heightAt(x, z), shore: ground.shoreAt(x, z) }),
+    groundAt: (x, z) => ({ height: ground.heightAt(x, z), shore: ground.shoreAt(x, z), land: ground.coverAt('land', x, z, []), benthic: ground.coverAt('benthic', x, z, []) }),
     /**
      * For tests and screenshots. { cam: {x, z, dist, yaw, pitch, fov}, time (wave clock, s), hours (local), month (0-11),
      * weather, wind (m/s), sun: {azimuth, elevation}|null, seaLevel, exposure, compare (0..1 or -1), show: {water, terrain} }

@@ -44,6 +44,8 @@ export const shared = {
   tWaveA: { value: null }, tWaveB: { value: null }, tWaveC: { value: null }, tWaveLUT: { value: null },
   uWaveTile: { value: new THREE.Vector4(499, 97, 19, 3.7) },
   uWaveCurve: { value: new THREE.Vector4(1, 1, 1, 1) },
+  uWaveHere: { value: new THREE.Vector4() },
+  uTreesNear: { value: 0 },                                // 1 when mangroves are drawn as trees near the eye (the canopy shell gives way)
   uWaveCamMod: { value: [new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2()] },
   uWind: { value: new THREE.Vector3(-0.97, 0.26, 7) },
   uViewProj: { value: new THREE.Matrix4() },                  // of the camera-relative frame

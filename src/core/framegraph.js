@@ -33,6 +33,11 @@ const compositeFragment = /* glsl */`
 #include <lr_common>
 #include <lr_optics>
 #include <lr_atmosphere>
+uniform highp sampler2DArray tWaveC;   // curvature of the wave cascades (for the light shafts under water)
+uniform vec4 uWaveTile;
+uniform vec2 uWaveCamMod[4];
+uniform vec4 uWaveCurve;
+uniform vec4 uWaveHere;                // height of each cascade's waves where the camera is
 uniform sampler2D tScene;
 uniform sampler2D tDepth;
 uniform sampler2D tCloud;      // rgb = cloud radiance, a = how much shows through (1 = no cloud)
@@ -83,7 +88,42 @@ void main() {
     float eyeDepth = max(uSeaLevel - uCamY, 0.0);
     vec3 glow = surfaceLight * 0.9 * exp(-kd * max(eyeDepth - dir.y * 3.0, 0.0)) * bb / kd * 0.5;
     vec3 through = exp(-c * far);
+    if (uSunDir.y > 0.05) {
+      // Shafts of sunlight: the water glows more where the waves above focus the sun and less between. A few
+      // samples along the first metres of the view, each traced up the (bent) sunlight to the surface.
+      vec3 sunIn = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
+      vec4 w = uWaveHere;
+      float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))), beams = 0.0, total = 0.0;
+      for (int i = 0; i < 6; i++) {
+        float t = (float(i) + jitter) * 0.55;
+        if (t > far) break;
+        vec3 p = vec3(0.0, uCamY, 0.0) + dir * t;
+        float under = uSeaLevel - p.y;
+        if (under < 0.03) continue;
+        float path = under / max(-sunIn.y, 0.3), kd = 0.254 * path, weight = exp(-0.35 * t);
+        vec2 entry = p.xz - sunIn.xz * path;
+        vec3 h = vec3(0.0);
+        for (int k = 2; k < 4; k++) {
+          float bend = kd * w[k] * uWaveCurve[k];
+          h += w[k] / (1.0 + bend * bend) * textureLod(tWaveC, vec3((entry + uWaveCamMod[k]) / uWaveTile[k], float(k)), log2(max((path * 0.0093 + 0.03) * 256.0 / uWaveTile[k], 1.0))).xyz;
+        }
+        beams += weight * min(1.0 / max(abs((1.0 + kd * h.x) * (1.0 + kd * h.y) - kd * kd * h.z * h.z), 0.2), 3.5);
+        total += weight;
+      }
+      // (Looking along the light the beams are strongest.)
+      if (total > 0.0) glow *= mix(1.0, pow(beams / total, 1.6), 0.9) * (1.0 + 1.2 * pow(lrSaturate(dot(dir, -sunIn)), 3.0));
+    }
     col = seen * through + glow * (1.0 - through);
+    // Motes: specks of drifting matter catching the light, near the eye.
+    for (int l = 0; l < 3; l++) {
+      float t = 0.3 + 0.45 * float(l);
+      if (t > far) break;
+      vec3 p = (vec3(uCamMod.x, uCamY, uCamMod.y) + dir * t + vec3(0.03, -0.012, 0.017) * uTime) * 7.0, cell = floor(p);
+      vec2 h = lrHash22(cell.xz + cell.y * 37.0 + float(l) * 11.0);
+      vec3 q = fract(p) - 0.5 - (vec3(h, fract(h.x * 7.3)) - 0.5) * 0.7;
+      float miss = length(q - dir * dot(q, dir)) / 7.0;
+      col += surfaceLight / PI * 0.3 * step(0.72, h.y) * (1.0 - smoothstep(0.0, 0.0018, miss)) * exp(-kd * eyeDepth);
+    }
     outColor = vec4(col, 1.0);
     return;
   }
@@ -192,7 +232,7 @@ export class FrameGraph {
     const { targets } = R;
     this.copy = new FullscreenPass(copyFragment, { tSrc: { value: targets.scene.texture } });
     this.composite = new FullscreenPass(compositeFragment, uniformsFor(
-      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType', 'uUnderEye'],
+      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType', 'uUnderEye', 'tWaveC', 'uWaveTile', 'uWaveCamMod', 'uWaveCurve', 'uWaveHere'],
       { tScene: { value: targets.scene.texture }, tDepth: { value: targets.scene.depthTexture }, tCloud: { value: null }, uCloudOn: { value: 0 }, uStarTurn: { value: 0 } }));
     this.bloom = new Bloom(6);
     this.tonemap = new FullscreenPass(tonemapFragment, uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, 'uExposure'],
