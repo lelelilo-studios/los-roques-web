@@ -17,7 +17,7 @@ export const shared = {
   uFootCount: { value: 0 },
   uLeg: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] },                        // your two shins where they stand in the water: x, z (wrapped to 64 m), 1 if in water, how fast you move (m/s)
   // What your hand has drawn or pressed in the sand: strokes from (x, z) to (x, z), wrapped to 64 m; and for each its time, kind (0 fingers drawn along, 1 a hand pressed flat), heading of a press (radians).
-  uTouchSeg: { value: Array.from({ length: 16 }, () => new THREE.Vector4()) }, uTouchInfo: { value: Array.from({ length: 16 }, () => new THREE.Vector4(-1e9, 0, 0, 0)) }, uTouchCount: { value: 0 },
+  uTouchSeg: { value: Array.from({ length: 24 }, () => new THREE.Vector4()) }, uTouchInfo: { value: Array.from({ length: 24 }, () => new THREE.Vector4(-1e9, 0, 0, 0)) }, uTouchCount: { value: 0 },
   uRing: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -1e9, 0)) },     // rings you send out wading: x, z (wrapped to 64 m), time, strength
   tShadow: { value: null }, uShadowC: { value: new THREE.Vector3() }, uShadowR: { value: new THREE.Vector3(1, 0, 0) }, uShadowU: { value: new THREE.Vector3(0, 0, 1) },
   uShadowP: { value: new THREE.Vector4(1, 1, 0, 0) },

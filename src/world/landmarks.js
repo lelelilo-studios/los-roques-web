@@ -113,10 +113,11 @@ void main() {
     albedo = mix(albedo, vec3(0.5, 0.46, 0.39) * (0.8 + 0.4 * grains), stuck);
     soaked *= 1.0 - stuck;                                   // (sanded skin does not shine)
   }
-  hand = 1.0 - smoothstep(0.1, 0.15, distance(vRel, uHandWet.xyz));       // (sand: on the hand itself, not up the arm)
+  hand = 1.0 - smoothstep(0.085, 0.125, distance(vRel, uHandWet.xyz));     // (sand: on the hand itself, not up the arm)
   if (uHandSand * hand > 0.01) {
     // Sand on the hand that touched it: on the fingers and the palm, more of it the wetter the sand was.
-    float grains = lrNoise(vObj.xz * 1100.0 + vObj.y * 700.0), stuck = uHandSand * hand * step(0.72 - 0.45 * uHandSand, grains);
+    // (Three looks at the grain, one along each axis: one alone drew streaks down the arm, like wood.)
+    float grains = (lrNoise(vObj.xy * 1300.0) + lrNoise(vObj.yz * 1300.0 + 17.0) + lrNoise(vObj.zx * 1300.0 + 31.0)) / 3.0, stuck = uHandSand * hand * step(0.6 - 0.16 * uHandSand, grains);
     albedo = mix(albedo, vec3(0.5, 0.46, 0.39) * (0.8 + 0.4 * grains), stuck);
     soaked *= 1.0 - stuck;
   }

@@ -68,8 +68,9 @@ ${clipmapFragment}
 ${detailGLSL}
 ${shadowGLSL}
 uniform float uRain;
-uniform vec4 uTouchSeg[16];  // what your hand has drawn or pressed in the sand: strokes from xy to zw (detail coordinates, wrapped to 64 m)
-uniform vec4 uTouchInfo[16]; // for each: when, kind (0 fingers drawn along, 1 a hand pressed flat), the hand's heading, how far apart the fingers' furrows lie (0 one behind another .. 1 side by side)
+uniform vec4 uTouchSeg[24];  // what your hand has drawn or pressed in the sand: strokes from xy to zw (detail coordinates, wrapped to 64 m)
+uniform vec4 uTouchInfo[24]; // for each: when; kind (0 fingers drawn along, 1 a hand pressed flat, 2 a heap poured out, 3 a spot wetted, 4 the hollow a handful left);
+                             // the hand's heading (1, 4) or the heap's height or how wet (2, 3); how far apart the furrows lie (0) or how wide (2, 3)
 uniform int uTouchCount;
 uniform vec4 uLeg[3];        // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
@@ -163,11 +164,14 @@ float lrFootprints(vec2 d, float soft, float since) {
 // What your hand has done to the sand at d (metres, negative = down). Fingers drawn through it leave four
 // furrows two centimetres apart, the sand pushed up between and beside them: soft-edged in dry sand, which
 // slumps, narrow and clean in wet. A hand pressed flat leaves its print: the palm, the four fingers, the thumb.
+// A handful taken leaves a hollow with the gouges of the fingers in it; sand poured out builds a little heap
+// with sides as steep as dry sand will stand; water poured on dry sand leaves a dark spot that dries.
 // Like footprints, what was made before the sea last covered the place is gone.
+float lrHandDamp = 0.0;
 float lrCapsule(vec2 p, vec2 a, vec2 b, float r) { vec2 ab = b - a, ap = p - a; return length(ap - ab * clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0)) / r; }
 float lrHandMarks(vec2 d, float soft, float since) {
   float lo = 0.0, hi = 0.0;
-  for (int i = 0; i < 16; i++) {
+  for (int i = 0; i < 24; i++) {
     if (i >= uTouchCount) break;
     vec4 seg = uTouchSeg[i], info = uTouchInfo[i];
     if (info.x < since) continue;
@@ -177,7 +181,16 @@ float lrHandMarks(vec2 d, float soft, float since) {
     vec2 dir = len > 1e-4 ? ab / len : vec2(sin(info.z), -cos(info.z));
     vec2 l = vec2(dot(a, dir), dot(a, vec2(-dir.y, dir.x)));               // along the stroke (or the hand), across it
     float v;
-    if (info.y < 0.5) {
+    if (info.y > 1.5 && info.y < 3.5) {
+      float r = length(a) / max(info.w, 1e-3);
+      if (info.y < 2.5) v = info.z * pow(max(1.0 - r, 0.0), 1.25) * (0.94 + 0.12 * lrNoise(a * 240.0));                         // a heap (grains show on its sides)
+      else { v = 0.0; lrHandDamp = max(lrHandDamp, info.z * (1.0 - smoothstep(0.55, 1.0, r + 0.25 * (lrNoise(a * 55.0 + info.x) - 0.5))) * exp(-(uTime - info.x) / 35.0)); }
+    } else if (info.y > 3.5) {
+      // (The bowl a handful came out of, deepest where the fingers closed, their four gouges running into it.)
+      float bowl = length(vec2((l.x + 0.055) / 0.06, l.y / 0.045)), finger = min(abs(abs(l.y) - 0.0095), abs(abs(l.y) - 0.0285));
+      v = -mix(0.008, 0.014, soft) * info.w * (1.0 - smoothstep(0.35, 1.0, bowl)) * (1.0 + 0.35 * exp(-finger * finger / 3e-5) * smoothstep(-0.09, -0.02, l.x))
+        + soft * 0.003 * smoothstep(0.9, 1.1, bowl) * (1.0 - smoothstep(1.1, 1.5, bowl));
+    } else if (info.y < 0.5) {
       // (Fingers at half and one and a half spacings either side of the middle. Drawn sideways the spacing
       // closes up and the four furrows become one, wider and deeper, with the sand banked along it.)
       float apart = 0.02 * info.w, beyond = max(max(-l.x, l.x - len), 0.0), side = abs(l.y), one = 1.0 - smoothstep(0.15, 0.5, info.w);
@@ -194,7 +207,7 @@ float lrHandMarks(vec2 d, float soft, float since) {
     }
     lo = min(lo, v); hi = max(hi, v);
   }
-  return lo < -2e-4 ? lo : hi;
+  return lo + hi;
 }
 float lrMarks(vec2 d, float soft, float since) { return lrFootprints(d, soft, since) + lrHandMarks(d, soft, since); }
 
@@ -443,11 +456,11 @@ void main() {
     float soft = 1.0 - wetness, since = beach && sw.age < 900.0 ? uTime - sw.age : -1e9, e = 0.004;
     float h0 = lrMarks(d, soft, since);
     vec2 slope = vec2(lrMarks(d + vec2(e, 0.0), soft, since), lrMarks(d + vec2(0.0, e), soft, since)) - h0;
-    if (h0 != 0.0 || slope != vec2(0.0)) {
+    if (h0 != 0.0 || slope != vec2(0.0) || lrHandDamp > 0.0) {
       n = normalize(vec3(n.x - slope.x / e, n.y, n.z - slope.y / e));
       openSky *= 1.0 + 16.0 * min(h0, 0.0);                 // (the bottom of a print 2 cm deep sees two thirds of the sky)
       albedo *= 1.0 + 4.0 * min(h0, 0.0) * soft;            // pressed sand is a shade darker
-      albedo *= 1.0 - 0.42 * lrFootDamp * soft;              // and darker still where a wet foot has left it damp
+      albedo *= 1.0 - 0.42 * max(lrFootDamp, lrHandDamp) * soft;       // and darker still where a wet foot, or water poured from your hand, has left it damp
     }
   }
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);

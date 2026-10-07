@@ -136,10 +136,27 @@ export class Ambience {
 
   /**
    * Your hand on the sand or in the water. `kind`: 'dry', 'wet' or 'water'; `how`: 'down' as it lands, 'drag' as
-   * it is drawn along (called a few times a second while it moves), 'up' as it leaves; `speed` in m/s.
+   * it is drawn along (called a few times a second while it moves), 'take' as the fingers close on a handful,
+   * 'pour' as that runs out between them (called many times a second; `speed` is then how fast, 0..1), 'up' as it
+   * leaves or is empty; `speed` in m/s.
    */
   touch(kind, how, speed = 0) {
     const k = clamp01(speed / 0.6);
+    if (how === 'take') {
+      if (kind === 'water') this.burst('pink', 'bandpass', 700, 0.8, 0.07, 0.03, 0.14, 0.1);                 // water closing over the hand
+      else if (kind === 'wet') { this.burst('pink', 'lowpass', 700, 0.9, 0.1, 0.03, 0.12, 0.1); this.burst('white', 'bandpass', 2600, 1.4, 0.03, 0.02, 0.1, 0.1, 0.05); }       // a wet squeeze
+      else this.burst('white', 'bandpass', 3000, 0.5, 0.09, 0.05, 0.22, 0.1);                               // dry sand crunching as the fingers close through it
+      return;
+    }
+    if (how === 'pour') {
+      // What runs out between the fingers: the steady whisper of dry grains landing; the patter of clots of
+      // wet sand; the trickle of water, each drop its own small note.
+      const q = clamp01(speed);
+      if (kind === 'dry') this.burst('white', 'highpass', 5200 + 1500 * this.rnd(), 0.4, 0.014 + 0.03 * q, 0.03, 0.14, 0.1 + 0.2 * (this.rnd() - 0.5));
+      else if (kind === 'wet') { if (this.rnd() < 0.5) this.burst('pink', 'lowpass', 900 + 500 * this.rnd(), 0.9, 0.05 * q + 0.02, 0.004, 0.05, 0.1, 0.3 * this.rnd()); }
+      else { this.burst('white', 'bandpass', 2200 + 2600 * this.rnd(), 7, 0.02 + 0.035 * q, 0.002, 0.035, 0.1 + 0.3 * (this.rnd() - 0.5), 0.3 + 0.06 * this.rnd()); this.burst('white', 'bandpass', 1300, 0.7, 0.012 * q, 0.03, 0.1, 0.1); }
+      return;
+    }
     if (kind === 'water') {
       if (how === 'down') { this.burst('pink', 'lowpass', 420, 1.1, 0.16, 0.008, 0.11, 0.1); this.burst('white', 'highpass', 1500, 0.5, 0.05, 0.01, 0.16, 0.1, 0.02); }      // a soft plop
       else if (how === 'drag') this.burst('white', 'bandpass', 900 + 500 * k, 0.6, 0.035 + 0.06 * k, 0.03, 0.16, 0.1);                                                      // water parting round the fingers

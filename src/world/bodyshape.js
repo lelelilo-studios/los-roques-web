@@ -16,7 +16,7 @@ export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, S
 /** Vertices the body below the neck and the head can take (see poseBody). */
 export const BODY_VERTICES = 6 * SIDES * 36 + 3 * SIDES * 12, HEAD_VERTICES = 6 * SIDES * 5 + 3 * SIDES;
 /** The same with `detail` (your own body: hands with fingers and thumbs, feet with toes). */
-export const BODY_VERTICES_DETAIL = BODY_VERTICES + 66 * SIDES + 1900;
+export const BODY_VERTICES_DETAIL = BODY_VERTICES + 108 * SIDES + 2100;
 const LIMB = new Float64Array(11 * 12), SKIN_RINGS = new Float64Array(8 * (SIDES + 1) * 6);
 const add = (p, a, ka, b = null, kb = 0, c = null, kc = 0) => [p[0] + a[0] * ka + (b ? b[0] * kb : 0) + (c ? c[0] * kc : 0), p[1] + a[1] * ka + (b ? b[1] * kb : 0) + (c ? c[1] * kc : 0), p[2] + a[2] * ka + (b ? b[2] * kb : 0) + (c ? c[2] * kc : 0)];
 const unit = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -172,30 +172,36 @@ export class Tubes {
   /**
    * A hand from the wrist on: the palm, four fingers of their own lengths and a thumb. `f` = the way the forearm
    * points, `palm` = the way the palm faces, `side` -1 left / +1 right, `curl` 0 (held flat) .. 1 (a loose fist):
-   * a hand hanging at rest is about half curled. Returns the tip of the middle finger.
+   * a hand hanging at rest is about half curled. `spread` 0 (fingers together) .. 1 (fanned apart, gaps between
+   * them). Returns the tip of the middle finger; this.palm then holds the hand's frame: { wrist, knuckles, f (the way
+   * it points), N (the way the palm faces), A (across it, towards the thumb) }.
    */
-  hand(wrist, f, palm, side, curl, colour) {
+  hand(wrist, f, palm, side, curl, colour, spread = 0) {
     const k = palm[0] * f[0] + palm[1] * f[1] + palm[2] * f[2], N = unit([palm[0] - f[0] * k, palm[1] - f[1] * k, palm[2] - f[2] * k]);
     const fxN = cross(f, N), A = [fxN[0] * side, fxN[1] * side, fxN[2] * side];        // across the palm, towards the thumb
     const K = add(wrist, f, 0.096);
-    this.limb(wrist, K, A, [0.027, 0.017], [0.04, 0.0125], colour, 6);
+    this.palm = { wrist: wrist.slice(), knuckles: K, f: f.slice(), N, A };
+    // (The palm is one skin from inside the wrist to the knuckles: closed at the wrist, however the hand is bent.)
+    this.skin([add(wrist, f, -0.016), add(wrist, f, -0.004), wrist, K], [[0.006, 0.005], [0.022, 0.015], [0.027, 0.017], [0.04, 0.0125]], colour, A, 6);
     let middle = K;
     for (let i = 0; i < 4; i++) {
       // Three bones to a finger, each bent a little more than the one before it (a relaxed hand curls most at
       // the tips); the fingers lie side by side, the little one set back along the knuckle line.
       const L = [0.076, 0.085, 0.079, 0.062][i], r = [0.0086, 0.009, 0.0086, 0.0076][i], c1 = curl * (0.4 + 0.1 * i), c2 = c1 + curl * 0.7, c3 = c2 + curl * 0.55;
-      const B = add(K, A, 0.0285 - 0.019 * i, f, -0.0016 * i * i);
-      const M1 = add(B, f, Math.cos(c1) * 0.46 * L, N, Math.sin(c1) * 0.46 * L), M2 = add(M1, f, Math.cos(c2) * 0.29 * L, N, Math.sin(c2) * 0.29 * L), T = add(M2, f, Math.cos(c3) * 0.25 * L, N, Math.sin(c3) * 0.25 * L);
+      // (Spread, each finger turns a few degrees away from the middle of the hand, and its root moves with it.)
+      const fan = (1.5 - i) * 0.13 * spread, g = add([0, 0, 0], f, Math.cos(fan), A, Math.sin(fan));
+      const B = add(K, A, 0.0285 - 0.019 * i + (1.5 - i) * 0.0025 * spread, f, -0.0016 * i * i);
+      const M1 = add(B, g, Math.cos(c1) * 0.46 * L, N, Math.sin(c1) * 0.46 * L), M2 = add(M1, g, Math.cos(c2) * 0.29 * L, N, Math.sin(c2) * 0.29 * L), T = add(M2, g, Math.cos(c3) * 0.25 * L, N, Math.sin(c3) * 0.25 * L);
       this.skin([B, M1, M2, T], [[r, r * 0.92], [r * 0.93, r * 0.85], [r * 0.84, r * 0.76], [r * 0.7, r * 0.6]], colour, A, 6, r * 0.6);
       // (The nail lies on the back of the last joint.)
       const along = [T[0] - M2[0], T[1] - M2[1], T[2] - M2[2]], back = [-N[0], -N[1], -N[2]];
-      this.nail(add(M2, along, 0.2, back, r * 0.74), add(M2, along, 1.0, back, r * 0.6), A, r * 0.58, back);
+      this.nail(add(M2, along, 0.2, back, r * 0.74), add(M2, along, 0.86, back, r * 0.62), A, r * 0.56, back);
       if (i === 1) middle = T;
     }
     // The thumb stands off the edge of the palm, turned towards the fingers.
     const B = add(wrist, f, 0.026, A, 0.027, N, 0.006), d1 = unit(add([0, 0, 0], f, 0.62, A, 0.72, N, 0.12 + 0.35 * curl)), M = add(B, d1, 0.046);
     const d2 = unit(add([0, 0, 0], f, 0.82, A, 0.42, N, 0.2 + 0.45 * curl)), T = add(M, d2, 0.032);
-    this.skin([B, M, T], [[0.0115, 0.0125], [0.0095, 0.0105], [0.0075, 0.0085]], colour, N, 6, 0.006);
+    this.skin([add(B, d1, -0.012), B, M, T], [[0.008, 0.009], [0.0115, 0.0125], [0.0095, 0.0105], [0.0075, 0.0085]], colour, N, 6, 0.006);      // (its root goes into the heel of the hand)
     return middle;
   }
   /** A rounded end on a tube (a low cone of triangles to a point just beyond b). */
@@ -314,9 +320,10 @@ export function reach(hip, target, l1, l2, bend) {
  * @param {number} [p.breath]  -1..1: where you are in a breath (the shoulders rise a few millimetres, the chest fills)
  * @param {number} [p.pace]  metres you travel per pace (PI of phase): the planted foot goes back at this rate, so it stays put on the ground
  * @param {number} [p.sink]  metres your weight presses a planted foot into the sand
- * @param {{at: number[], amount: number, curl?: number, spread?: number} | null} [p.touch]  your right hand reaching down:
- *   `at` = where the tip of the middle finger should be (this frame of reference), `amount` 0..1 of the way there
- *   from where the hand rests, `curl` of the fingers (0 flat .. 1), into the sand or the water
+ * @param {object | null} [p.touch]  your right hand at work: `amount` 0..1 of the way from where it rests;
+ *   `at` = where the tip of the middle finger goes when it is down on the ground (this frame of reference), the
+ *   hand laid flat; `lift` 0..1 of the way from there to being held up before you: then `wrist` (where), `dir`
+ *   (the way the hand points), `palm` (the way the palm faces); `curl` of the fingers (0 flat .. 1) and `spread`
  */
 export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0, pace = null, sink = 0, touch = null }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
@@ -371,15 +378,18 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid
     // flat, fingers pointing away from you, the wrist a hand's length behind the fingertip and just above it.
     const reaching = touch && side > 0 && touch.amount > 0 ? touch.amount * touch.amount * (3 - 2 * touch.amount) : 0;
-    let point = null;
+    let point = null, facing = null;
     if (reaching) {
-      const to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2;
-      sh[1] -= 0.1 * reaching; sh[2] -= 0.12 * reaching;
-      // (Curled fingers reach less far and go down into what they touch: the wrist comes nearer and higher.)
+      const to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.12 * reaching * (1 - up);
+      // (Down on the ground: curled fingers reach less far and go down into what they touch, so the wrist comes
+      // nearer and higher. Held up: the wrist where it is asked for.)
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
+      if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
-      elbow = reach(sh, wrist, 0.32, 0.255, [0.75, 0.25, 0.6]);
-      point = away;
+      elbow = reach(sh, wrist, 0.32, 0.255, [0.75 - 0.15 * up, 0.25 - 0.95 * up, 0.6 - 0.25 * up]);
+      point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, (touch.dir[1]) * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
+      facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
     }
     const tip = [wrist[0] - side * 0.01, wrist[1] - 0.17 * Math.cos(a + bend + 0.15), wrist[2] - 0.17 * Math.sin(a + bend + 0.15)];
     const sleeve = [sh[0] + (elbow[0] - sh[0]) * 0.5, sh[1] + (elbow[1] - sh[1]) * 0.5, sh[2] + (elbow[2] - sh[2]) * 0.5];
@@ -390,12 +400,13 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     if (detail) {
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       t.tube(elbow, wrist, [0.036, 0.04], [0.021, 0.028], SKIN);
-      t.cap(elbow, wrist, [0.021, 0.028], SKIN, 0.9);                   // (the round of the wrist: no gap where the hand bends back from the forearm)
+      // (The wrist is a ball between the two: whichever way the hand bends from the forearm, the joint is closed.)
+      { const w = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]); t.skin([add(wrist, w, -0.02), add(wrist, w, -0.012), add(wrist, w, -0.002), add(wrist, w, 0.008), add(wrist, w, 0.015)], [[0.004, 0.004], [0.0165, 0.019], [0.02, 0.0225], [0.0165, 0.019], [0.004, 0.004]], SKIN); }
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
       const rest = [-side, -0.6 * wade, 0.35 * (1 - wade)], loose = 0.55 - 0.3 * wade;
-      const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, [0, -1, 0]) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN);
+      const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0);
       joints.fingertips.push(tip);
-      if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching };
+      if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching, palm: t.palm };
     } else {
       t.tube(elbow, wrist, [0.036, 0.04], [0.026, 0.03], SKIN);
       t.tube(wrist, tip, [0.036, 0.018], [0.03, 0.012], SKIN);
