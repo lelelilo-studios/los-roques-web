@@ -19,9 +19,9 @@ export function wadeSpeed(depth, run = false) {
  * Length of a pace in metres at a given speed: 0.72 m walking (two paces a second at 1.4 m/s), lengthening to
  * 1.05 m at a run (not quite three a second at 3 m/s), and shorter crouched (`crouch` 0..1).
  */
-export function paceLength(speed, crouch = 0) {
+export function paceLength(speed, crouch = 0, legs = 1) {
   const k = Math.min(1, Math.max(0, (speed - 1.6) / 1.2));
-  return (0.72 + 0.33 * k * k * (3 - 2 * k)) * (1 - 0.45 * crouch);
+  return (0.72 + 0.33 * k * k * (3 - 2 * k)) * (1 - 0.45 * crouch) * legs;        // (`legs`: the length of yours against the 0.87 m these paces are for)
 }
 
 const smooth = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -37,6 +37,8 @@ export class Walker {
   constructor({ ground, surfaceAt, blocked = () => false, rect = null }) {
     Object.assign(this, { ground, surfaceAt, blocked, rect });
     this.x = 0; this.z = 0; this.yaw = 0; this.look = 0;       // radians; yaw clockwise from north, look above the horizon
+    // (How high your eyes are standing and crouched, and your legs against the 0.87 m the paces are for: your body's, see app.js.)
+    this.stand = STAND; this.crouch = CROUCH; this.legs = 1;
     this.eyeY = STAND; this.body = STAND; this.surf = 0; this.vx = 0; this.vz = 0;
     this.diving = false; this.diveTimer = 0; this.phase = 0; this.bob = 0; this.bobAmount = 1;
     this.pinned = false;                                          // a test pose holds the eye where it was put
@@ -53,7 +55,9 @@ export class Walker {
    * Puts the walker somewhere at once (no springs). `eye`, if given, is the eye height in metres above the sea
    * surface at that spot at that moment (negative = under water) and stays fixed until the walker moves.
    */
-  place({ x, z, yaw = this.yaw, look = this.look, height = STAND, eye = null }) {
+  /** How far down you are, 0 standing .. 1 in a full crouch. */
+  get crouched() { return Math.min(1, Math.max(0, (this.stand - this.body) / (this.stand - this.crouch))); }
+  place({ x, z, yaw = this.yaw, look = this.look, height = this.stand, eye = null }) {
     Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0 });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
@@ -102,7 +106,7 @@ export class Walker {
     }
     const onGround = !this.diving && !this.afloat;
     // (Crouched you shuffle along at less than half the pace.)
-    const crouch = Math.min(1, Math.max(0, (STAND - this.body) / (STAND - CROUCH)));
+    const crouch = this.crouched;
     if (onGround) speed *= 1 - 0.55 * crouch;
     const k = 1 - Math.exp(-dt * (onGround ? 9 : 3.5));
     this.vx += (wx * speed - this.vx) * k; this.vz += (wz * speed - this.vz) * k;
@@ -128,7 +132,7 @@ export class Walker {
     // The eye.
     const g2 = this.ground.heightAt(this.x, this.z);
     // (Crouched, reaching down to touch, you lean in over your hand: the eye comes a hand's breadth lower.)
-    const want = input.down && !this.diving && d < 0.9 ? CROUCH - (input.hand ? 0.12 : 0) : STAND;
+    const want = input.down && !this.diving && d < 0.9 ? this.crouch - (input.hand ? 0.12 : 0) : this.stand;
     this.body += (want - this.body) * (1 - Math.exp(-dt * 10));
     this.afloat = this.surf + FLOAT > g2 + this.body;
     if (!this.diving) {
@@ -148,7 +152,7 @@ export class Walker {
     // Steps: the head bobs once per pace of 0.72 m (shorter crouched), and each pace is reported.
     if (onGround && travelled > 0) {
       const before = Math.floor(this.phase / Math.PI);
-      this.phase += travelled / paceLength(travelled / dt, crouch) * Math.PI;
+      this.phase += travelled / paceLength(travelled / dt, crouch, this.legs) * Math.PI;
       const after = Math.floor(this.phase / Math.PI);
       if (after !== before) { steps.push({ x: this.x, z: this.z, yaw: this.yaw, side: after & 1, depth: Math.max(this.surf - g2, 0), stride: this.stride }); this.thud = Math.min(1.4, 0.4 + this.stride); }
     }

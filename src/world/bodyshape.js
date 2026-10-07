@@ -13,6 +13,14 @@ const RING = new Float64Array((SIDES + 1) * 12);
 const SKIN0 = [0.5, 0.36, 0.27], SHIRT0 = [0.56, 0.6, 0.6], SHORTS0 = [0.06, 0.14, 0.24], NAIL = [0.66, 0.5, 0.44];
 const shade = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
 export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, SHOULDER = 0.175;
+/**
+ * The proportions the solver works with (metres). These are the figure of tubes' own; the real body
+ * (world/figure.js) gives hers with setProportions, and the same solver then walks, crouches and swims her.
+ * stand = eye height standing; crouchBy = how far the eye comes down to a full crouch.
+ */
+const PROP = { stand: 1.65, crouchBy: 0.9, eyeToShoulder: 0.22, back: 0.09, thigh: THIGH, shin: SHIN, ankle: ANKLE, torso: TORSO, hip: HIP, shoulder: SHOULDER, upperArm: 0.32, forearm: 0.255 };
+export function setProportions(p) { Object.assign(PROP, p); }
+export const proportions = () => ({ ...PROP });
 /** Vertices the body below the neck and the head can take (see poseBody). */
 export const BODY_VERTICES = 6 * SIDES * 36 + 3 * SIDES * 12, HEAD_VERTICES = 6 * SIDES * 5 + 3 * SIDES;
 /** The same with `detail` (your own body: hands with fingers and thumbs, feet with toes). */
@@ -259,7 +267,7 @@ export class Tubes {
     // as the heel comes down, heel up as you push off. The toes bend where they join the foot: with the heel
     // up they stay flat on the ground, ahead of the ball you are standing on.)
     const cp = Math.cos(pitch), sp = Math.sin(pitch), BALL = 0.126;
-    const turned = (along, up) => { const h = up - ANKLE, a = along * cp - h * sp; return [ankle[0] + fwd[0] * a, ankle[1] + along * sp + h * cp, ankle[2] + fwd[1] * a]; };
+    const turned = (along, up) => { const h = up - PROP.ankle, a = along * cp - h * sp; return [ankle[0] + fwd[0] * a, ankle[1] + along * sp + h * cp, ankle[2] + fwd[1] * a]; };
     const ground = pitch < 0 ? add(turned(BALL, 0.025), [0, 1, 0], -0.025) : null;
     const P = (along, up) => (ground && along > BALL ? [ground[0] + fwd[0] * (along - BALL), ground[1] + up, ground[2] + fwd[1] * (along - BALL)] : turned(along, up));
     // One skin from the heel to the roots of the toes: highest under the ankle, the instep sloping down to the
@@ -299,14 +307,16 @@ export function footAt(u, pace, m, stance = 1.2 * Math.PI, lift = 0.09) {
   // The ankle when the foot is tipped up on its heel by t, or down on its ball by f. Heel and ball are round
   // (Tubes.foot): the heel's middle is 5.2 cm behind the ankle and 2.6 cm below it, 3.4 cm above the sole; the
   // ball's 12.6 cm ahead and 3.5 cm below, 2.5 cm above the sole. Each stays where it is as the foot tips on it.
-  const heelUp = t => [-0.052 + 0.052 * Math.cos(t) - 0.026 * Math.sin(t), 0.034 + 0.052 * Math.sin(t) + 0.026 * Math.cos(t)];
-  const ballDown = f => [0.126 - 0.126 * Math.cos(f) + 0.035 * Math.sin(f), 0.025 + 0.126 * Math.sin(f) + 0.035 * Math.cos(f)];
+  // (An ankle that stands higher than the tubes' 6 cm is that much further above both.)
+  const hl = 0.026 + PROP.ankle - 0.06, bl = 0.035 + PROP.ankle - 0.06;
+  const heelUp = t => [-0.052 + 0.052 * Math.cos(t) - hl * Math.sin(t), 0.034 + 0.052 * Math.sin(t) + hl * Math.cos(t)];
+  const ballDown = f => [0.126 - 0.126 * Math.cos(f) + bl * Math.sin(f), 0.025 + 0.126 * Math.sin(f) + bl * Math.cos(f)];
   const strike = 0.3 * m, push = 0.85 * m, ease = t => t * t * (3 - 2 * t);
   if (u < stance) {
     const flat = front - u / Math.PI * pace * m, roll = 0.2 * Math.PI, off = 0.6 * stance;
     if (u < roll) { const t = strike * (1 - u / roll) ** 2, [a, h] = heelUp(t); return { ahead: flat + a, up: h, pitch: t, planted: 1 }; }
     if (u > off) { const f = push * ease((u - off) / (stance - off)), [a, h] = ballDown(f); return { ahead: flat + a, up: h, pitch: -f, planted: 1 - 0.7 * f / Math.max(push, 1e-6) }; }
-    return { ahead: flat, up: ANKLE, pitch: 0, planted: 1 };
+    return { ahead: flat, up: PROP.ankle, pitch: 0, planted: 1 };
   }
   const w = (u - stance) / (2 * Math.PI - stance), e = ease(w), from = ballDown(push), to = heelUp(strike);
   return {
@@ -321,7 +331,7 @@ export function footAt(u, pace, m, stance = 1.2 * Math.PI, lift = 0.09) {
  */
 export function footfall(stride) {
   const s = Math.min(stride, 1.6), run = Math.min(1, Math.max(0, (1.4 * s - 1.6) / 1.2)), amount = Math.min(1, s / 0.55) ** 1.5;
-  return footAt(0, 0.72 + 0.33 * run * run * (3 - 2 * run), amount, Math.PI * (1.2 - 0.5 * run)).ahead - (BACK + 0.035 - 0.03) + 0.06;
+  return footAt(0, 0.72 + 0.33 * run * run * (3 - 2 * run), amount, Math.PI * (1.2 - 0.5 * run)).ahead - (PROP.back + 0.035 - 0.03) + 0.06;
 }
 
 /** Two bones of lengths l1, l2 from `hip` reaching for `target`, the joint between them bending towards `bend`. Returns the joint. */
@@ -362,10 +372,11 @@ export function reach(hip, target, l1, l2, bend) {
 export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0, pace = null, sink = 0, touch = null }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   // (You lean into a hill, and back coming down one.)
-  const crouch = Math.min(1, Math.max(0, (1.65 - eye) / 0.9)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
-  const sy = eye - 0.22 + 0.004 * breath, shoulder = [0, sy, BACK + 0.02 + 0.1 * Math.max(0, -Math.sin(look))], joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [] };
+  const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
+  const sy = eye - PROP.eyeToShoulder + 0.004 * breath, shoulder = [0, sy, PROP.back + 0.02 + 0.1 * Math.max(0, -Math.sin(look))];
+  const joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [], shoulders: [], elbows: [], feet: [], hands: [], crouch, lean };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.
-  const hip = [0, Math.max(sy - TORSO * Math.cos(lean), 0.2), shoulder[2] + TORSO * Math.sin(lean) * 0.75];
+  const hip = [0, Math.max(sy - PROP.torso * Math.cos(lean), 0.2), shoulder[2] + PROP.torso * Math.sin(lean) * 0.75];
   t.n = 0;
   // Where each foot is (footAt): planted and passing back under you in a straight line at the rate you travel,
   // so that it stays where you put it; then lifted and carried forward. Set down on the ground under it, which
@@ -377,7 +388,7 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
   const swing = 0.34 * s * (1 - 0.75 * crouch);              // (how far the arms swing)
   const steps = [-1, 1].map(side => footAt(phase + (side < 0 ? 0 : Math.PI), travel, amount, stance, (0.09 + 0.05 * run) * (1 - 0.6 * crouch)));
   const feet = [-1, 1].map((side, i) => {
-    const f = steps[i], ankle = [side * (HIP + 0.01 + 0.05 * crouch), f.up - sink * f.planted, balance - 0.03 - f.ahead - 0.1 * crouch * amount];
+    const f = steps[i], ankle = [side * (PROP.hip + 0.01 + 0.05 * crouch), f.up - sink * f.planted, balance - 0.03 - f.ahead - 0.1 * crouch * amount];
     ankle[1] += Math.max(-0.35, Math.min(0.45, slope[0] * -ankle[2] + slope[1] * ankle[0]));
     return ankle;
   });
@@ -387,13 +398,13 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
   // span, and the trailing one is simply off the ground.)
   const standing = hip[1];
   feet.forEach((ankle, i) => {
-    const dx = ankle[0] - (i ? HIP : -HIP), dz = ankle[2] - hip[2], most = (THIGH + SHIN) * 0.995;
+    const dx = ankle[0] - (i ? PROP.hip : -PROP.hip), dz = ankle[2] - hip[2], most = (PROP.thigh + PROP.shin) * 0.995;
     hip[1] = Math.max(standing - 0.11 - 0.45 * Math.min(Math.abs(slope[0]), 0.7) - 0.2 * Math.min(Math.abs(slope[1]), 0.7), Math.min(hip[1], ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04))));
   });
   for (const side of [-1, 1]) {
     const ph = phase + (side < 0 ? 0 : Math.PI), c = Math.cos(ph);
-    const hipJ = [side * HIP, hip[1], hip[2]], ankle = feet[side < 0 ? 0 : 1];
-    const knee = reach(hipJ, ankle, THIGH, SHIN, [side * 0.12 * (1 + crouch), 0, -1]);
+    const hipJ = [side * PROP.hip, hip[1], hip[2]], ankle = feet[side < 0 ? 0 : 1];
+    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * 0.12 * (1 + crouch), 0, -1]);
     const hem = [hipJ[0] + (knee[0] - hipJ[0]) * 0.55, hipJ[1] + (knee[1] - hipJ[1]) * 0.55, hipJ[2] + (knee[2] - hipJ[2]) * 0.55];
     // (Loose shorts: the leg of them stands a finger's breadth off the thigh.)
     t.tube(hipJ, hem, [0.088, 0.092], [0.08, 0.083], SHORTS);
@@ -404,11 +415,12 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     // (The knee: both bones end rounded, so that a bent knee is a knee and not the open ends of two pipes.)
     if (detail) { t.cap(hem, knee, [0.055, 0.057], SKIN, 0.85); t.cap(calf, knee, [0.055, 0.057], SKIN, 0.85); }
     t.foot(ankle, [side * 0.12, -0.993], SKIN, detail ? side : 0, steps[side < 0 ? 0 : 1].pitch + tilt * steps[side < 0 ? 0 : 1].planted);
+    joints.feet.push({ pitch: steps[side < 0 ? 0 : 1].pitch + tilt * steps[side < 0 ? 0 : 1].planted, out: side * 0.12, planted: steps[side < 0 ? 0 : 1].planted });
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
-    const sh = [side * SHOULDER, sy - 0.01, shoulder[2]], a = (0.7 * swing * c - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = 0.14 + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
-    let elbow = [sh[0] + side * (0.025 + 0.14 * wade), sh[1] - 0.32 * Math.cos(a), sh[2] - 0.32 * Math.sin(a)];
-    const wrist = [elbow[0] - side * 0.015, elbow[1] - 0.255 * Math.cos(a + bend), elbow[2] - 0.255 * Math.sin(a + bend)];
+    const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], a = (0.7 * swing * c - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = 0.14 + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
+    let elbow = [sh[0] + side * (0.025 + 0.14 * wade), sh[1] - PROP.upperArm * Math.cos(a), sh[2] - PROP.upperArm * Math.sin(a)];
+    const wrist = [elbow[0] - side * 0.015, elbow[1] - PROP.forearm * Math.cos(a + bend), elbow[2] - PROP.forearm * Math.sin(a + bend)];
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid
     // flat, fingers pointing away from you, the wrist a hand's length behind the fingertip and just above it.
     const reaching = touch && side > 0 && touch.amount > 0 ? touch.amount * touch.amount * (3 - 2 * touch.amount) : 0;
@@ -421,7 +433,7 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
-      elbow = reach(sh, wrist, 0.32, 0.255, [0.75 - 0.15 * up, 0.25 - 0.95 * up, 0.6 - 0.25 * up]);
+      elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [0.75 - 0.15 * up, 0.25 - 0.95 * up, 0.6 - 0.25 * up]);
       point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, (touch.dir[1]) * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
       facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
     }
@@ -436,6 +448,8 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
       const rest = [-side, -0.6 * wade, 0.35 * (1 - wade)], loose = 0.55 - 0.3 * wade;
       const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow, sleeve);
       joints.fingertips.push(tip);
+      // (How the hand is held: the frame of its palm, how far the fingers are curled and parted.)
+      joints.hands.push({ ...t.palm, curl: point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, spread: point ? (touch.spread ?? 0) * reaching : 0 });
       if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching, palm: t.palm };
     } else {
       t.tube(elbow, wrist, [0.036, 0.04], [0.026, 0.03], SKIN);
@@ -444,7 +458,7 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     }
     t.tube([sh[0] - side * 0.01, sh[1] - 0.012, sh[2]], [side * 0.075, sy + 0.03, sh[2] - 0.01], [0.045, 0.056], [0.03, 0.045], SHIRT);      // the slope from the shoulder to the neck
     t.cap(sleeve, sh, [0.052, 0.056], SHIRT, 0.3);                    // the round of the shoulder
-    joints.wrists.push(wrist);
+    joints.wrists.push(wrist); joints.shoulders.push(sh); joints.elbows.push(elbow);
   }
   // The trunk: seat, hips, waist, chest, shoulders, up to the base of the neck.
   const on = k => [0, hip[1] + (shoulder[1] - hip[1]) * k, hip[2] + (shoulder[2] - hip[2]) * k];
@@ -470,7 +484,7 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
   return { ...joints, hip, shoulder };
 }
 
-const UPPER_ARM = 0.32, FOREARM = 0.255, HAND = 0.19;
+const HAND = 0.19;
 const lerp3 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
 const ease = (a, b, v) => { const k = Math.min(1, Math.max(0, (v - a) / (b - a))); return k * k * (3 - 2 * k); };
 
@@ -488,17 +502,17 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
   const u = stroke / (2 * Math.PI) - Math.floor(stroke / (2 * Math.PI));
   // (At the surface only the head is out of the water: the shoulders ride a hand's breadth under it, and the
   // arms work below the surface, seen through it. Dived, the body lies in line with the head.)
-  const chest = [0, -0.3 + 0.14 * under, 0.1], sink = 0.34 - 0.3 * under, hip = [0, chest[1] - TORSO * sink, chest[2] + TORSO * Math.sqrt(1 - sink * sink)];
+  const chest = [0, -0.3 + 0.14 * under, 0.1], sink = 0.34 - 0.3 * under, hip = [0, chest[1] - PROP.torso * sink, chest[2] + PROP.torso * Math.sqrt(1 - sink * sink)];
   const joints = { hips: [], knees: [], ankles: [], shoulders: [], elbows: [], wrists: [], hip, chest };
   // How far through each part of the stroke: the pull (hands out and back), the tuck (hands in under the chest,
   // knees drawn up), the reach (hands shoot forward as the legs kick).
   const pull = ease(0.38, 0.68, u), tuck = ease(0.68, 0.84, u), shoot = ease(0.84, 1.0, u), drawn = ease(0.6, 0.84, u) * (1 - ease(0.86, 0.98, u));
   for (const side of [-1, 1]) {
     // Arms.
-    const sh = [side * SHOULDER, chest[1] + 0.02, chest[2]];
+    const sh = [side * PROP.shoulder, chest[1] + 0.02, chest[2]];
     const ahead = [sh[0] - side * 0.11, sh[1] - 0.05, sh[2] - 0.5], out = [sh[0] + side * 0.27, sh[1] - 0.08, sh[2] - 0.24], inn = [sh[0] - side * 0.07, sh[1] - 0.19, sh[2] - 0.13];
     const target = lerp3(lerp3(lerp3(ahead, out, pull), inn, tuck), ahead, shoot);
-    const elbow = reach(sh, target, UPPER_ARM, FOREARM, [side * 0.8, -0.6, 0.1]);
+    const elbow = reach(sh, target, PROP.upperArm, PROP.forearm, [side * 0.8, -0.6, 0.1]);
     const dir = [target[0] - elbow[0], target[1] - elbow[1], target[2] - elbow[2]], dl = Math.hypot(...dir) || 1;
     const tip = [target[0] + dir[0] / dl * HAND, target[1] + dir[1] / dl * HAND, target[2] + dir[2] / dl * HAND];
     const sleeve = lerp3(sh, elbow, 0.3);                               // (short sleeves, pushed up by the water)
@@ -515,9 +529,9 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
     t.tube([sh[0], sh[1], sh[2]], [side * 0.08, chest[1] + 0.05, chest[2] - 0.01], [0.05, 0.058], [0.05, 0.05], SHIRT);
     joints.shoulders.push(sh); joints.elbows.push(elbow); joints.wrists.push(target);
     // Legs: trailing straight, drawn up with the knees apart, kicked back.
-    const hipJ = [side * HIP, hip[1], hip[2]], back = [hip[2] - chest[2], hip[1] - chest[1]], bl = Math.hypot(back[0], back[1]) || 1, bz = back[0] / bl, by = back[1] / bl;
+    const hipJ = [side * PROP.hip, hip[1], hip[2]], back = [hip[2] - chest[2], hip[1] - chest[1]], bl = Math.hypot(back[0], back[1]) || 1, bz = back[0] / bl, by = back[1] / bl;
     const straight = [hipJ[0] + side * 0.03, hipJ[1] + by * 0.84 + 0.03, hipJ[2] + bz * 0.84], up = [hipJ[0] + side * 0.3, hipJ[1] + by * 0.4 - 0.06, hipJ[2] + bz * 0.4];
-    const ankle = lerp3(straight, up, drawn), knee = reach(hipJ, ankle, THIGH, SHIN, [side * 0.9, -0.5, -0.2]);
+    const ankle = lerp3(straight, up, drawn), knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * 0.9, -0.5, -0.2]);
     const hem = lerp3(hipJ, knee, 0.55), calf = lerp3(knee, ankle, 0.35);
     t.tube(hipJ, hem, [0.088, 0.092], [0.074, 0.076], SHORTS);
     t.tube(hem, knee, [0.07, 0.072], [0.055, 0.057], SKIN);

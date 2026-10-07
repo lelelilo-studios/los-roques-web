@@ -186,7 +186,7 @@ export class Shadows {
       for (const mesh of figure.meshes) {
         const material = mesh.material, parent = mesh.parent, seen = mesh.visible;
         if (parent) parent.remove(mesh);
-        mesh.material = this.material; mesh.visible = true;
+        mesh.material = mesh.userData.caster || this.material; mesh.visible = true;
         renderer.render(mesh, cam);
         mesh.material = material; mesh.visible = seen;
         if (parent) parent.add(mesh);

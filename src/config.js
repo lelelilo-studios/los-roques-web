@@ -12,6 +12,7 @@ export const params = {
   data: q.get('data') || 'real',            // fixture = the small synthetic atoll
   dev: q.has('dev'),
   validate: q.get('validate') === '1',
+  tubes: q.get('tubes') === '1',            // keep the figure of tubes as your body (do not load the real one)
 };
 
 export const DATA_ROOT = 'data/';
