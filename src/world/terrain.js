@@ -1,9 +1,12 @@
 // Land and seabed: one clipmap mesh shaded from the data maps.
 //
 // Output convention for everything opaque (the water pass relies on it):
-//   alpha = water depth above the fragment (sea level - ground), positive when submerged;
-//   rgb   = lit reflectance when submerged (the water pass turns it into what you see through the water),
-//           radiance when above water.
+//   under water right now (the sea, or the sheet of swash on the beach face):
+//     rgb = lit reflectance (the water pass turns it into what you see through the water),
+//     alpha = sea level - ground (negative on the beach face, never below -LR_WET_BAND);
+//   otherwise: rgb = radiance, alpha = -1000 (or -2000 for tree canopy the sea must not draw over).
+// The terrain alone decides which of the two a pixel of the beach is (lrBeach in lr_shore), and shades the sand
+// the sea has left: dry, damp, wet, or wet and still glossy.
 import * as THREE from 'three';
 import { Clipmap, clipmapFragment, clipmapVertex } from '../core/clipmap.js';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
@@ -24,12 +27,15 @@ uniform sampler2D tLand;   // r mangrove, g scrub, b built-up, a canopy height /
 out vec3 vRel;      // position relative to the camera in x/z, absolute height in y (before the curvature drop)
 out float vViewZ;
 out vec4 vWeights;  // local wave heights (for the caustics)
+out float vHs;      // height of the waves arriving here (for the swash)
 out float vCanopy;  // height of the tree canopy drawn above the ground here, metres
 void main() {
   float cell, shore;
   vec2 rel = lrClipmapRel(cell), wxz = uCamXZ + rel;
   float h = lrGround(wxz, cell, shore);
-  vWeights = lrWaveWeights(wxz, uSeaLevel - h);
+  vec4 raw = lrWaveWeightsRaw(lrWaveMap(wxz));
+  vWeights = lrWaveCap(raw, uSeaLevel - h);
+  vHs = lrWaveHs(raw);
   // Mangrove stands are drawn as a shell over the ground: the data says where and how tall, noise makes the
   // edge ragged and the top lumpy like tree crowns. (The ground function itself stays the ground: mangroves stand in water.)
   vec4 land = textureLod(tLand, lrMapUV(wxz), log2(max(cell / uMpp, 1.0)));
@@ -49,9 +55,12 @@ const fragmentShader = /* glsl */`
 #include <lr_common>
 #include <lr_geo>
 #include <lr_shore>
+#include <lr_optics>
+#include <lr_atmosphere>
 #include <lr_cloud_shadow>
 ${wavesGLSL}
 ${clipmapFragment}
+uniform float uRain;
 uniform sampler2D tAlbedo;
 uniform sampler2D tSatellite;
 uniform sampler2D tBenthic;   // r seagrass, g coral/algae, b rubble, a confidence
@@ -61,6 +70,7 @@ ${crownsGLSL}
 in vec3 vRel;
 in float vViewZ;
 in vec4 vWeights;
+in float vHs;
 in float vCanopy;
 layout(location = 0) out vec4 outColor;
 
@@ -95,14 +105,17 @@ void main() {
   vec2 uv = lrMapUV(wxz);
   float px = length(fwidth(vRel.xz)) * 0.7071;          // ground footprint of a pixel, metres
   float shore;
-  float ground = lrGround(wxz, px, shore);
+  vec3 nG;
+  float ground = lrGroundAt(vRel.xz, px, true, shore, nG);
   float water = uSeaLevel - ground;
 
   // Coarse far geometry can stand above the sea where the ground function says water. Push such pixels just
-  // under the surface so the water pass still covers them.
+  // under the surface so the water pass still covers them. (Not the beach face seen from close by: its
+  // geometry is good, and things lying on the sand must be hidden where they dip into it.)
   float fz = gl_FragCoord.z;
-  if (water > -LR_WET_BAND && vRel.y > uSeaLevel - 0.02 && uCamY > uSeaLevel + 0.05) {
-    fz = lrDepthFromViewZ(vViewZ * (uCamY - uSeaLevel + 0.02) / max(uCamY - vRel.y, 1e-3));
+  float under = uSeaLevel - 0.05 - 0.2 * vHs;             // (below the troughs of the waves at the shore)
+  if (water > -LR_WET_BAND && vRel.y > under && uCamY > uSeaLevel + 0.05 && px > 0.08) {
+    fz = lrDepthFromViewZ(vViewZ * (uCamY - under) / max(uCamY - vRel.y, 1e-3));
   }
   gl_FragDepth = fz;
 
@@ -136,7 +149,22 @@ void main() {
   albedo *= mix(1.0, 0.72 + 0.56 * lrNoise(dxz * 0.45), benthic.r * nearby);
   albedo *= mix(1.0, 0.6 + 0.8 * lrNoise(dxz * 0.9) * lrNoise(dxz * 0.23 + 3.1) * 2.0, benthic.g * nearby);
   albedo *= 1.0 + (lrNoise(dxz * 6.0) - 0.5) * 0.07 * (1.0 - smoothstep(0.05, 0.6, px));
-  vec3 n = lrGroundNormal(wxz, px, max(px, 1.5));
+  vec3 n = nG;
+
+  // The beach face: where the swash is right now, and how wet it has left the sand.
+  bool covered = water > 0.0 && vCanopy < 0.02, beach = water > -LR_WET_BAND && water <= 0.0 && vCanopy < 0.02;
+  LrSwash sw;
+  float wetness = 0.0, wetLine = 0.0, fine = 1.0 - smoothstep(0.5, 4.0, px);
+  if (beach) {
+    sw = lrBeach(wxz, shore, vHs, -water, fine);
+    covered = sw.behind > 0.0;
+    // Wet up to the highest line the waves reach (a sharp edge), with a damp halo above it.
+    float edge = max(0.0015, fwidth(water));
+    wetLine = 1.0 - smoothstep(sw.top - edge, sw.top + edge, -water);
+    wetness = max(wetLine, 0.35 * (1.0 - smoothstep(0.0, 0.4 * sw.top + 0.01, -water - sw.top)) * lrSaturate(sw.top * 40.0));
+  }
+  // Soaked sand: the wet beach face, the sand under the swash, and on down under the first hand's breadth of sea.
+  albedo *= mix(1.0, LR_SOAKED, fine * (covered ? smoothstep(-0.25, 0.0, -water) : wetness));
 
   // Rock (Gran Roque's hills): the 30 m elevation data is smooth, the real slopes are broken metamorphic rock.
   // Add ruggedness as shading, strongest on steep high ground.
@@ -157,20 +185,39 @@ void main() {
     // Ripple crests wander: the direction swings with position, and patches of the bed have none.
     float swing = (lrNoise(d * 0.13) - 0.5) * 1.6, cs = cos(swing), sn = sin(swing);
     vec2 w0 = normalize(uWind.xy + 1e-4), wd = vec2(w0.x * cs - w0.y * sn, w0.x * sn + w0.y * cs);
-    float spacing = wetBed ? 0.5 : 0.09, tall = wetBed ? 0.007 * (1.0 - smoothstep(2.0, 5.0, water)) : 0.0012;
+    // (The swash smooths the sand it runs over: no wind ripples below the wet line.)
+    float spacing = wetBed ? 0.5 : 0.09, tall = wetBed ? 0.007 * (1.0 - smoothstep(2.0, 5.0, water)) : 0.0012 * (1.0 - wetness) * step(water, 0.0);
     float patches = smoothstep(0.35, 0.65, lrNoise(d * 0.21 + 9.0));
     float phase = dot(d, wd) * 6.2832 / spacing + 3.0 * lrNoise(d * 0.9) + 1.2 * lrNoise(d * 2.9);
     n = normalize(n + vec3(wd.x, 0.0, wd.y) * tall * 6.2832 / spacing * sin(phase) * sandy * patches);
   }
-  float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0;
-  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * focus * lrCloudShadow(wxz) + uSkyE * (0.5 + 0.5 * n.y);
-  if (water > -LR_WET_BAND && vCanopy < 0.02) {
-    // Under water or where the swash can reach: reflectance times the light it gets relative to open flat ground.
-    // The water pass multiplies the flat-ground light back in, so dry sand comes out the same either way.
+  float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);
+  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * focus * shade + uSkyE * (0.5 + 0.5 * n.y);
+  if (covered) {
+    // Under water: reflectance times the light it gets relative to open flat ground. The water pass multiplies
+    // the flat-ground light back in.
     outColor = vec4(albedo * light / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), water);
-  } else {
-    outColor = vec4(albedo * light / PI, -1000.0);
+    return;
   }
+  vec3 col = albedo * light / PI;
+  if (wetness > 0.0) {
+    // Wet sand is darker by exactly what the water model gives for water of no depth. On top lies the film the
+    // sea leaves behind: a mirror for the sky and the sun just after the water has gone, matt a few seconds
+    // later; the foot of the beach, where the water table comes out, never dries. With gloss = 1 this is the
+    // water pass's own shading at zero depth, so the edge of the sheet has no step in it.
+    vec3 lit = max(uSunE * lrSaturate(uSunDir.y) * shade + uSkyE, vec3(1e-4));
+    float gloss = wetLine * max(exp(-sw.age / 3.0), 0.85 * (1.0 - smoothstep(0.0, 0.3 * sw.top + 0.01, -water)));
+    vec3 V = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
+    vec2 fs = lrSheetSlope(-nG.xz / nG.y, -water, LrSwash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0));
+    vec3 nf = normalize(vec3(-fs.x, 1.0, -fs.y));
+    float rough = mix(0.02, 2e-4 + 0.012 * uRain, gloss);
+    float fresnel = lrMeanFresnel(max(dot(nf, V), 0.0), sqrt(rough));
+    vec3 mirror = reflect(-V, nf);
+    mirror.y = abs(mirror.y) + 0.01;
+    col *= mix(vec3(1.0), lrWetSand(albedo * light / lit), wetness) * mix(1.0, (1.0 - fresnel) / 0.979, gloss);
+    col += gloss * (fresnel * lrSkyRadiance(normalize(mirror)) + uSunE * min(lrSunGlitter(V, nf, uSunDir, vec2(rough)), 400.0) * step(0.0, uSunDir.y) * shade);
+  }
+  outColor = vec4(col, -1000.0);
 }`;
 
 export class Terrain {
@@ -178,7 +225,8 @@ export class Terrain {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-70, 140] });
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader,
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow, 'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX']),
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain']),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

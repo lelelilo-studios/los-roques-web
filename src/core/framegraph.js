@@ -66,8 +66,10 @@ void main() {
   vec3 col;
   // Is this pixel looked at through water? Decided per pixel from what was drawn, so the waterline across the
   // lens falls exactly where the sea surface cuts the view: a submerged thing the water pass did not cover
-  // (alpha = its depth) or the surface seen from below (alpha -3000); empty pixels go by where the eye is.
-  bool throughWater = scene.a > -0.6 || scene.a < -2500.0 || (lrIsSky(depth) && uUnderEye > 0.5);
+  // (alpha = its depth, positive; only next to the lens, where the surface is cut by the near plane, or with
+  // the eye under water) or the surface seen from below (alpha -3000); empty pixels go by where the eye is.
+  bool near = !lrIsSky(depth) && lrViewZ(depth) < 1.0;
+  bool throughWater = (scene.a > 0.0 && (near || uUnderEye > 0.5)) || scene.a < -2500.0 || (lrIsSky(depth) && uUnderEye > 0.5);
   if (throughWater) {
     // Things under water write reflectance and their depth below the surface: light them with what daylight
     // is left at that depth, then let the water between dim them and add its own glow.
@@ -75,7 +77,7 @@ void main() {
     vec3 a = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon), kd = a + bb, c = a + 4.0 * bb;
     vec3 surfaceLight = uSunE * lrSaturate(uSunDir.y) + uSkyE;
     float far = lrIsSky(depth) ? 1e4 : lrViewZ(depth) * length(ray);
-    vec3 seen = scene.a > -0.6 ? scene.rgb / PI * surfaceLight * 0.9 * exp(-kd * max(scene.a, 0.0)) : scene.rgb;
+    vec3 seen = scene.a > 0.0 ? scene.rgb / PI * surfaceLight * 0.9 * exp(-kd * scene.a) : scene.rgb;
     if (lrIsSky(depth)) seen = vec3(0.0);
     // The water's own glow: daylight scattered back towards the eye, brighter looking up, darker looking down.
     float eyeDepth = max(uSeaLevel - uCamY, 0.0);
@@ -119,6 +121,8 @@ void main() {
       col = lrAerial(sea, dir, min((uCamY - uSeaLevel) / max(-dir.y, 1e-4), 400000.0));
     }
   } else {
+    // (Sand marked as under water that the sea's mesh did not reach, at some far shoreline: light it as it lies.)
+    if (scene.a > -0.6) scene.rgb *= (uSunE * lrSaturate(uSunDir.y) + uSkyE) / PI;
     col = lrAerial(scene.rgb, dir, lrViewZ(depth) * length(ray));
   }
   if (uRain > 0.01) {

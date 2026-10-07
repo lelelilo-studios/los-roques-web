@@ -130,6 +130,13 @@ export class CameraRig {
     const u = shared, e = cam.matrixWorld.elements, t = Math.tan(cam.fov * DEG / 2);
     u.uCamXZ.value.set(eye.x, eye.z);
     u.uCamMod.value.set(wrap(eye.x, 64), wrap(eye.z, 64), wrap(eye.x, 1024), wrap(eye.z, 1024));
+    // (The camera's texel in the height map, whole part and fraction apart, for exact close-up ground lookups.)
+    const tx = (eye.x - u.uMapRect.value.x) / u.uMpp.value, tz = (eye.z - u.uMapRect.value.y) / u.uMpp.value;
+    const finer = u.uMapTexels.value.z / u.uMapTexels.value.x, sx = tx * finer, sz = tz * finer;
+    u.uCamTexel.value.set(Math.floor(tx), Math.floor(tz), tx - Math.floor(tx), tz - Math.floor(tz));
+    u.uCamTexelShore.value.set(Math.floor(sx), Math.floor(sz), sx - Math.floor(sx), sz - Math.floor(sz));
+    // The sea's mesh rides just above the beach face; an ordinary depth buffer needs more room far away.
+    u.uLift.value.set(2e-4, reversed ? 0 : 4 / (cam.near * 2 ** 24));
     u.uCamY.value = eye.y;
     u.uFocusRel.value.set(this.focus.x - eye.x, this.focus.z - eye.z);
     u.uNearFar.value.set(cam.near, cam.far);

@@ -1,8 +1,8 @@
 // The sea surface: the same clipmap as the terrain, displaced by the wave cascades and drawn after the opaque
 // pass. It reads what lies under it from a copy of the scene (colour = lit bottom reflectance, alpha = water
 // depth), bends the view through the surface, and turns the bottom into the colour of the water column with the
-// shallow-water model in lr_optics. On top: the reflected sky, the sun's glitter and foam. It also finishes the
-// strip of beach the swash can reach: dry sand, wet sand with a sheen, or sand under a film of water.
+// shallow-water model in lr_optics. On top: the reflected sky, the sun's glitter and foam. On the beach face it
+// draws the sheet of swash wherever the terrain marked the sand as covered (and nowhere else).
 import * as THREE from 'three';
 import { Clipmap, clipmapFragment, clipmapVertex } from '../core/clipmap.js';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
@@ -31,11 +31,11 @@ void main() {
     float lod = log2(max(cell * 256.0 / uWaveTile[i], 1.0));
     d += w[i] * textureLod(tWaveA, vec3(lrWaveUV(rel, i), float(i)), lod).xyz;
   }
-  float hs = lrWaveHs(raw);
-  float y = uSeaLevel + d.y + lrShoreSurface(wxz, shore, hs);
-  // Over the strip of beach the swash can reach, ride just above the sand so this pass can finish it.
-  float lift = min(0.004 + 0.0015 * length(vec3(rel.x, uCamY, rel.y)), 2.0);
-  if (ground > uSeaLevel - 0.3 && ground < uSeaLevel + LR_WET_BAND) y = max(y, ground + lift);
+  float hs = lrWaveHs(raw), a = ground - uSeaLevel;
+  LrSwash sw = lrBeach(wxz, shore, hs, a, 1.0);
+  float y = uSeaLevel + d.y + lrShoreSurface(shore, min(a, 0.0), hs, sw);
+  // Over the strip of beach the swash can reach, ride just above the sand: the sheet is drawn on this.
+  if (a > -0.3 && a < 1.0) y = max(y, ground + lrLift(length(vec3(rel.x, uCamY - ground, rel.y))) + sw.e);
   vGrid = rel; vWeights = w; vWaveMap = wm; vWaveY = d.y; vHs = hs;
   vRel = vec3(rel.x + d.x, y, rel.y + d.z);
   gl_Position = projectionMatrix * viewMatrix * vec4(vRel.x, y - lrCurveDrop(rel), vRel.z, 1.0);
@@ -86,6 +86,9 @@ void main() {
 
   vec2 wxz = uCamXZ + vRel.xz;
   float px = (length(gx) + length(gy)) * 0.5;
+  // (The underside can only be seen from under it. From the air, a back face is a fold of the mesh where it
+  // climbs a far beach, poking over the crest of the sand.)
+  if (!gl_FrontFacing && uCamY > vRel.y + 0.3) discard;
   if (!gl_FrontFacing) {
     // Seen from below (the alpha of -3000 tells the composite this pixel is looked at through water). Inside a
     // cone 97 degrees wide ("Snell's window") the whole sky is squeezed in, bent by the waves; outside it the
@@ -107,38 +110,44 @@ void main() {
     outColor = vec4(c, -3000.0);
     return;
   }
-  float shore;
-  float ground = lrGround(wxz, px, shore);
+  float shore, near = lrGroundNear(px);
+  vec3 sandN;
+  float ground = lrGroundAt(vRel.xz, px, false, shore, sandN);
   float aboveStill = ground - uSeaLevel;
-  // Water standing over this point right now: still level + waves + swash, minus the ground.
-  float surface = vWaveY + lrShoreSurface(wxz, shore, vHs), column = surface - aboveStill;
+  // (How steep the bed is here against a typical beach face: on flats a little water goes a long way.)
+  float steep = clamp(fwidth(ground) * 0.7 / max(px, 1e-4), 0.01, 0.3) / 0.11;
   vec4 bed0 = texelFetch(tRefr, ivec2(gl_FragCoord.xy), 0);
   if (bed0.a < -1500.0) discard;                            // something that must show through the sea surface (tree canopy seen from afar)
   bool hasBed0 = bed0.a > -LR_WET_BAND;
-  float lift = min(0.004 + 0.0015 * length(vec3(vGrid.x, uCamY, vGrid.y)), 2.0);
-  if (column < lift + 0.02) {
-    // Thin water or none: here the mesh rides above the sand rather than at the true surface, so the point under
-    // this pixel is not the one this fragment sits over. Go by what the terrain wrote for this very pixel.
-    if (!hasBed0) discard;                                  // beyond the swash's reach (or something else is there): already drawn
+  // Near the waterline the terrain is the judge of what is under water: where it drew dry or wet sand (or
+  // anything else stands), there is no sea to draw, whatever this mesh makes of it.
+  // (From afar this mesh's own idea of the ground is a blurred one: the further, the more the terrain rules.)
+  if (!hasBed0 && aboveStill > -0.25 - 0.15 * px) discard;
+  // (From far away the swash and its foam are much thinner than a pixel: they fade out.)
+  float fine = 1.0 - smoothstep(0.5, 4.0, px);
+  LrSwash sw = lrBeach(wxz, shore, vHs, aboveStill, fine);
+  // Water standing over this point right now: still level + waves + swash, minus the ground.
+  float surface = vWaveY + lrShoreSurface(shore, aboveStill, vHs, sw), column = surface - aboveStill;
+  float lift = lrLift(length(vec3(vGrid.x, uCamY - ground, vGrid.y)));
+  bool film = column < 1.5 * lift + 0.003;
+  vec2 spot = vGrid;                                        // the point of the sea this pixel shows, relative to the camera
+  if (film) {
+    // Thin water or none: here the mesh rides above the sand rather than at the true surface. The terrain
+    // decided whether this pixel is under water; where it is, work at the terrain's own point (down the view
+    // ray, at the height its alpha gives), so both passes evaluate the swash at the same place.
+    if (!hasBed0) discard;                                  // (thin water over something that is not the bed)
     aboveStill = -bed0.a;
-    column = surface - aboveStill;
+    float dy = vRel.y - uCamY;
+    spot = vRel.xz * (abs(dy) > 1e-3 ? clamp((uSeaLevel + aboveStill - uCamY) / dy, 1.0, 1.6) : 1.0);
+    lrGroundAt(spot, px, aboveStill > 0.0, shore, sandN);
+    sw = lrBeach(uCamXZ + spot, shore, vHs, aboveStill, fine);
+    surface = vWaveY + lrShoreSurface(shore, aboveStill, vHs, sw);
+    column = max(surface - aboveStill, 1e-4);
   }
+  vec2 bedSlope = -sandN.xz / sandN.y;
 
   vec3 V = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
   vec3 downwelling = uSunE * lrSaturate(uSunDir.y) + uSkyE;
-
-  // ---- The beach face: sand, darker and glossy where the swash has just been.
-  float runup = lrRunup(vHs), level = runup * lrSwashCurve(lrSwashPhase(wxz, vHs));
-  vec3 sandRho = hasBed0 ? bed0.rgb : vec3(0.45);
-  // (From far away the wet strip and the foam line are much thinner than a pixel: let them fade out.)
-  float fine = 1.0 - smoothstep(0.5, 4.0, px);
-  float wet = fine * (1.0 - smoothstep(0.75 * runup, 1.1 * runup + 0.04, aboveStill));
-  float glossy = wet * (1.0 - smoothstep(0.0, 0.12, aboveStill - level));          // just uncovered: still shining
-  vec3 up = vec3(0.0, 1.0, 0.0);
-  float sandF = lrFresnel(max(V.y, 0.0));
-  vec3 sand = sandRho * (1.0 - 0.42 * wet) * (1.0 - 0.08 * wet * vec3(0.0, 0.3, 1.0)) * downwelling / PI
-            + glossy * sandF * lrSkyRadiance(normalize(vec3(-V.x, abs(V.y) + 0.01, -V.z)));
-  if (column <= 0.0) { outColor = vec4(sand, -1000.0); return; }
 
   // ---- The water surface. Mean slope of the waves inside this pixel, and how much they vary within it.
   vec2 slope = vec2(0.0), var = vec2(0.0);
@@ -153,20 +162,28 @@ void main() {
   }
   // Capillary ripples too small for the cascades, where there is wind on the water at all.
   var += 2e-4 + 0.5 * (0.0006 + 0.0003 * uWind.z) * lrSaturate(vWeights.w * 200.0) + 0.012 * uRain;      // raindrops pock the surface
+  // On the beach face the sheet lies on the sand, and an advancing front stands up from it.
+  if (aboveStill > 0.0) slope += lrSheetSlope(bedSlope, aboveStill, sw);
   vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
   float cosV = max(dot(n, V), 0.0), sigma = sqrt(max(var.x, var.y));
   float fresnel = lrMeanFresnel(cosV, sigma);
 
   // Look through the surface: bend the view ray and find what it lands on in the scene copy.
-  float depth0 = hasBed0 ? max(bed0.a + column - (uSeaLevel - ground), column) : column;
+  // From afar the depth is the one seen straight through. Close up that is the wrong one (a grazing ray meets
+  // the bed far beyond the point under the surface), but there the bed under this point is known, depth and
+  // slope, and the bent ray's landing point follows from them.
+  float depth0 = hasBed0 ? max(bed0.a + surface, column) : column;
   vec3 T = refract(-V, n, 1.0 / 1.34);
-  vec3 hit = vRel + T * (min(depth0, 25.0) / max(-T.y, 0.35));
-  vec4 clip = uViewProj * vec4(hit.x, hit.y - lrCurveDrop(hit.xz), hit.z, 1.0);
-  vec4 bed = texture(tRefr, clip.xy / clip.w * 0.5 + 0.5);
-  if (clip.w <= 0.0 || bed.a <= -LR_WET_BAND) bed = bed0;             // the bent ray left the water (or the screen): look straight through
+  vec4 bed = bed0;
+  if (!film) {
+    vec3 hit = vRel + T * mix(min(depth0, 25.0) / max(-T.y, 0.35), column / max(dot(T.xz, bedSlope) - T.y, 0.25), near);
+    vec4 clip = uViewProj * vec4(hit.x, hit.y - lrCurveDrop(hit.xz), hit.z, 1.0);
+    bed = texture(tRefr, clip.xy / clip.w * 0.5 + 0.5);
+    if (clip.w <= 0.0 || bed.a <= -LR_WET_BAND) bed = bed0;           // the bent ray left the water (or the screen): look straight through
+  }
   bool hasBed = bed.a > -LR_WET_BAND;
   // bed.a is the depth below STILL water of what we see; add how far the surface here stands above still water.
-  float H = hasBed ? max(bed.a + surface, 0.005) : max(column, 0.005);
+  float H = hasBed ? max(bed.a + surface, 1e-4) : max(column, 1e-4);
   vec3 rho = hasBed ? bed.rgb : vec3(0.3);
 
   float muV = max(-T.y, 0.35), muS = lrCosInWater(lrSaturate(uSunDir.y));
@@ -178,6 +195,17 @@ void main() {
   vec3 lit = uSunE * lrSaturate(uSunDir.y) * shade + uSkyE;
   vec3 leaving = lrWaterRrs(rho * downwelling / max(lit, vec3(1e-4)), lrOpticalDepth(H), muS, muV, a, bb) * lit * (1.0 - fresnel) / 0.979;
 
+  if (uDebug.x > 4.5) {
+    // More debug views: 5 = which path (red: the terrain's point, green: this mesh's own) and the column in blue,
+    // 6 = wave weights, 7 = mean slope and roughness, 8 = surface height / bed depth / wave height, 9 = swash sheet / phase / shore distance.
+    vec3 col;
+    if (uDebug.x < 5.5) col = vec3(film ? 1.0 : 0.0, film ? 0.0 : 1.0, column * 5.0) * 2.0;
+    else if (uDebug.x < 6.5) col = vWeights.yzw * 60.0;
+    else if (uDebug.x > 7.5 && uDebug.x < 8.5) col = vec3(surface * 5.0 + 0.5, -aboveStill * 2.0, vWaveY * 5.0 + 0.5);
+    else if (uDebug.x > 8.5) col = vec3(sw.e * 20.0, sw.p, shore / 10.0);
+    else col = vec3(slope * 4.0 + 0.5, sigma * 4.0) * 2.0;
+    outColor = vec4(col, -1000.0); return;
+  }
   if (uDebug.x > 3.5) { outColor = vec4(leaving / (1.0 - fresnel) * 0.979, -1000.0); return; }   // 4: only the light leaving the water (for comparing with the satellite)
   vec3 R = reflect(-V, n);
   R.y = abs(R.y) + 0.01;
@@ -188,12 +216,13 @@ void main() {
   // ---- Foam.
   // Whitecaps: where the long waves pile the surface together (their horizontal motion converges at breaking crests).
   float foam = smoothstep(0.55, 0.85, -fold) * lrSaturate(uWind.z / 7.0 - 0.5);
-  // Swash: a lace line at the leading edge while it runs up, thinning as it drains.
-  float p = lrSwashPhase(wxz, vHs), rush = 1.0 - smoothstep(0.25, 0.75, p);
+  // Swash: a band of bubbles right behind the front while it runs up, a thinner veil trailing it, both
+  // dissolving as the sheet drains.
+  float rush = (1.0 - smoothstep(0.25, 0.75, sw.p)) * smoothstep(0.0, 0.06, sw.p);
   float nearShore = fine * (1.0 - smoothstep(2.0, 12.0, shore));
-  float edge = 1.0 - smoothstep(0.0, 0.012 + 0.03 * runup, column);          // the line where the water ends
-  float sheet = (1.0 - smoothstep(0.0, 0.05 + 0.3 * runup, column)) * 0.3 * rush;   // thin bubbles behind it while it runs up
-  foam = max(foam, nearShore * max(edge * (0.5 + 0.5 * rush), sheet) * smoothstep(0.02, 0.12, vHs));
+  float front = exp(-max(sw.behind, 0.0) / ((0.12 * sw.reach + 0.003) * steep));
+  float veil = 0.3 * rush * (1.0 - smoothstep(0.0, sw.reach * steep + 1e-4, sw.behind));
+  foam = max(foam, nearShore * max(front * (0.25 + 0.55 * rush), veil) * smoothstep(0.02, 0.12, vHs));
   // Surf on the reef crests: white water where the swell breaks, torn into streaks that drift downwind and
   // pulse as each wave arrives.
   float dBreak = vWaveMap.b * vWaveMap.b * 250.0, lee = 1.0 - smoothstep(0.35, 0.8, vWaveMap.r);
@@ -207,7 +236,7 @@ void main() {
     foam = max(foam, surf * pulse * smoothstep(0.25, 0.7, streaks + 0.45 * surf));
   }
   if (foam > 0.003) {
-    float cover = lrFoamPattern(vGrid, lrSaturate(foam), px);
+    float cover = lrFoamPattern(spot, lrSaturate(foam), px);
     col = mix(col, 0.82 * lit / PI, cover);
   }
   if (uDebug.x > 0.5) {
@@ -217,8 +246,6 @@ void main() {
     else if (uDebug.x < 2.5) col = vec3(H / 100.0) * 3.0;
     else col = rho * 3.0;
   }
-  // A film of water thinner than a couple of centimetres shows the sand through.
-  col = mix(sand, col, smoothstep(0.0, 0.02, column));
   outColor = vec4(col, -1000.0);
 }`;
 
@@ -227,7 +254,7 @@ export class Water {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-4, 4] });
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide,
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
         'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);

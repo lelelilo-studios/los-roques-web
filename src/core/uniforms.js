@@ -11,6 +11,9 @@ export const shared = {
   uMapRect: { value: new THREE.Vector4(0, 0, 1, 1) },
   uMapTexels: { value: new THREE.Vector4(1, 1, 1, 1) },
   uMpp: { value: 11 },
+  uCamTexel: { value: new THREE.Vector4() },
+  uCamTexelShore: { value: new THREE.Vector4() },
+  uLift: { value: new THREE.Vector2(2e-4, 0) },   // how far the sea's mesh rides above the beach face: per metre, per metre squared
   uSeaLevel: { value: 0 },
   uTime: { value: 0 },
   uInvEarthR: { value: 1 / EARTH_RADIUS },
@@ -63,7 +66,8 @@ export function uniformsFor(names, own = {}) {
 /** Names that the chunks declare, grouped by chunk, so materials list what they include. */
 export const CHUNK_UNIFORMS = {
   common: ['uCamXZ', 'uCamMod', 'uCamY', 'uMapRect', 'uSeaLevel', 'uTime', 'uInvEarthR', 'uSunDir', 'uSunE', 'uSkyE', 'uNearFar', 'uInvResolution'],
-  geo: ['tHeight', 'tShore', 'uMapTexels', 'uMpp'],
+  geo: ['tHeight', 'tShore', 'uMapTexels', 'uMpp', 'uCamTexel', 'uCamTexelShore'],
+  shore: ['uLift'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
   atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa'],
   clouds: ['tCloudShape', 'tCloudDetail', 'uCloudLayer', 'uCloudWind'],
