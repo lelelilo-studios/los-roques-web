@@ -27,6 +27,14 @@ float lrShoreLag(vec2 wxz) {
        + 2.6 * (0.5 + 0.25 * (sin(b.x * 1.9 + 1.1 * sin(b.y * 1.3 + 4.0)) + sin(b.y * 2.1 + 1.5 * sin(b.x * 1.2 + 1.0))));
 }
 
+// An irregular field, -0.5..0.5, with features one to four metres across and no grid showing (two lattices
+// turned against each other, one warped by the other): thresholded, plain lattice noise drew boxy shapes.
+float lrRagged(vec2 p) {
+  vec2 a = mat2(0.866, 0.5, -0.5, 0.866) * p / 3.1, b = mat2(0.5, -0.866, 0.866, 0.5) * p / 1.3;
+  a += 0.6 * vec2(sin(b.y * 1.3), sin(b.x * 1.7));
+  return 0.62 * lrNoise(a) + 0.38 * lrNoise(b + 7.0) - 0.5;
+}
+
 // How high (vertically) the swash of waves of height 'hs' climbs (Stockdon et al. 2006: about 0.8 hs on a 1:9
 // foreshore). 'hs' is the sea arriving off the beach; what reaches the sand has broken on the shallow terrace
 // in front of it (half a metre of water carries a wave of a hand's breadth or two), hence the cap.
@@ -65,10 +73,14 @@ LrSwash lrBeach(vec2 wxz, float shore, float hs, float a, float fine) {
   s.open = lrOpenWater(wxz, shore);
   // (Flat sand: how much further from the waterline this point is than a beach face would put it.)
   float flat_ = max(-shore - max(a, 0.0) / 0.08, 0.0), R = lrRunup(hs) * fine * mix(0.1, 1.0, s.open), run = R / 0.11 + 0.3;
-  // (Over sand that is barely above still water the sheet runs on four times as far: a low bar is washed right
-  // across, and the waves from its two sides meet along its middle.)
-  run *= 1.0 + 3.0 * (1.0 - lrSaturate(max(a, 0.0) / max(R, 1e-4)));
-  R *= 1.0 - smoothstep(1.2 * run, 3.0 * run, flat_);
+  // (Over sand within a few centimetres of still water the sheet runs on four times as far: as the tide comes
+  // up to the crest of a low bar the waves begin to wash right across, first where it is narrow, and those
+  // from its two sides meet along its middle. A hand's breadth of freeboard and they stop short as on any beach.)
+  run *= 1.0 + 3.0 * (1.0 - smoothstep(0.03, 0.2, max(a, 0.0) / max(R, 1e-4)));
+  // (How far a sheet gets over a flat is ragged: tongues a few steps wide run on ahead, bays lag behind. Without
+  // this the sand left dry on top of a bar was a perfect oval.)
+  float ragged = flat_ + step(1e-3, flat_) * 3.8 * lrRagged(wxz);
+  R *= 1.0 - smoothstep(1.2 * run, 3.0 * run, ragged);
   // Neighbouring stretches are out of step (noise along the shore), so the edge of the sea is scalloped.
   float c = uTime / LR_SWASH_T - lrShoreLag(wxz) + (2.2 * (sqrt(max(shore, 0.0) + 1.0) - 1.0) - flat_ / 1.5) / LR_SWASH_T;
   float n = floor(c);

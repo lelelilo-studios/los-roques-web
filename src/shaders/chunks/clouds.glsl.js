@@ -92,6 +92,10 @@ vec4 lrCloudMarch(vec3 o, vec3 d, float jitter, int steps, int lightSteps, float
   // Sunlight reaching the layer through the air above it, and the sky's light from all around.
   vec3 sun = uSunToa * lrTransmittanceToSun(lrAtmoPos(0.5 * (uCloudLayer.x + uCloudLayer.y)), uSunDir);
   vec3 ambient = uSkyE / PI * 1.1;
+  // (Light that has been scattered about inside a cloud has lost most of the sky's blue; and the bases are lit
+  // from below, by the bright shallows and sand. Without these the undersides of far cumulus were mauve.)
+  ambient = mix(ambient, vec3(lrLuma(ambient)), 0.5);
+  vec3 bounce = (uSunE * lrSaturate(uSunDir.y) + uSkyE) / PI * vec3(0.11, 0.14, 0.15);
   vec3 radiance = vec3(0.0);
   float trans = 1.0, weight = 0.0, t = t0 + dt * jitter;
   for (int i = 0; i < steps; i++) {
@@ -106,7 +110,7 @@ vec4 lrCloudMarch(vec3 o, vec3 d, float jitter, int steps, int lightSteps, float
       for (int k = 0; k < 4; k++) { sunTerm += a * exp(-tauSun * b) * mix(1.0 / (4.0 * PI), phase0, c); a *= 0.6; b *= 0.3; c *= 0.55; }
       float powder = 1.0 - exp(-2.0 * sigma * 60.0);
       float hf = (lrCloudAltitude(p) - uCloudLayer.x) / (uCloudLayer.y - uCloudLayer.x);
-      vec3 s = sun * sunTerm * mix(0.7, 1.0, powder) + ambient * (0.5 + 0.5 * hf);
+      vec3 s = sun * sunTerm * mix(0.7, 1.0, powder) + ambient * (0.5 + 0.5 * hf) + bounce * (1.0 - hf);
       float stepT = exp(-sigma * dt), absorbed = trans * (1.0 - stepT);
       radiance += s * absorbed;
       dist += absorbed * t; weight += absorbed;

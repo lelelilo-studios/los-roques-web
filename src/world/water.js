@@ -159,7 +159,7 @@ void main() {
   }
   float shore, near = lrGroundNear(px);
   vec3 sandN;
-  float ground = lrGroundAt(vRel.xz, px, false, shore, sandN);
+  float ground = lrGroundAt(vRel.xz, px, false, shore, sandN), ridgeSlope = lrShoreSlope;
   float aboveStill = ground - uSeaLevel;
   // (How steep the bed is here against a typical beach face: on flats a little water goes a long way.)
   float steep = clamp(fwidth(ground) * 0.7 / max(px, 1e-4), 0.01, 0.3) / 0.11;
@@ -302,6 +302,12 @@ void main() {
   float nearShore = fine * (1.0 - smoothstep(2.0, 12.0, shore)) * smoothstep(0.02, 0.12, vHs) * sw.open * (1.0 - smoothstep(0.0, 0.3, -aboveStill));
   float front = 0.92 * (1.0 - smoothstep(0.24, 0.36, sw.p)) * exp(-max(sw.behind, 0.0) / (0.007 * steep));
   float swash = nearShore * max(front, 0.8 * exp(-lrSwashFoamAge(aboveStill, sw) / 1.6) * smoothstep(0.0, 0.05, sw.p));
+  // Where the sheets from the two sides of a sandbar run into each other (along its middle, where the shore
+  // distance levels off) they pile up into a line of foam that zips along the bar as each pair of waves meets.
+  // (A line a step wide: the map's shore distance is rounded off over the top of a bar, and its slope is small
+  // for metres either side of the middle.)
+  float meeting = (1.0 - smoothstep(0.02, 0.12, ridgeSlope)) * step(0.0, aboveStill) * near * fine * smoothstep(0.0, 0.004, column);
+  swash = max(swash, 0.6 * meeting * (1.0 - smoothstep(0.1, 0.45, sw.p)));
   // Surf on the reef crests: white water where the swell breaks, torn into streaks that drift downwind and
   // pulse as each wave arrives.
   float dBreak = vWaveMap.b * vWaveMap.b * 250.0, lee = 1.0 - smoothstep(0.35, 0.8, vWaveMap.r);

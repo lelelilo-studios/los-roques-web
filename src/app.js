@@ -255,20 +255,20 @@ export async function start(canvas, onProgress = () => {}) {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
   rig.walker = walker;
   /**
-   * Where you are put down at a place: its walking spot (camera/bookmarks.js), or, on the cays where the boatmen
-   * set up umbrellas, a few steps up the beach from the nearest of them, looking out to sea past it: you arrive
-   * among things whose size you know (an umbrella, loungers, people, the boats beyond).
-   */
-  /**
-   * Where the site opens: standing on the sandbar of Cayo de Agua, a third of the way along it from the main
-   * cay, looking down its length between the two seas to West Cay and its lighthouse.
+   * Where the site opens: standing on the sandbar of Cayo de Agua, near its narrow end by the main cay,
+   * looking down its length between the two seas to West Cay and its lighthouse.
    */
   function sandbarSpot() {
     const crest = features.tombolo?.crest || [];
     if (crest.length < 8) return null;
-    const a = ground.ridge(...crest[Math.round(crest.length * 0.22)]), b = ground.ridge(...crest[Math.round(crest.length * 0.75)]);
+    const a = ground.ridge(...crest[Math.round(crest.length * 0.12)]), b = ground.ridge(...crest[Math.round(crest.length * 0.7)]);
     return { x: a.x, z: a.z, yaw: Math.atan2(b.x - a.x, -(b.z - a.z)) * 180 / Math.PI + 6, pitch: -6 };
   }
+  /**
+   * Where you are put down at a place: its walking spot (camera/bookmarks.js), or, on the cays where the boatmen
+   * set up umbrellas, a few steps up the beach from the nearest of them, looking out to sea past it: you arrive
+   * among things whose size you know (an umbrella, loungers, people, the boats beyond).
+   */
   function arrivalSpot(place) {
     if (place.id === 'cayo-de-agua-isthmus' && sandbarSpot()) return sandbarSpot();
     const spot = walkSpotFor(place);
@@ -497,12 +497,13 @@ export async function start(canvas, onProgress = () => {}) {
     // the link asked for a view of its own). "Back to the air" lifts you off; the places are in the panel.
     const bar = fromLink ? null : sandbarSpot();
     if (bar) {
-      // (The hour, between nine and one, at which the rising tide first brings the sea to within a finger's
-      // breadth of the bar's crest: the waves of the two seas meet along it. In the months when the sea
-      // never gets that high, high water: a dry strip between them.)
+      // (The hour, between nine and one, at which the rising tide first brings the sea to within three
+      // centimetres of the bar's crest: where the bar is narrow the waves of the two seas wash across and meet,
+      // where it is wide a strip stays dry. In the months when the sea never gets that high, high water: a dry
+      // strip between them.)
       let hour = 13;
       for (let h = 9; h < 13; h += 0.1) {
-        if (CLIMATE.seaLevel[env.month] + tide(moonPosition(localDate(dayOf(env.month), h)).hourAngle) > BAR_CREST - 0.015) { hour = h; break; }
+        if (CLIMATE.seaLevel[env.month] + tide(moonPosition(localDate(dayOf(env.month), h)).hourAngle) > BAR_CREST - 0.03) { hour = h; break; }
       }
       env.hours = hour; applyEnv(); app.setWalk(true, bar, true);
     }
@@ -521,6 +522,8 @@ export async function start(canvas, onProgress = () => {}) {
   const api = {
     errors,
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
+    /** For tests: the height of the waves arriving at a place, and how loud the reef is there. */
+    seaAt: (x, z) => ({ ...seaAt(x, z) }),
     /** For tests: your own body (world/body.js) and the other people (world/people.js). */
     body, crowd: people,
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },

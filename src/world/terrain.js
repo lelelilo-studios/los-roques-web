@@ -241,9 +241,11 @@ void main() {
     sw = lrBeach(wxz, shore, vHs, -water, fine);
     covered = sw.behind > 0.0;
     // Wet up to the highest line the waves reach (a sharp edge), with a damp halo above it.
-    float edge = max(0.0015, fwidth(water));
-    wetLine = 1.0 - smoothstep(sw.top - edge, sw.top + edge, -water);
-    wetness = max(wetLine, 0.35 * (1.0 - smoothstep(0.0, 0.4 * sw.top + 0.01, -water - sw.top)) * lrSaturate(sw.top * 40.0));
+    // (The edge is taken as a distance on the ground, the height difference over its own gradient: as crisp on a
+    // flat bar, where a centimetre of height is metres of sand, as on a steep face. The halo is half a metre wide.)
+    float above = -water - sw.top, beyond = above / max(length(vec2(dFdx(above), dFdy(above))) / max(px, 1e-4), 2e-4);
+    wetLine = 1.0 - smoothstep(-1.0, 1.0, beyond / max(px, 0.004));
+    wetness = max(wetLine, 0.35 * (1.0 - smoothstep(0.0, 0.5, beyond)) * lrSaturate(sw.top * 40.0));
   }
   // 'wetness' is the sea's doing (it also smooths the sand); rain wets everything it falls on, as it lies.
   float wetAll = covered ? 0.0 : max(wetness, uWet);
@@ -425,6 +427,7 @@ void main() {
       float left = 0.8 * exp(-max(since, 0.0) / 1.6) * exp(-sw.age / 0.9) * step(sw.age, 20.0);
       float line = exp(-abs(a - sw.reach) / 0.003) * step(0.28, sw.p) * exp(-(sw.p - 0.28) * LR_SWASH_T / 4.0)
                  + 0.5 * exp(-abs(a - sw.last) / 0.003) * exp(-(sw.p + 0.72) * LR_SWASH_T / 4.0);
+      line *= smoothstep(0.015, 0.05, tilt);                 // (a wave leaves a line where it turns on a slope; on flat sand "as high as it got" is a whole area, and drew rings)
       // (The line is a broken one: a few bubbles here, none there.)
       float amount = max(left, 0.5 * line * smoothstep(0.3, 0.7, lrNoiseTile(d * 1.5 + 5.0, 96.0))) * fine * sw.open * smoothstep(0.02, 0.12, vHs);
       if (amount > 0.003) {

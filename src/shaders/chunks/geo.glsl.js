@@ -20,6 +20,9 @@ uniform vec2 uSandbarP;      // how far to either side it reaches (m; 0 = none),
 // (+0.17 m); except along the sandbar of Cayo de Agua, which is lower than any beach and goes under at an
 // autumn high water. Set by lrGround / lrGroundFine for the point in hand before the profile is taken.
 float lrBermMin = 0.22;
+// Slope of the shore-distance field at the point last looked up close (lrGroundFine): 1 on an ordinary
+// beach, falling to nothing along the middle of a sandbar, where the water is as near on one side as the other.
+float lrShoreSlope = 1.0;
 float lrBermMinAt(vec2 wxz) {
   if (uSandbarP.x <= 0.0) return 0.22;
   vec2 ab = uSandbar.zw - uSandbar.xy, ap = wxz - uSandbar.xy;
@@ -79,15 +82,23 @@ vec3 lrGroundNormal(vec2 wxz, float cell, float d) {
   return normalize(vec3(-hx, 2.0 * d, -hz));
 }
 
-// Whether the water at the nearest waterline is open (1) or a puddle or creek a few metres across (0): the
-// shore distance is probed 8 m out from that waterline. Waves come from the sea, not from pools on a sand bar.
+// Whether there is open water within reach of a point near a waterline (1), or only a puddle or a creek a few
+// metres across (0). Waves come from the sea, not from pools on a sand bar. Points are probed on two rings
+// beyond the waterline: open water shows as a shore distance of several metres at one of them at least.
+// Two rings, because the map's shore distance is rounded off over narrow spits (it reads 10 m along the middle
+// of a bar 35 m wide): "8 m beyond the waterline" can be twice as far away as the map says.
+// (An earlier version probed one point, along the gradient of the shore distance. Along the middle of a
+// sandbar that gradient is nothing but rounding, and the probe fell short besides: the answer changed from one
+// hand's breadth of sand to the next, and the reach of the swash with it, in steps.)
 float lrOpenWater(vec2 wxz, float shore) {
-  if (shore > 8.0) return 1.0;
-  vec2 uv = lrMapUV(wxz), d = 4.0 * uMapRect.zw;
-  vec2 g = vec2(textureLod(tShore, uv + vec2(d.x, 0.0), 0.0).r - textureLod(tShore, uv - vec2(d.x, 0.0), 0.0).r,
-                textureLod(tShore, uv + vec2(0.0, d.y), 0.0).r - textureLod(tShore, uv - vec2(0.0, d.y), 0.0).r);
-  vec2 probe = wxz + g / max(length(g), 1e-3) * (8.0 - shore);
-  return smoothstep(1.0, 5.0, textureLod(tShore, lrMapUV(probe), 0.0).r);
+  if (shore > 8.0 || lrBermMin < 0.2199) return 1.0;       // (the sandbar of Cayo de Agua has the sea on both sides)
+  float r = 8.0 - shore, far = -300.0;
+  for (int k = 0; k < 6; k++) {
+    float a = 1.0471976 * float(k) + 0.3;
+    vec2 d = vec2(cos(a), sin(a));
+    far = max(far, max(textureLod(tShore, lrMapUV(wxz + d * r), 0.0).r, textureLod(tShore, lrMapUV(wxz + d * (2.0 * r + 4.0)), 0.0).r));
+  }
+  return smoothstep(1.0, 5.0, far);
 }
 
 // The ground seen from close by. lrBicubic leans on the GPU's bilinear filter, whose weights have 8 bits: at
@@ -120,6 +131,7 @@ float lrGroundFine(vec2 rel, out float shore, out vec3 normal) {
   float inside = 1.0 - smoothstep(0.985, 1.0, max(e.x, e.y));
   h = vec3(mix(-64.0, h.x, inside), h.yz * inside); s = vec3(mix(300.0, s.x, inside), s.yz * inside);
   shore = s.x;
+  lrShoreSlope = length(s.yz);
   lrBermMin = lrBermMinAt(uCamXZ + rel);
   const float d = 0.25;
   float gx = lrGroundBlend(h.x + h.y * d, s.x + s.y * d) - lrGroundBlend(h.x - h.y * d, s.x - s.y * d);
@@ -138,6 +150,7 @@ float lrGroundNear(float px) { return 1.0 - smoothstep(0.5, 1.0, px); }
 float lrGroundAt(vec2 rel, float px, bool farNormal, out float shore, out vec3 normal) {
   float near = lrGroundNear(px), g = 0.0;
   shore = 0.0; normal = vec3(0.0);
+  lrShoreSlope = 1.0;
   if (near > 0.0) { g = lrGroundFine(rel, shore, normal) * near; shore *= near; normal *= near; }
   if (near < 1.0) {
     float s;
