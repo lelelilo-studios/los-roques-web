@@ -245,6 +245,17 @@ export async function start(canvas, onProgress = () => {}) {
   const walker = new Walker({ ground: footing, surfaceAt, blocked, rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
   rig.walker = walker;
+  /**
+   * Where you are put down at a place: its walking spot (camera/bookmarks.js), or, on the cays where the boatmen
+   * set up umbrellas, a few steps up the beach from the nearest of them, looking out to sea past it: you arrive
+   * among things whose size you know (an umbrella, loungers, people, the boats beyond).
+   */
+  function arrivalSpot(place) {
+    const spot = walkSpotFor(place);
+    if (spot.near !== place.pos) return spot;               // (a spot chosen by hand)
+    const u = landmarks.umbrellas.map(q => [Math.hypot(q[0] - place.pos[0], q[1] - place.pos[1]), q]).sort((a, b) => a[0] - b[0])[0];
+    return u && u[0] < 500 ? { umbrella: [u[1][0], u[1][1]], back: 7.5, side: Math.PI - 0.5, face: 8, pitch: -3 } : spot;
+  }
   const app = {
     env, places, attribution: manifest.attribution || [],
     setEnv(patch) {
@@ -272,8 +283,10 @@ export async function start(canvas, onProgress = () => {}) {
       let spot = pose;
       if (!spot) {
         const t = rig.target, place = rig.dist > 250 ? places.filter(q => q.id !== 'overview').map(q => [Math.hypot(q.pos[0] - t.x, q.pos[1] - t.z), q]).sort((a, b) => a[0] - b[0])[0] : null;
-        spot = place && place[0] < 900 ? walkSpotFor(place[1]) : { x: t.x, z: t.z, yaw: rig.yaw * 180 / Math.PI };
+        spot = place && place[0] < 900 ? arrivalSpot(place[1]) : { x: t.x, z: t.z, yaw: rig.yaw * 180 / Math.PI };
       }
+      // ({ place: id }: where "Walk here" puts you down at that place.)
+      if (spot.place) { const q = places.find(v => v.id === spot.place); if (q) { const { place: _, ...rest } = spot; spot = { ...arrivalSpot(q), ...rest }; } }
       if (spot.pier) {
         // "So many metres out along the pier whose landward end is nearest this point, facing out to sea."
         const q = pierAt.spot(spot.pier, spot.along ?? 8);
@@ -363,6 +376,7 @@ export async function start(canvas, onProgress = () => {}) {
   addEventListener('resize', resize);
   resize();
 
+  let adapt = 1;                                            // how far the eye has opened up for a cloud's shade (1 in the sun)
   function frame(dt = 0) {
     if (env.playing && dt > 0) {
       env.hours += dt * 17 / DAY_SECONDS;
@@ -393,7 +407,18 @@ export async function start(canvas, onProgress = () => {}) {
     water.update(view);
     // Night: the eye (the exposure) opens up as the sun goes down, and lamps come on.
     const night = Math.min(1, Math.max(0, (-1 - status.sunElevation) / 8));
-    shared.uExposure.value = env.exposure * (1 + 44 * night * night);
+    // On foot the eye also adapts to a cloud's shade. Under a cumulus a white beach gets about a third of the
+    // light it has in the sun (a fifth of the sun through the cloud, plus the sky), and a fixed exposure shows it
+    // as gloomy as dusk. The eye takes up most of the difference, over a second or two: the shade reads as shade,
+    // still a white beach, and the sunlit distance as brighter still.
+    let want = 1;
+    if (rig.mode === 'walk' && status.sunElevation > 0) {
+      const sunE = shared.uSunE.value, skyE = shared.uSkyE.value, mu = Math.max(shared.uSunDir.value.y, 0), luma = v => 0.2126 * v.x + 0.7152 * v.y + 0.0722 * v.z;
+      const sun = luma(sunE) * mu, sky = luma(skyE), left = (sun * clouds.sunAt(rig.eye.x, rig.eye.z, dt === 0) + sky) / Math.max(sun + sky, 1e-6);
+      want = Math.min(3, Math.pow(Math.max(left, 0.05), -0.75));
+    }
+    adapt = dt === 0 ? want : adapt + (want - adapt) * (1 - Math.exp(-dt / 1.5));
+    shared.uExposure.value = env.exposure * (1 + 44 * night * night) * adapt;
     landmarks.update(rig.eye, night);
     graph.starTurn = env.hours / 24 * 2 * Math.PI;
     boats.update(rig.eye, clock.time, shared.uSeaLevel.value);

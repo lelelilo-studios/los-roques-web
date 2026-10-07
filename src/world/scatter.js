@@ -100,7 +100,7 @@ void main() {
   float sun = mix(lrSaturate(facing), 0.35 + 0.65 * abs(facing), uLook.x) + uLook.z * lrSaturate(-facing);
   // Under water the sunlight has come down through 'water' metres of sea (the terrain's caustics are not repeated here).
   vec3 open = max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4));
-  vec3 light = uSunE * sun * lrCloudShadow(uCamXZ + vRel.xz) * lrShadow(vRel, n) + uSkyE * (0.55 + 0.45 * n.y) + open * 0.12 * (0.5 - 0.5 * n.y);
+  vec3 light = uSunE * sun * lrSunThrough(lrCloudShadow(uCamXZ + vRel.xz), vRel, n) + uSkyE * (0.55 + 0.45 * n.y) + open * 0.12 * (0.5 - 0.5 * n.y);
   if (water > 0.0) outColor = vec4(albedo * light / open, water);
   else outColor = vec4(albedo * light / PI + uLook.y * uSunE * pow(lrSaturate(dot(reflect(-toEye, n), uSunDir)), 60.0) * 0.05, -1000.0);
 }`;

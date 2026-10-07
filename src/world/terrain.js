@@ -213,6 +213,17 @@ void main() {
   }
   // Variation finer than the 11 m data: seagrass in clumps, coral heads, grain in the sand.
   vec4 benthic = texture(tBenthic, uv);
+  // The beach itself. A beach is ten or twenty metres wide and a pixel of the satellite picture is ten: where
+  // sparse scrub, wet sand or the shallows share the pixel (Francisqui's beach, for one) the sand comes out a
+  // dull olive grey. Near the eye, bare ground within a few steps of the waterline is what it is in fact on
+  // these cays: pale carbonate sand. (Only ever lifted, never darkened: a beach the picture shows white, like
+  // Madrisqui's, is left alone; and from the air the picture is the satellite's, unchanged.)
+  float beachy = (1.0 - lrSaturate((benthic.r + benthic.g) * step(0.0, water) + land.r + land.g + land.b)) * (1.0 - smoothstep(1.5, 8.0, px))
+               * (1.0 - smoothstep(14.0, 34.0, -shore)) * (1.0 - smoothstep(5.0, 14.0, shore)) * (1.0 - smoothstep(1.5, 3.5, ground - uSeaLevel));
+  if (beachy > 0.0) {
+    float lum = lrLuma(albedo), lifted = max(lum, mix(lum, 0.5, 0.85 * beachy));
+    albedo = mix(albedo * (lifted / max(lum, 1e-3)), vec3(1.07, 1.0, 0.86) * lifted, 0.6 * lrSaturate((lifted - lum) * 6.0));
+  }
   vec2 dxz = lrDetailXZFar(vRel.xz);
   float nearby = 1.0 - smoothstep(1.5, 9.0, px);
   albedo *= mix(1.0, 0.72 + 0.56 * lrNoise(dxz * 0.45), benthic.r * nearby);
@@ -356,8 +367,8 @@ void main() {
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);
   // Shadows of things. On the seabed the light came in through the surface up-sun of here: look there.
   vec3 sunIn = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
-  shade *= water > 0.0 ? lrShadow(vec3(vRel.x, uSeaLevel, vRel.z) - vec3(sunIn.x, 0.0, sunIn.z) * (water / max(-sunIn.y, 0.3)), vec3(0.0, 1.0, 0.0))
-                       : lrShadow(vec3(vRel.x, ground, vRel.z), nG);
+  shade = water > 0.0 ? lrSunThrough(shade, vec3(vRel.x, uSeaLevel, vRel.z) - vec3(sunIn.x, 0.0, sunIn.z) * (water / max(-sunIn.y, 0.3)), vec3(0.0, 1.0, 0.0))
+                      : lrSunThrough(shade, vec3(vRel.x, ground, vRel.z), nG);
   // Dry sand is rough: it sends light back towards the sun and less of it on, away from the sun (the
   // Oren-Nayar lobe, scaled so that seen from above at noon it is as before).
   float nl = lrSaturate(dot(n, uSunDir)), nv = lrSaturate(dot(n, V)), back = dot(uSunDir, V) - nl * nv;

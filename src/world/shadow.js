@@ -33,6 +33,10 @@ float lrShadow(vec3 p, vec3 n) {
   }
   return mix(lit / float(LR_SHADOW_TAPS), 1.0, smoothstep(0.85, 1.0, edge));
 }
+// Under a cloud the fifth of the sunlight that still comes through has been scattered on the way: it casts no
+// sharp shadows. So things shadow the ground fully in the open, and less and less as a cloud covers the sun.
+// 'cloud' is what the clouds let through at p (lrCloudShadow); returns the sun's light there, 0..1.
+float lrSunThrough(float cloud, vec3 p, vec3 n) { return cloud * mix(1.0, lrShadow(p, n), smoothstep(0.22, 0.6, cloud)); }
 `;
 export const SHADOW_UNIFORMS = ['tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP'];
 

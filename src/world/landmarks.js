@@ -58,7 +58,7 @@ void main() {
   vec3 albedo = glow > 0.5 ? vec3(0.05) : vColor;
   // Sun, sky, and the light the pale ground throws back up (what keeps a shaded wall from going sky-blue).
   vec3 bounce = (uSunE * lrSaturate(uSunDir.y) + uSkyE) * vec3(0.46, 0.43, 0.36) * 0.5;
-  float sunLit = lrCloudShadow(uCamXZ + vRel.xz) * lrShadow(vRel, n);
+  float sunLit = lrSunThrough(lrCloudShadow(uCamXZ + vRel.xz), vRel, n);
   vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * sunLit + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
   // Rain: paint, wood, cloth and skin all go a shade darker when wet, and shine with the sky.
   vec3 e = normalize(toEye);

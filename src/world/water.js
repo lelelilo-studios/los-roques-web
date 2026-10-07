@@ -97,6 +97,13 @@ vec2 lrRainRings(vec2 p, float amount, out float spray) {
   return slope;
 }
 
+// The same patches as lrFoamPattern, as a thickness (0..1) that falls away gradually towards their edges.
+float lrFoamThickness(vec2 rel, float amount) {
+  vec2 p = lrDetailXZ(rel);
+  float cells = lrFbm(p * 2.3 + uTime * 0.07) * 0.65 + lrNoise(p * 9.0 - uTime * 0.11) * 0.35;
+  return smoothstep(0.6 - amount, 1.5 - amount, smoothstep(0.3, 0.7, cells));
+}
+
 void main() {
   vec2 gx = dFdx(vGrid), gy = dFdy(vGrid);
   // Towards the horizon a pixel covers a long thin strip of sea. Past what anisotropic filtering can follow, widen
@@ -265,7 +272,7 @@ void main() {
   vec3 a = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon);
   // Light on the water here (a cloud may shade it). The bottom reflectance was scaled by the light the bed gets
   // relative to open ground, so rescale it to this light.
-  float shade = lrCloudShadow(wxz) * lrShadow(vRel, vec3(0.0, 1.0, 0.0));        // (a cloud, a hull or a pier may shade it)
+  float shade = lrSunThrough(lrCloudShadow(wxz), vRel, vec3(0.0, 1.0, 0.0));        // (a cloud, a hull or a pier may shade it)
   vec3 lit = uSunE * lrSaturate(uSunDir.y) * shade + uSkyE;
   vec3 leaving = lrWaterRrs(rho * downwelling / max(lit, vec3(1e-4)), lrOpticalDepth(H), muS, muV, a, bb) * lit * (1.0 - fresnel) / 0.979;
 
@@ -309,12 +316,15 @@ void main() {
   }
   if (foam > 0.003) {
     float cover = lrFoamPattern(spot, lrSaturate(foam), px), tone = 1.0;
-    if (px < 0.1) {
-      // Up close the patches of surf are rafts of bubbles (the pattern above is made for the view from the
-      // air: at arm's length it was smooth white blobs a foot across).
-      float near = 1.0 - smoothstep(0.03, 0.1, px);
-      vec2 f = lrFoam(spot + uCamMod.xy, cover, px, gx, gy);
-      cover = mix(cover, f.x * (0.55 + 0.4 * f.y), near); tone = mix(1.0, f.y, near);       // (thin foam: the water shows between the bubbles)
+    if (px < 0.6) {
+      // From the beach the patches of surf are rafts of bubbles: thick and white at their hearts, thinning
+      // outwards into a net of bubble walls with the water showing through, then single strands; a few metres
+      // off the net blurs into soft-edged veils. (The pattern above is made for the view from the air: from
+      // eye level it was flat white floes with hard edges.)
+      // (Even the heart of a patch is a raft with holes in it: solid white is only where a wave is breaking this moment.)
+      float near = 1.0 - smoothstep(0.2, 0.6, px), heart = lrFoamThickness(spot, lrSaturate(foam)), thick = 0.72 * heart;
+      vec2 f = lrFoam(spot + uCamMod.xy, thick, px, gx, gy);
+      cover = mix(cover, f.x * (0.45 + 0.55 * heart), near); tone = mix(1.0, f.y * (0.85 + 0.15 * heart), near);
     }
     col = mix(col, 0.82 * tone * lit / PI, cover);
   }

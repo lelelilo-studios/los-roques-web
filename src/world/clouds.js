@@ -180,6 +180,24 @@ export class Clouds {
     if (on && (this.frame++ % this.quality.shadowEvery === 0 || dt === 0)) this.shadowPass.render(this.renderer, this.shadow);
   }
 
+  /**
+   * How much of the sun's light the clouds let through to the ground at a world point (0..1), as lrCloudShadow
+   * gives it: one texel of the shadow map, read back. Asynchronous (the last answer is returned meanwhile)
+   * unless `sync`.
+   */
+  sunAt(x, z, sync = false) {
+    if (!(this.enabled && this.ready && this.cover > 0.01)) return (this.sunHere = 1);
+    const u = (x - this.region.x) / this.region.z, v = (z - this.region.y) / this.region.z, size = this.shadow.width;
+    if (u < 0.05 || u > 0.95 || v < 0.05 || v > 0.95) return (this.sunHere = 1);
+    const px = Math.min(size - 1, Math.floor(u * size)), py = Math.min(size - 1, Math.floor(v * size)), buf = (this.sunBuf ??= new Uint8Array(4));
+    if (sync) { this.renderer.readRenderTargetPixels(this.shadow, px, py, 1, 1, buf); this.sunHere = buf[0] / 255; }
+    else if (!this.sunPending && (this.sunTick = (this.sunTick || 0) + 1) % 8 === 1) {       // (a few times a second is plenty: clouds drift slowly)
+      this.sunPending = true;
+      this.renderer.readRenderTargetPixelsAsync(this.shadow, px, py, 1, 1, buf).then(() => { this.sunHere = buf[0] / 255; }).catch(() => {}).finally(() => { this.sunPending = false; });
+    }
+    return this.sunHere ?? 1;
+  }
+
   /** Draws the cloud layer for the current view into `this.target` (after the scene's depth is final). */
   render(depthTexture, width, height) {
     if (!(this.enabled && this.ready && this.cover > 0.01)) return false;
