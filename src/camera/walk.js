@@ -229,6 +229,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
   const typing = e => /INPUT|SELECT|TEXTAREA/.test(e.target?.tagName || '');
   const key = e => (e.code === 'Space' ? ' ' : e.key.length === 1 ? e.key.toLowerCase() : e.key);
   const turn = (dx, dy, rate) => { walker.yaw += dx * rate; walker.look = Math.min(1.5, Math.max(-1.5, walker.look - dy * rate)); };
+  const grasp = { open: 0.3, at: performance.now() };
   const lock = () => {
     if (!el.requestPointerLock || document.pointerLockElement === el) return;
     // Raw mouse movement where the browser offers it; some refuse the option, some refuse the lock: both are fine.
@@ -242,11 +243,13 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
       if (k === 'Tab' || (k === 'Escape' && document.pointerLockElement !== el)) { e.preventDefault(); onLeave(); return; }
       // (Ctrl is not among them, though many crouch with it by habit: with W, forward, it is the browser's "close
       // this tab", which no page can prevent. Crouching or diving while going forward closed the page.)
-      if (['w', 'a', 's', 'd', 'c', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
+      if (['w', 'a', 's', 'd', 'c', 'q', 'e', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
     }),
     on(window, 'keyup', e => held.delete(key(e))),
     on(window, 'blur', () => held.clear()),
     on(el, 'click', () => { if (active()) lock(); }),
+    // The wheel parts your fingers (away from you) or brings them together: how fast what you hold runs out.
+    on(el, 'wheel', e => { if (!active()) return; e.preventDefault(); grasp.open = Math.min(1, Math.max(0, grasp.open - Math.sign(e.deltaY) * Math.min(0.12, Math.abs(e.deltaY) / 600 + 0.04))); }, { passive: false }),
     on(document, 'mousemove', e => { if (active() && document.pointerLockElement === el) turn(e.movementX, e.movementY, 0.0022); }),
     on(el, 'pointerdown', e => {
       if (!active()) return;
@@ -275,12 +278,15 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
   return {
     /** The walker's input for this frame. */
     read() {
-      const h = k => (held.has(k) ? 1 : 0);
+      const h = k => (held.has(k) ? 1 : 0), now = performance.now();
+      // (E parts the fingers, Q closes them, for as long as either is held.)
+      grasp.open = Math.min(1, Math.max(0, grasp.open + (h('e') - h('q')) * Math.min(0.1, (now - grasp.at) / 1000) * 0.9)); grasp.at = now;
       return {
         fwd: Math.max(-1, Math.min(1, h('w') + h('ArrowUp') - h('s') - h('ArrowDown') + touch.vec[1])),
         right: Math.max(-1, Math.min(1, h('d') + h('ArrowRight') - h('a') - h('ArrowLeft') + touch.vec[0])),
         run: held.has('Shift') || pressed.has('run') || Math.hypot(touch.vec[0], touch.vec[1]) > 0.97,
         down: held.has('c') || pressed.has('down'), up: held.has(' ') || pressed.has('up'),
+        open: grasp.open,                                // how far your fingers are parted, 0 together .. 1
         hand: !!touch.look,                              // the mouse button (or a finger on the right of the screen) held: crouched, your hand goes down to touch
       };
     },

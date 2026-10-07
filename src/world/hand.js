@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { CHUNK_UNIFORMS, shared, uniformsFor } from '../core/uniforms.js';
 import { shadowGLSL } from './shadow.js';
+import { CELL, NU, NV, Palm, U0, V0 } from '../sim/palm.js';
 
 const clamp01 = v => Math.min(1, Math.max(0, v));
 const wrap64 = v => ((v % 64) + 64) % 64;
@@ -121,6 +122,53 @@ void main() {
   outColor = vec4(mix(col, pool, water), -1000.0);
 }`;
 
+// What lies in the hand, as the palm simulation has it (sim/palm.js): a sheet over the palm, a vertex a cell.
+const lyingVertex = /* glsl */`
+#include <lr_common>
+in vec2 aLocal;      // where on the palm (u, v)
+in float aDepth;     // how deep the stuff lies here (m)
+out vec3 vRel;
+out vec3 vNormal;
+out vec3 vLocal;
+out float vDepth;
+void main() {
+  vRel = position; vNormal = normal; vLocal = vec3(aLocal.x, aDepth, aLocal.y); vDepth = aDepth;
+  gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
+}`;
+const lyingFragment = /* glsl */`
+#include <lr_common>
+${shadowGLSL}
+uniform vec2 uStuff;        // 0 dry sand, 1 wet sand, 2 water; how much of a handful
+in vec3 vRel;
+in vec3 vNormal;
+in vec3 vLocal;
+in float vDepth;
+layout(location = 0) out vec4 outColor;
+void main() {
+  float water = step(1.5, uStuff.x), wet = step(0.5, uStuff.x) * (1.0 - water);
+  // Where it thins out to nothing its edge is ragged: the last grains lie scattered on the skin.
+  float lumps = lrNoise(vLocal.xz * 260.0 + 5.0), bits = lrNoise(vLocal.xz * 620.0 + 3.0), fine = lrNoise(vLocal.xz * 2600.0);
+  if (vDepth < mix(0.0004 + 0.0011 * bits, 0.0006, water)) discard;
+  vec3 n = normalize(vNormal), V = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
+  if (dot(n, V) < 0.0) n = -n;
+  n = normalize(n + (1.0 - water) * (0.55 * vec3(lumps - 0.5, 0.0, lrNoise(vLocal.zx * 260.0 + 9.0) - 0.5) + 0.4 * vec3(bits - 0.5, 0.0, lrNoise(vLocal.zx * 620.0 + 1.0) - 0.5)));
+  float lit = lrShadow(vRel, n);
+  // Sand: grains big enough to tell apart at arm's length, darker ones, flakes of shell.
+  // (Each grain its own shade: a cell of two thirds of a millimetre is a grain; some are dark, a few are shell.)
+  float grain = lrHash12(floor(vLocal.xz * 1500.0) + 5.0), thin = 1.0 - smoothstep(0.0005, 0.004, vDepth);
+  vec3 sand = vec3(0.62, 0.57, 0.49) * (0.72 + 0.4 * grain + 0.1 * bits) * (1.0 - 0.35 * step(0.9, lrHash12(floor(vLocal.xz * 1500.0) + 41.0))) + 0.22 * step(0.94, lrHash12(floor(vLocal.xz * 700.0) + 11.0));
+  sand *= mix(1.0, 0.56, wet) * (1.0 - 0.12 * thin);
+  vec3 bounce = uSunE * max(uSunDir.y, 0.0) * 0.12 * vec3(0.76, 0.7, 0.6);
+  vec3 col = sand * (uSunE * lrSaturate(dot(n, uSunDir)) * lit + uSkyE * (0.5 + 0.5 * n.y) + bounce) / PI;
+  col += wet * uSunE * lit * 0.5 * pow(lrSaturate(dot(reflect(-V, n), uSunDir)), 60.0);
+  // Water: the palm seen through it (darker the deeper), the sky in it, the sun's glint; its surface trembles.
+  float tremble = lrNoise(vLocal.xz * 180.0 + uTime * 3.0), fresnel = 0.02 + 0.98 * pow(1.0 - lrSaturate(dot(n, V)), 5.0), shallow = 1.0 - smoothstep(0.0, 0.003, vDepth);
+  float sky = max(fresnel, 0.05 + 0.14 * tremble * tremble + 0.25 * shallow);
+  vec3 pool = vec3(0.5, 0.37, 0.29) * exp(-vDepth * 30.0) * (uSunE * lrSaturate(uSunDir.y) * lit + uSkyE) / PI * (1.0 - sky) + sky * uSkyE / PI * 1.5
+            + uSunE * lit * 4.0 * pow(lrSaturate(dot(reflect(-V, normalize(n + 0.12 * vec3(tremble - 0.5, 0.0, lrNoise(vLocal.zx * 180.0 - uTime * 2.6) - 0.5))), uSunDir)), 500.0);
+  outColor = vec4(mix(col, pool, water), -1000.0);
+}`;
+
 export class Hand {
   /**
    * @param {object} o
@@ -160,6 +208,21 @@ export class Hand {
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.shadow], { uWater: { value: 0 } }),
     }));
     this.streams.frustumCulled = false; this.streams.matrixAutoUpdate = false; this.streams.visible = false;
+    // What lies in the hand, when the hand is the real one: the palm simulation, and a sheet drawn from it.
+    this.sim = new Palm(); this.rates = [0, 0, 0];
+    const cells = NU * NV, local = new Float32Array(cells * 2), quads = [];
+    for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) { local[(j * NU + i) * 2] = U0 + (i + 0.5) * CELL; local[(j * NU + i) * 2 + 1] = V0 + (j + 0.5) * CELL; }
+    for (let j = 0; j + 1 < NV; j++) for (let i = 0; i + 1 < NU; i++) { const a = j * NU + i, b = a + NU; quads.push(a, b, a + 1, a + 1, b, b + 1); }
+    this.lPos = new THREE.BufferAttribute(new Float32Array(cells * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.lNor = new THREE.BufferAttribute(new Float32Array(cells * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.lDepth = new THREE.BufferAttribute(new Float32Array(cells), 1).setUsage(THREE.DynamicDrawUsage);
+    const sheet = new THREE.BufferGeometry();
+    sheet.setAttribute('position', this.lPos); sheet.setAttribute('normal', this.lNor); sheet.setAttribute('aDepth', this.lDepth); sheet.setAttribute('aLocal', new THREE.BufferAttribute(local, 2)); sheet.setIndex(quads);
+    this.lying = new THREE.Mesh(sheet, new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: lyingVertex, fragmentShader: lyingFragment, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps },
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.shadow], { uStuff: { value: new THREE.Vector2() } }),
+    }));
+    this.lying.frustumCulled = false; this.lying.matrixAutoUpdate = false; this.lying.visible = false;
     this.trail = Array.from({ length: GAPS }, () => []);
     this.count = shared.uTouchSeg.value.length;
     this.reset();
@@ -179,10 +242,12 @@ export class Hand {
       empty: 0,           // how long it has been empty, held up
       tip: null, from: null, speed: 0, mark: -1, marks: 0, heap: null, spot: null,
       spoke: 0, ringed: 0, wet: 0, sand: 0, floor: 0, at: null,
-      pushed: -1, epoch: 0, bounce: 0, lastK: null, pour: null,
+      pushed: -1, epoch: 0, bounce: 0, lastK: null, pour: null, tipped: 0,
     });
     if (this.trail) for (const t of this.trail) t.length = 0;
     if (this.streams) this.streams.visible = false;
+    if (this.lying) this.lying.visible = false;
+    this.sim?.empty(); this.open = 0.3; this.real = false;
     shared.uTouchCount.value = 0; shared.uLeg.value[2].z = 0;
     if (this.mesh) this.mesh.visible = false;
   }
@@ -199,7 +264,8 @@ export class Hand {
   /**
    * Before the body is posed: what the hand is to do this frame. Returns poseBody's `touch`, or null.
    * @param {number} dt
-   * @param {object} c  want (the button is held), canReach (crouched, on sand or in shallow water), time, look,
+   * @param {object} c  want (the button is held), canReach (crouched, on sand or in shallow water), open (how far
+   *   the fingers are parted, 0..1), time, look,
    *   body (eye height over your feet), feet (their height), x, z, cy, sy (cos and sin of your heading),
    *   groundAt(x, z), surf (the sea surface here), wetAt(x, z, ground): whether the sand there is wet
    */
@@ -228,9 +294,8 @@ export class Hand {
     if (!this.down && this.lift < 0.05 && this.amount < 0.02) this.kind = depth > 0.015 ? 'water' : c.wetAt(wx, wz, g) ? 'wet' : 'dry';
     const y = this.kind === 'water' ? Math.max(g + 0.004, c.surf - 0.17) : this.kind === 'dry' ? g - 0.012 - 0.012 * this.grip : g - 0.003 - 0.006 * this.grip;
     this.at = { x: wx, z: wz, ground: g, depth };
-    // Held up: a forearm's length before your eyes and a little below the line of your look, to the right; the
-    // palm up and turned a little towards you, tipping forward as it empties so that the last of it slides off.
-    const sl = Math.sin(c.look), cl = Math.cos(c.look), tip = 0.25 + 0.3 * (1 - this.amount) * clamp01(this.lift * 2 - 1);
+    // Held up: a forearm's length before your eyes and a little below the line of your look, to the right.
+    const sl = Math.sin(c.look), cl = Math.cos(c.look), held = clamp01(this.lift * 2 - 1);
     const L = [0, sl, -cl], U = [0, cl, sl], eye = [0, c.body, 0];
     // (Far enough out, and near enough to the middle of what you see, that the hand, what falls from it and the
     // place where that lands are all in view.)
@@ -239,20 +304,35 @@ export class Hand {
     wrist[1] += 0.003 * Math.sin(c.time * 1.45); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1);
     // (No lower than the arm can hold it level, crouched: above your knees.)
     wrist[1] = Math.max(wrist[1], Math.min(c.body - 0.3, 0.36));
-    const dir = [-0.3, L[1] * 0.92 + U[1] * 0.12, L[2] * 0.92 + U[2] * 0.12], palm = [0.06, U[1] - L[1] * tip, U[2] - L[2] * tip];
-    const full = this.grip, cupped = 0.5 - 0.16 * (1 - this.amount);
+    // How far the fingers are parted: as you have set them (the wheel), wide while you send it all down.
+    if (dt > 0) this.open += (clamp01(c.want && !c.canReach ? 1 : c.open ?? 0.3) - this.open) * (1 - Math.exp(-dt * 8));
+    let dir, palm, cupped, spread;
+    if (this.real) {
+      // What it holds obeys the hand (sim/palm.js), so the hand is held to the world, not to your eye: level
+      // while the fingers are together; with them parted it tips forward, slowly and further the longer it
+      // pours (faster the wider they are), as a hand does to keep sand running; closed again, it comes level.
+      if (dt > 0) this.tipped = this.open > 0.05 && this.amount > 0.002 && held > 0.9 ? Math.min(0.8, this.tipped + dt * (0.06 + 0.4 * this.open)) : Math.max(0, this.tipped - dt * 1.2);
+      const tip = (0.1 + 0.25 * this.open + this.tipped) * held, st = Math.sin(tip), ct = Math.cos(tip);
+      dir = [-0.3, -st, -ct]; palm = [0.06, ct, -st]; cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
+    } else {
+      // (The figure of tubes: the palm up and turned a little towards you, tipping forward as it empties.)
+      const tip = 0.25 + 0.3 * (1 - this.amount) * held;
+      dir = [-0.3, L[1] * 0.92 + U[1] * 0.12, L[2] * 0.92 + U[2] * 0.12]; palm = [0.06, U[1] - L[1] * tip, U[2] - L[2] * tip];
+      cupped = 0.5 - 0.16 * (1 - this.amount); spread = this.lift * (this.kind === 'water' ? 0.3 : 0.5) * (0.15 + 0.85 * (1 - this.amount));
+    }
+    const full = this.grip;
+    this.cupped = cupped;
     return {
       at: [lx, y - c.feet, lz], amount: this.ik, lift: this.lift, wrist, dir, palm,
-      // (On the ground the fingers close on what they take; held up they are cupped, and part as it runs out.)
-      curl: (this.kind === 'water' ? 0.1 + 0.38 * full : this.kind === 'dry' ? 0.34 + 0.4 * full : 0.16 + 0.5 * full) * (1 - this.lift) + cupped * this.lift,
-      spread: this.lift * (this.kind === 'water' ? 0.3 : 0.5) * (0.15 + 0.85 * (1 - this.amount)),
+      // (On the ground the fingers close on what they take; held up they are cupped.)
+      curl: (this.kind === 'water' ? 0.1 + 0.38 * full : this.kind === 'dry' ? 0.34 + 0.4 * full : 0.16 + 0.5 * full) * (1 - this.lift) + cupped * this.lift, spread,
     };
   }
 
   /** What the hand held is let fall at once (it was sent down again). */
   spill(time) {
     if (this.pour) this.release(this.amount, time, 0.25);
-    this.amount = 0;
+    this.amount = 0; this.sim.empty();
   }
 
   /**
@@ -291,6 +371,7 @@ export class Hand {
       // it (where the hand had only pressed, not where it was drawn along).
       if (this.grip >= 1 && !this.took) {
         this.took = true; this.amount = 1; this.owed = 0; this.empty = 0; this.heap = this.spot = null; this.epoch = time;
+        this.sim.shape(0.5, 0); this.sim.fill(this.kind);
         this.sound.touch(this.kind, 'take');
         if (sandy && this.mark >= 0 && info[this.mark].y > 0.5) { info[this.mark].set(time, 4, c.yaw, this.kind === 'dry' ? 1 : 0.7); this.mark = -1; }
         if (!sandy) this.ring(tip[0], tip[2], time, 0.3);
@@ -324,7 +405,10 @@ export class Hand {
     let running = 0;
     this.pour = null; this.mesh.visible = false;
     if (!palm || this.lift <= 0.25) this.lastK = null;
-    if (palm && this.lift > 0.25) {
+    this.real = !!palm?.us || (this.real && !palm);
+    this.lying.visible = false;
+    if (palm?.us && this.lift > 0.25) running = this.hold(dt, c, palm);
+    else if (palm && this.lift > 0.25) {
       const stuff = STUFF[this.kind], K = c.world(palm.knuckles), f = c.turn(palm.f), N = c.turn(palm.N), A = c.turn(palm.A);
       // (Sand beds itself into the palm; water lies on it.)
       const lift = sandy ? 0.006 : 0.0125, middle = [K[0] - f[0] * 0.04 + N[0] * lift, K[1] - f[1] * 0.04 + N[1] * lift, K[2] - f[2] * 0.04 + N[2] * lift];
@@ -366,8 +450,76 @@ export class Hand {
     }
   }
 
+  /**
+   * The real hand, held up with something in it: the palm simulation moves on, what lies in the hand is drawn
+   * from it, and what fell through each gap is handed to the streams and to whatever is below. Returns how
+   * strongly it is running (0..1).
+   */
+  hold(dt, c, palm) {
+    const { sim } = this, time = c.time, sandy = this.kind !== 'water', stuff = STUFF[this.kind];
+    const f = c.turn(palm.f), N = c.turn(palm.N), A = c.turn(palm.A), K = c.world(palm.knuckles), centre = c.world(palm.centre);
+    // (The palm's skin is a few millimetres off the plane of its bones.)
+    const O = [centre[0] + N[0] * 0.007, centre[1] + N[1] * 0.007, centre[2] + N[2] * 0.007], at = (u, v, w) => [O[0] + A[0] * u + f[0] * v + N[0] * w, O[1] + A[1] * u + f[1] * v + N[1] * w, O[2] + A[2] * u + f[2] * v + N[2] * w];
+    const ground = c.groundAt(K[0], K[2]), sea = c.surf - ground > 0.01, floor = sea ? c.surf : ground;
+    const v = this.lastK && dt > 0 ? [0, 1, 2].map(i => Math.max(-1.5, Math.min(1.5, (K[i] - this.lastK[i]) / dt))) : [0, 0, 0];
+    this.lastK = K;
+    sim.shape(this.cupped ?? 0.45, this.open, palm.half, palm.us);
+    const under = g => { const q = sim.gapAt(g), p = at(q[0], q[1], -0.016); return p; };
+    this.pour = { K, f, N, A, floor, sea, ground, v, wetGround: !sea && c.wetAt(K[0], K[2], ground), gaps: [under(0), under(1), under(2)] };
+    let running = 0;
+    if (dt > 0 && this.lift > 0.8 && this.amount > 0.002) {
+      const out = sim.step(dt, [A[1], f[1], N[1]]), through = out.gaps[0] + out.gaps[1] + out.gaps[2], gone = (through + out.edge) / HANDFUL;
+      this.amount = sim.amount;
+      // How hard each gap is running (a stream at full strength carries a twentieth of a handful a second).
+      for (let g = 0; g < 3; g++) this.rates[g] += (clamp01(out.gaps[g] / dt / (HANDFUL * 0.05)) - this.rates[g]) * (1 - Math.exp(-dt * 14));
+      running = Math.max(...this.rates);
+      if (gone > 0) {
+        // Where it lands: under the gaps it fell through, a third of a second later.
+        const fall = Math.sqrt(Math.max(K[1] - floor, 0.01) / 4.9), r = this.spray.random, patch = this.patch();
+        for (let g = 0; g < 3; g++) if (out.gaps[g] > 0) {
+          const p = this.pour.gaps[g];
+          if (sea) continue;
+          if (sandy) patch?.pour(p[0], p[2], 0.012, out.gaps[g] * (this.kind === 'dry' ? 1 : 0.75), this.kind === 'wet' && !this.pour.wetGround ? out.gaps[g] / HANDFUL * 5 : 0, fall, time);
+          else patch?.pour(p[0], p[2], 0.035, 0, out.gaps[g] / HANDFUL * 7, fall, time);
+        }
+        if (out.edge > 0) {
+          const p = at(out.at[0], out.at[1], 0);
+          if (!sea) { if (sandy) patch?.pour(p[0], p[2], 0.02, out.edge, 0, fall, time); else patch?.pour(p[0], p[2], 0.04, 0, out.edge / HANDFUL * 7, fall, time); }
+          // (What goes over the edge of the hand goes as loose grains, or drops.)
+          this.owed += out.edge / HANDFUL * stuff.things;
+          for (; this.owed >= 1; this.owed--) this.spray.put(wrap64(p[0] + (r() - 0.5) * 0.02), p[1], wrap64(p[2] + (r() - 0.5) * 0.02), floor, time + dt * r(), [v[0] + (r() - 0.5) * 0.08, -0.05 - 0.2 * r(), v[2] + (r() - 0.5) * 0.08], stuff.size[0] + (stuff.size[1] - stuff.size[0]) * r() * r(), !sandy);
+        }
+        if (sea && time - this.ringed > (sandy ? 0.3 : 0.16)) { const p = this.pour.gaps[1]; this.ring(p[0] + (r() - 0.5) * 0.05, p[2] + (r() - 0.5) * 0.05, time + fall, sandy ? 0.1 : 0.2); this.ringed = time; }
+        if (sandy) this.sand = Math.min(1, Math.max(this.sand, this.kind === 'wet' ? 0.7 : 0.3)); else this.wet = 1;
+        if (time - this.spoke > 0.085) { this.sound.touch(this.kind, 'pour', clamp01(gone / dt / 0.2)); this.spoke = time; }
+      }
+      if (this.amount <= Math.max(stuff.left * 0.3, 0.004)) { this.amount = 0; sim.empty(); this.empty = 0; this.sound.touch(this.kind, 'up'); }
+    } else if (dt > 0) {
+      for (let g = 0; g < 3; g++) this.rates[g] *= Math.exp(-dt * 14);
+      if (this.amount <= 0.004) this.empty += dt;
+    }
+    // What lies in the hand: a vertex a cell, on top of the stuff; its slope from its neighbours.
+    if (this.amount > 0.002) {
+      const pos = this.lPos.array, nor = this.lNor.array, depth = this.lDepth.array, s = sim.s, fl = sim.floor;
+      const top = k => (Number.isNaN(fl[k]) ? 0 : fl[k] + s[k]);
+      for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
+        const k = j * NU + i, here = top(k), p = at(U0 + (i + 0.5) * CELL, V0 + (j + 0.5) * CELL, Number.isNaN(fl[k]) ? -0.02 : here + (sandy ? 0 : 0.0008));
+        pos[k * 3] = p[0] - c.eye.x; pos[k * 3 + 1] = p[1]; pos[k * 3 + 2] = p[2] - c.eye.z;
+        depth[k] = Number.isNaN(fl[k]) ? 0 : s[k];
+        const du = (top(k + (i + 1 < NU ? 1 : 0)) - top(k - (i > 0 ? 1 : 0))) / (2 * CELL), dv = (top(k + (j + 1 < NV ? NU : 0)) - top(k - (j > 0 ? NU : 0))) / (2 * CELL);
+        const n = [N[0] - A[0] * du - f[0] * dv, N[1] - A[1] * du - f[1] * dv, N[2] - A[2] * du - f[2] * dv], l = Math.hypot(n[0], n[1], n[2]) || 1;
+        nor[k * 3] = n[0] / l; nor[k * 3 + 1] = n[1] / l; nor[k * 3 + 2] = n[2] / l;
+      }
+      this.lPos.needsUpdate = this.lNor.needsUpdate = this.lDepth.needsUpdate = true;
+      this.lying.material.uniforms.uStuff.value.set(this.kind === 'dry' ? 0 : this.kind === 'wet' ? 1 : 2, this.amount);
+      this.lying.visible = true;
+    }
+    return running;
+  }
+
   /** Where the stream from gap i (0 between the first two fingers .. 2) leaves the hand. */
   gapAt(p, i) {
+    if (p.gaps) return p.gaps[i];
     const a = [0.019, 0, -0.019][i];
     return [p.K[0] + p.A[0] * a + p.f[0] * 0.012 - p.N[0] * 0.011, p.K[1] + p.A[1] * a + p.f[1] * 0.012 - p.N[1] * 0.011, p.K[2] + p.A[2] * a + p.f[2] * 0.012 - p.N[2] * 0.011];
   }
@@ -386,7 +538,7 @@ export class Hand {
     if (pour && dt > 0 && time - this.pushed >= 1 / 75) {
       this.pushed = time;
       for (let i = 0; i < GAPS; i++) {
-        const k = running * clamp01((this.amount - [0.0, 0.1, 0.24][i]) / 0.12) * (0.8 + 0.2 * Math.sin(time * (6 + i) + i * 2.1));
+        const k = pour.gaps ? this.rates[i] * (0.85 + 0.15 * Math.sin(time * (6 + i) + i * 2.1)) : running * clamp01((this.amount - [0.0, 0.1, 0.24][i]) / 0.12) * (0.8 + 0.2 * Math.sin(time * (6 + i) + i * 2.1));
         this.trail[i].unshift({ t: time, p: this.gapAt(pour, i), v: [pour.v[0] + pour.f[0] * 0.03, pour.v[1] - 0.08, pour.v[2] + pour.f[2] * 0.03], k, floor: pour.floor, sea: pour.sea });
         if (this.trail[i].length > SAMPLES - 1) this.trail[i].pop();
       }

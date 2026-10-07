@@ -97,6 +97,21 @@ export class FigureRig {
   hinge(b, R) { this.drive(b, R, this.carry(this.bones[b].parent, this.bones[b].head)); }
 
   /**
+   * Hand i (0 left, 1 right) as it is posed now, in the body's frame: { wrist, bases: where the four fingers
+   * (index to little) leave the palm, knuckles: their middle, centre: the middle of the palm, half: half the
+   * palm's length, f: the way the hand points, N: the way the palm faces, A: across it towards the thumb,
+   * us: how far along A each finger's root is from the centre }.
+   */
+  hand(i) {
+    const s = this.sides[i], L = i ? 'R' : 'L', at = name => { const b = this.need(name); return this.carry(b, this.bones[b].head); };
+    const wrist = at(`wrist.${L}`), bases = [2, 3, 4, 5].map(n => at(`finger${n}-1.${L}`));
+    const knuckles = [0, 1, 2].map(c => (bases[0][c] + bases[1][c] + bases[2][c] + bases[3][c]) / 4), f = unit(sub(knuckles, wrist));
+    const palm = turn(this.R[s.bone.wrist], s.N), k = dot(palm, f), N = unit([palm[0] - f[0] * k, palm[1] - f[1] * k, palm[2] - f[2] * k]), A = cross(f, N).map(v => v * s.side);
+    const centre = [0, 1, 2].map(c => (wrist[c] + knuckles[c]) / 2);
+    return { wrist, bases, knuckles, centre, half: len(sub(knuckles, wrist)) / 2, f, N, A, us: bases.map(b => dot(sub(b, centre), A)) };
+  }
+
+  /**
    * @param {object} j  the solver's joints (poseBody or poseSwim)
    * @param {number} eye  the eye's height in the solver's frame (above the feet walking; 0 swimming)
    * @returns {Float32Array} 12 numbers a bone

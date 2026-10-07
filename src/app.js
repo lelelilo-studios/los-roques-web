@@ -47,7 +47,7 @@ import { buildPanel, buildWalkHud } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
-const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false };
+const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false, open: 0.3 };
 
 export async function start(canvas, onProgress = () => {}) {
   const errors = [];
@@ -249,7 +249,7 @@ export async function start(canvas, onProgress = () => {}) {
   shared.uTreesNear.value = tier.fp.life ? 1 : 0;
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, spray.points, hand.mesh, hand.streams);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying);
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
@@ -565,7 +565,7 @@ export async function start(canvas, onProgress = () => {}) {
       // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
       // on sand or in water no deeper than your knee.
       const cyw = Math.cos(walker.yaw), syw = Math.sin(walker.yaw), feet = walker.eyeY - walker.body, low = walker.crouched;
-      const reachable = { want: !!lastInput.hand, canReach: low > 0.8 && walker.depth < 0.5 && !onDeck(walker.x, walker.z), time: clock.time, look: walker.look, body: walker.body, feet,
+      const reachable = { want: !!lastInput.hand, open: lastInput.open ?? 0.3, canReach: low > 0.8 && walker.depth < 0.5 && !onDeck(walker.x, walker.z), time: clock.time, look: walker.look, body: walker.body, feet,
         x: walker.x + syw * walker.ahead, z: walker.z - cyw * walker.ahead, yaw: walker.yaw, cy: cyw, sy: syw, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z),
         wetAt: wetSandAt };
       const reach = hand.plan(dt, reachable);
@@ -587,6 +587,8 @@ export async function start(canvas, onProgress = () => {}) {
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
       }
       if (figure) { figure.mesh.visible = !folded; figure.setPose(figureRig.pose(body.joints, eyeUp), eyeUp); figure.place(-Math.cos(walker.yaw) * walker.sway, walker.eyeY - walker.body, -Math.sin(walker.yaw) * walker.sway, walker.yaw); }
+      // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
+      if (figure && body.joints.touching && !folded) body.joints.touching.palm = figureRig.hand(1);
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
       hand.act(dt, { ...reachable, joints: body.joints, eye: rig.eye, material: body.mesh.material,
         world: q => [reachable.x + q[0] * cyw - q[2] * syw, feet + q[1], reachable.z + q[0] * syw + q[2] * cyw], turn: v => [v[0] * cyw - v[2] * syw, v[1], v[0] * syw + v[2] * cyw] });
@@ -627,7 +629,7 @@ export async function start(canvas, onProgress = () => {}) {
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
       const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: 0, y: walker.eyeY - walker.body + 0.9, z: 0 } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
@@ -765,7 +767,7 @@ export async function start(canvas, onProgress = () => {}) {
     /** For tests: whether you have the real body, and its size. */
     figure: () => (figure ? { vertices: figure.info.vertices, eyeHeight: figure.info.eyeHeight, stand: walker.stand, crouch: walker.crouch } : null),
     /** For tests: what your hand is doing (see world/hand.js). */
-    hand: () => ({ ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
+    hand: () => ({ ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, open: hand.open, rates: hand.rates.slice(), kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
       stamps: shared.uTouchInfo.value.slice(0, shared.uTouchCount.value).map((v, i) => ({ kind: v.y, a: v.z, b: v.w, age: clock.time - v.x, x: shared.uTouchSeg.value[i].x, z: shared.uTouchSeg.value[i].y })) }),
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
@@ -824,7 +826,7 @@ export async function start(canvas, onProgress = () => {}) {
       // touch: { seconds, turn (degrees a second) }: crouch, put your hand down and draw it along for that long (for pictures).
       if (s.touch) { api.run(0.7, { down: true }); api.run(0.4, { down: true, hand: true }); api.run(s.touch.seconds ?? 1.2, { down: true, hand: true }, s.touch.turn ?? 0, s.touch.nod ?? 0); if (s.touch.then) api.run(s.touch.then.seconds ?? 1, { down: true, hand: true }, s.touch.then.turn ?? 0, s.touch.then.nod ?? 0);
         // (release: let go and watch it run out for that long, crouched still, or standing up with it.)
-        if (s.touch.release) api.run(s.touch.release, { down: !s.touch.stand }, 0, s.touch.look ?? 0); }
+        if (s.touch.release) api.run(s.touch.release, { down: !s.touch.stand, ...(s.touch.open !== undefined ? { open: s.touch.open } : {}) }, 0, s.touch.look ?? 0); }
       if (s.stroll) {
         // (With every frame drawn: the sand you walk on is pressed by the body as it is posed in each.)
         api.run(s.stroll.seconds, s.stroll.input || { fwd: 1 });

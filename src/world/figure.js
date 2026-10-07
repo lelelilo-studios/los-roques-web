@@ -98,13 +98,16 @@ void main() {
   float nearHand = distance(vRel, uHandWet.xyz);
   float soaked = max(uBodyWet.y * (1.0 - smoothstep(uBodyWet.x - 0.04, uBodyWet.x + 0.015, vRel.y)), uBodyWet.w * (1.0 - smoothstep(uBodyWet.z - 0.03, uBodyWet.z + 0.01, vRel.y)));
   soaked = max(soaked, uHandWet.w * (1.0 - smoothstep(0.17, 0.24, nearHand)));
-  // (Grains: three looks at the same noise, one along each axis, so that they are grains whichever way the skin faces.)
-  float grains = (lrNoise(vRest.xy * 1300.0) + lrNoise(vRest.yz * 1300.0 + 17.0) + lrNoise(vRest.zx * 1300.0 + 31.0)) / 3.0;
+  // (Grains: the body at rest cut into cubes two thirds of a millimetre across, each with a grain in it or not,
+  // so that they are specks whichever way the skin faces. Smoothed noise drew a web of cracks; squares seen from
+  // one side, dashes.)
+  vec3 cube = floor(vRest * 1500.0);
+  float grains = lrHash12(cube.xy + cube.z * vec2(37.0, 17.0) + 3.0);
   float line = 0.02 + 0.05 * uBodySand * (0.4 + lrNoise(vRest.xz * 70.0));
-  float stuck = max(uBodySand * (1.0 - smoothstep(0.4 * line, line, vUp)) * step(0.62 - 0.2 * uBodySand, grains), uHandSand * (1.0 - smoothstep(0.085, 0.125, nearHand)) * step(0.6 - 0.16 * uHandSand, grains)) * (1.0 - cloth);
+  float stuck = max(step(1.0 - 0.7 * uBodySand * (1.0 - smoothstep(0.4 * line, line, vUp)), grains), step(1.0 - 0.32 * uHandSand * (1.0 - smoothstep(0.085, 0.125, nearHand)), grains)) * (1.0 - cloth);
   // (Wet cloth goes much darker; wet skin a little, and it shines. Sand on it does not.)
   albedo *= 1.0 - soaked * mix(0.12, 0.34, cloth);
-  albedo = mix(albedo, vec3(0.5, 0.46, 0.39) * (0.8 + 0.4 * grains), stuck);
+  albedo = mix(albedo, vec3(0.66, 0.62, 0.54) * (0.75 + 0.5 * lrHash12(cube.xy + cube.z * vec2(11.0, 29.0) + 19.0)), stuck);
   soaked *= 1.0 - stuck;
   // Skin is not a hard surface: light spreads a little under it. The lit side wraps round further than a
   // plaster cast's would, and the edge of the shade is warm.
