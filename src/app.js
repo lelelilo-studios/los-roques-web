@@ -213,6 +213,7 @@ export async function start(canvas, onProgress = () => {}) {
   let figure = null, figureRig = null, patch = null, pressing = null, ripples = null, crossing = null;
   // How far your feet have sunk as the wash drew the sand from under them (metres), and how the water runs past you (m/s).
   let sunk = 0;
+  const told = { crouch: false, sit: false };
   // Sitting: how far your legs are drawn up (0..1), how wide your feet (0..1), and your toes (radians, curling).
   const seated = { draw: 0, splay: 0, wiggle: 0 };
   const flow = [0, 0];
@@ -632,6 +633,11 @@ export async function start(canvas, onProgress = () => {}) {
     } else {
       for (const c of shared.uContact.value) c.w = 0;
       shared.uLeg.value[0].z = shared.uLeg.value[1].z = 0;
+    }
+    // The keys for what you are doing, said the first time you do it (the opening hint has faded by then).
+    if (params.ui && !params.freeze && walking && standing) {
+      if (walker.sitting && !told.sit) { told.sit = true; notice('Seated: S draws your legs up, W stretches them out · A D move your feet · Space curls your toes · the mouse button works your right hand · X gets you up', null, 10); }
+      else if (!walker.sitting && walker.crouched > 0.9 && !told.crouch) { told.crouch = true; notice('Hold the mouse button to take a handful of sand or water. Let go and it runs out between your fingers · the wheel (or Q / E) closes and parts them', null, 10); }
     }
     // How the water runs past you: up the beach with each wave, more slowly back down. Standing in it, the
     // backwash draws the sand from under your heels and you sink, a centimetre or two; a step frees you.
