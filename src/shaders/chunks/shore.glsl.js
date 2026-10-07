@@ -120,7 +120,9 @@ float lrSwashFoamAge(float a, LrSwash s) {
 }
 // How far the water (and the foam on it) has been carried up the beach from where it would lie at still
 // water, in metres along the slope's direction: 'level' metres of rise on sand sloping at 'slope'.
-float lrSwashCarry(float level, float slope) { return 0.8 * level / clamp(slope, 0.04, 0.3); }
+// (Held to a few metres at most: where neighbouring stretches of shore are out of step, a carry that differed
+// by a metre from one metre to the next pulled the bubble pattern out into blobs a foot across.)
+float lrSwashCarry(float level, float slope) { return 0.5 * level / clamp(slope, 0.11, 0.3); }
 
 // Wet sand: what leaves a bottom of reflectance 'x' (per unit of light on it) under water of no depth at all,
 // as a share of what the same sand gives dry. This is the shallow-water model in lr_optics at H = 0, so sand

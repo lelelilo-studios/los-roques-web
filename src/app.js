@@ -28,6 +28,7 @@ import { shoreCrest } from './data/shoreCPU.js';
 import { createObjectMaterial } from './world/landmarks.js';
 import { pierWalk } from './world/piers.js';
 import { Body } from './world/body.js';
+import { People } from './world/people.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
@@ -158,7 +159,8 @@ export async function start(canvas, onProgress = () => {}) {
   shared.uTreesNear.value = tier.fp.life ? 1 : 0;
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup);
+  const people = new People(landmarks.people, ground, body.mesh.material);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, ...people.meshes);
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
@@ -224,7 +226,7 @@ export async function start(canvas, onProgress = () => {}) {
   }
   // Walls, and the people and umbrella poles on the beaches (a coarse grid of small circles).
   const walls = buildingBlocker(features.buildings), posts = new Map();
-  for (const [x, z, radius] of [...landmarks.people.map(q => [q[0], q[1], 0.4]), ...landmarks.umbrellas.map(q => [q[0], q[1], 0.25])]) {
+  for (const [x, z, radius] of [...landmarks.people.filter(q => !q.stroll).map(q => [q.x, q.z, 0.4]), ...landmarks.umbrellas.map(q => [q[0], q[1], 0.25])]) {
     const key = `${Math.floor(x / 4)},${Math.floor(z / 4)}`;
     if (!posts.has(key)) posts.set(key, []);
     posts.get(key).push([x, z, radius]);
@@ -278,10 +280,10 @@ export async function start(canvas, onProgress = () => {}) {
         if (q) { spot = { ...spot, x: q.x, z: q.z, yaw: q.yaw + (spot.face ?? 0) }; walker.eyeY = 50; }        // (feet above the deck: you are put down on it)
       } else if (spot.person) {
         // "So many metres from the person standing nearest this point, looking at them from `side` radians round."
-        const q = landmarks.people.map(v => [Math.hypot(v[0] - spot.person[0], v[1] - spot.person[1]), v]).sort((a, b) => a[0] - b[0])[0]?.[1];
+        const q = landmarks.people.filter(v => !!v.stroll === !!spot.stroller).map(v => [Math.hypot(v.x - spot.person[0], v.z - spot.person[1]), v]).sort((a, b) => a[0] - b[0])[0]?.[1];
         if (q) {
-          const d = spot.back ?? 4, a = spot.side ?? 0, x = q[0] + Math.cos(a) * d, z = q[1] + Math.sin(a) * d;
-          spot = { ...spot, x, z, yaw: Math.atan2(q[0] - x, -(q[1] - z)) * 180 / Math.PI };
+          const d = spot.back ?? 4, a = spot.side ?? 0, x = q.x + Math.cos(a) * d, z = q.z + Math.sin(a) * d;
+          spot = { ...spot, x, z, yaw: Math.atan2(q.x - x, -(q.z - z)) * 180 / Math.PI };
         }
       } else if (spot.umbrella) {
         // "So many metres towards the water from the beach umbrella nearest this point, looking back at it."
@@ -398,6 +400,7 @@ export async function start(canvas, onProgress = () => {}) {
     birds.update(rig.eye, clock.time);
     for (const kind of life) kind.update(rig.eye);
     turtle.update(rig.eye, clock.time, shared.uSeaLevel.value);
+    people.update(rig.eye, clock.time);
     shared.uWaveHere.value.fromArray(boats.weightsAt(rig.eye.x, rig.eye.z, 3));
     // Shadows of things: round the walker (and of the walker), or round what the orbit camera looks at.
     const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
@@ -455,8 +458,8 @@ export async function start(canvas, onProgress = () => {}) {
   const api = {
     errors,
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
-    /** For tests: your own body (world/body.js). */
-    body,
+    /** For tests: your own body (world/body.js) and the other people (world/people.js). */
+    body, crowd: people,
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
     life,

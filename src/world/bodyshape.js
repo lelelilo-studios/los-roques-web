@@ -7,6 +7,8 @@
 // shoulders 0.48 m across at 1.43 m, a 0.25 m foot. Local frame: +x right, +y up, forward is -z; the eye is
 // at (0, eye height, 0) and the body's axis runs a hand's breadth behind it, as a neck does.
 const SIDES = 10, BACK = 0.09;
+const COS = Float64Array.from({ length: SIDES + 1 }, (_, k) => Math.cos(k / SIDES * 2 * Math.PI)), SIN = Float64Array.from({ length: SIDES + 1 }, (_, k) => Math.sin(k / SIDES * 2 * Math.PI));
+const RING = new Float64Array((SIDES + 1) * 12);
 const SKIN0 = [0.5, 0.36, 0.27], SHIRT0 = [0.56, 0.6, 0.6], SHORTS0 = [0.06, 0.14, 0.24];
 export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, SHOULDER = 0.175;
 /** Vertices the body below the neck and the head can take (see poseBody). */
@@ -30,25 +32,36 @@ export class Tubes {
    * rings lie square to the tube's axis, turned so that "across" stays the body's x.
    */
   tube(a, b, ra, rb, ca, cb = ca) {
-    const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], len = Math.hypot(d[0], d[1], d[2]) || 1e-6;
-    const w = [d[0] / len, d[1] / len, d[2] / len];
+    const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], len = Math.hypot(dx, dy, dz) || 1e-6, wx = dx / len, wy = dy / len, wz = dz / len;
     // u = the body's x made square to the axis, v = axis x u.
-    let u = [1 - w[0] * w[0], -w[0] * w[1], -w[0] * w[2]];
-    const ul = Math.hypot(u[0], u[1], u[2]) || 1;
-    u = [u[0] / ul, u[1] / ul, u[2] / ul];
-    const v = [w[1] * u[2] - w[2] * u[1], w[2] * u[0] - w[0] * u[2], w[0] * u[1] - w[1] * u[0]];
+    let ux = 1 - wx * wx, uy = -wx * wy, uz = -wx * wz;
+    const ul = Math.hypot(ux, uy, uz) || 1;
+    ux /= ul; uy /= ul; uz /= ul;
+    const vx = wy * uz - wz * uy, vy = wz * ux - wx * uz, vz = wx * uy - wy * ux;
     // (Where the tube narrows, its skin faces partly along it: a shoulder sloping to the neck faces up.)
-    const lean = ((ra[0] + ra[1]) - (rb[0] + rb[1])) / (2 * len);
-    const ring = (p, r, k) => {
-      const t = k / SIDES * 2 * Math.PI, c = Math.cos(t), s = Math.sin(t), nx = c / r[0], nz = s / r[1], nl = Math.hypot(nx, nz) || 1;
-      const n = [(u[0] * nx + v[0] * nz) / nl + w[0] * lean, (u[1] * nx + v[1] * nz) / nl + w[1] * lean, (u[2] * nx + v[2] * nz) / nl + w[2] * lean], l = Math.hypot(n[0], n[1], n[2]) || 1;
-      return [[p[0] + u[0] * c * r[0] + v[0] * s * r[1], p[1] + u[1] * c * r[0] + v[1] * s * r[1], p[2] + u[2] * c * r[0] + v[2] * s * r[1]], [n[0] / l, n[1] / l, n[2] / l]];
+    const lean = ((ra[0] + ra[1]) - (rb[0] + rb[1])) / (2 * len), ring = RING;
+    // Both end rings once (position and normal of each point), then the quads between them: this runs for
+    // every limb of everyone near you each frame, so nothing is allocated here.
+    for (let k = 0, o = 0; k <= SIDES; k++) {
+      const c = COS[k], sn = SIN[k];
+      for (let e = 0; e < 2; e++, o += 6) {
+        const p = e ? b : a, r = e ? rb : ra, cr = c * r[0], sr = sn * r[1], nc = c / r[0], ns = sn / r[1], nl = Math.hypot(nc, ns) || 1;
+        const nx = (ux * nc + vx * ns) / nl + wx * lean, ny = (uy * nc + vy * ns) / nl + wy * lean, nz = (uz * nc + vz * ns) / nl + wz * lean, l = Math.hypot(nx, ny, nz) || 1;
+        ring[o] = p[0] + ux * cr + vx * sr; ring[o + 1] = p[1] + uy * cr + vy * sr; ring[o + 2] = p[2] + uz * cr + vz * sr;
+        ring[o + 3] = nx / l; ring[o + 4] = ny / l; ring[o + 5] = nz / l;
+      }
+    }
+    const { pos, nor, col } = this;
+    let i = this.n * 3;
+    const put = (o, colour) => {
+      pos[i] = ring[o]; pos[i + 1] = ring[o + 1]; pos[i + 2] = ring[o + 2]; nor[i] = ring[o + 3]; nor[i + 1] = ring[o + 4]; nor[i + 2] = ring[o + 5];
+      col[i] = colour[0]; col[i + 1] = colour[1]; col[i + 2] = colour[2]; i += 3;
     };
     for (let k = 0; k < SIDES; k++) {
-      const [a0, n0] = ring(a, ra, k), [a1, n1] = ring(a, ra, k + 1), [b0, m0] = ring(b, rb, k), [b1, m1] = ring(b, rb, k + 1);
-      this.vertex(a0, n0, ca); this.vertex(a1, n1, ca); this.vertex(b1, m1, cb);
-      this.vertex(a0, n0, ca); this.vertex(b1, m1, cb); this.vertex(b0, m0, cb);
+      const a0 = k * 12, b0 = a0 + 6, a1 = a0 + 12, b1 = a0 + 18;
+      put(a0, ca); put(a1, ca); put(b1, cb); put(a0, ca); put(b1, cb); put(b0, cb);
     }
+    this.n += SIDES * 6;
   }
   /** A rounded end on a tube (a low cone of triangles to a point just beyond b). */
   cap(a, b, r, colour, bulge = 0.6) {

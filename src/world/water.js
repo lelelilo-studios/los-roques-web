@@ -308,8 +308,15 @@ void main() {
     foam = max(foam, surf * pulse * smoothstep(0.25, 0.7, streaks + 0.45 * surf));
   }
   if (foam > 0.003) {
-    float cover = lrFoamPattern(spot, lrSaturate(foam), px);
-    col = mix(col, 0.82 * lit / PI, cover);
+    float cover = lrFoamPattern(spot, lrSaturate(foam), px), tone = 1.0;
+    if (px < 0.1) {
+      // Up close the patches of surf are rafts of bubbles (the pattern above is made for the view from the
+      // air: at arm's length it was smooth white blobs a foot across).
+      float near = 1.0 - smoothstep(0.03, 0.1, px);
+      vec2 f = lrFoam(spot + uCamMod.xy, cover, px, gx, gy);
+      cover = mix(cover, f.x, near); tone = mix(1.0, f.y, near);
+    }
+    col = mix(col, 0.82 * tone * lit / PI, cover);
   }
   col += spray * close * lit / PI * 0.5;
   if (swash > 0.003) {

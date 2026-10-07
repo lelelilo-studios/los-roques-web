@@ -18,7 +18,7 @@ export class Body {
     this.mesh = this.body.m;
     /** The head: only ever drawn into the shadow map (the eye is inside it). */
     this.headMesh = this.head.m;
-    this.pose({ phase: 0, stride: 0, eye: 1.65 });
+    this.pose({ phase: 0, stride: 0, eye: 1.65 });        // (people.js poses its own at once)
   }
 
   /** Walking: see poseBody ({ phase, stride, eye, look }). Swimming: { swim: true, stroke, under } (see poseSwim). */

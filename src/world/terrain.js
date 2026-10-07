@@ -290,6 +290,10 @@ void main() {
   float lumpy = sand * trodden * (1.0 - smoothstep(0.12, 0.3, px));
   vec2 at = d;                                              // where on the sand this pixel lands, once its relief is counted
   float hollow = 0.0;                                       // how far down in a hollow of trodden ground (0..1)
+  // Pools: on the flat, hard-trodden streets of the village the rain collects in broad shallow puddles, a step
+  // or two across, that mirror the sky. (Beach sand drinks the rain.)
+  float pool = uWet * uWet * smoothstep(0.3, 0.6, land.b) * step(water, -0.2) * step(0.9985, nG.y) * (1.0 - smoothstep(0.3, 1.0, px))
+             * smoothstep(0.56, 0.62, 0.7 * lrNoiseTile(d * 0.4375 + 1.0, 28.0) + 0.3 * lrNoiseTile(d * 1.3125 + 3.0, 84.0));
   if (lumpy > 0.01) {
     // Trodden sand: pits and lumps a few centimetres deep. The view slides over them (parallax), the pits see
     // less sky, and a low sun leaves their far sides in shadow.
@@ -321,6 +325,8 @@ void main() {
     }
 #endif
   }
+  // (The water in a pool lies level over the lumps under it.)
+  n = normalize(mix(n, nG, pool)); openSky = mix(openSky, 1.0, pool);
   if (grainy > 0.01) {
     // Grains, flakes and bits of shell. Water between the grains evens the surface out.
     float blend = smoothstep(0.35, 0.65, lrNoiseTile(d * 0.1875 + 9.0, 12.0)), evened = 1.0 - 0.6 * (covered ? 1.0 : wetAll);
@@ -390,7 +396,8 @@ void main() {
     // (Rain: a film in patches while it falls, a dull damp surface after.)
     gloss = max(gloss, uWet * (0.12 + 0.5 * uRain) * patchy * sand);
     // Puddles: on the hard-trodden streets of the village the rain stands in the hollows (beach sand drinks it).
-    gloss = max(gloss, uWet * uWet * hollow * smoothstep(0.3, 0.6, land.b));
+    gloss = max(gloss, max(uWet * uWet * hollow * smoothstep(0.3, 0.6, land.b), pool));
+    col *= 1.0 - 0.18 * pool;                               // (seen from above a pool is a darker, smooth patch; from low down, a mirror)
     vec2 fs = lrSheetSlope(-nG.xz / nG.y, -water, LrSwash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0));
     fs += (nG.xz / nG.y - n.xz / n.y) * 0.8 * (1.0 - gloss * gloss);
     vec3 nf = normalize(vec3(-fs.x, 1.0, -fs.y));

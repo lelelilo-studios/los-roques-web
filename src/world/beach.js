@@ -1,28 +1,20 @@
 // Day-trip beaches: the sun umbrellas, loungers and cool boxes the boatmen set up on the sand at the cays
 // people are taken to. Placed on dry sand a few metres above the swash, facing the water.
 import { MeshBuilder } from './landmarks.js';
-import { BODY_VERTICES, HEAD_VERTICES, Tubes, poseBody } from './bodyshape.js';
 import * as THREE from 'three';
 
-// People: the same jointed figure as your own body (bodyshape.js), standing at ease. They give the beach its
-// scale: an umbrella is a head taller than they are, a skiff's gunwale comes to their waist.
+// People on the beaches are only chosen here (who, where, standing or strolling): world/people.js draws and
+// moves them.
 const SKINS = [[0.5, 0.36, 0.27], [0.42, 0.27, 0.18], [0.3, 0.19, 0.12], [0.56, 0.4, 0.3], [0.36, 0.23, 0.15]];
 const SHIRTS = [[0.78, 0.78, 0.75], [0.1, 0.3, 0.55], [0.7, 0.12, 0.1], [0.85, 0.65, 0.1], [0.1, 0.45, 0.35], [0.8, 0.4, 0.5], null, null];       // null: no shirt
 const SHORTS_ = [[0.06, 0.14, 0.24], [0.5, 0.08, 0.08], [0.05, 0.05, 0.06], [0.1, 0.4, 0.45], [0.7, 0.5, 0.1], [0.35, 0.36, 0.38]];
 const HAIRS = [[0.03, 0.025, 0.02], [0.08, 0.05, 0.03], [0.02, 0.02, 0.02], [0.2, 0.14, 0.08], [0.45, 0.43, 0.4]];
-const figure = { t: new Tubes(BODY_VERTICES), h: new Tubes(HEAD_VERTICES) };
 
-/** Adds a standing person to a MeshBuilder: feet at (x, y, z), facing along `dir` (unit, east/south). `r` is a random source. */
-function addPerson(mb, x, y, z, dir, r) {
-  const pick = list => list[Math.floor(r() * list.length)], skin = pick(SKINS), scale = 0.9 + 0.16 * r();
-  // (Weight on one leg, the other a little forward: a random moment of a very short pace.)
-  poseBody(figure.t, figure.h, { phase: r() * 6.283, stride: 0.12 + 0.1 * r(), eye: 1.65, colours: { skin, shirt: pick(SHIRTS) || skin, shorts: pick(SHORTS_), hair: pick(HAIRS) } });
-  const yaw = Math.atan2(dir[0], -dir[1]), c = Math.cos(yaw), s = Math.sin(yaw);
-  for (const part of [figure.t, figure.h]) for (let i = 0; i < part.n; i++) {
-    const px = part.pos[i * 3] * scale, pz = part.pos[i * 3 + 2] * scale;
-    mb.pos.push(x + px * c - pz * s, y + part.pos[i * 3 + 1] * scale, z + px * s + pz * c);
-    mb.col.push(part.col[i * 3], part.col[i * 3 + 1], part.col[i * 3 + 2]);
-  }
+/** Someone at (x, z) facing along `dir` (unit, east/south): colours, height and temperament from the random source `r`. */
+function person(x, z, dir, r, stroll = null) {
+  const pick = list => list[Math.floor(r() * list.length)], skin = pick(SKINS);
+  return { x, z, yaw: Math.atan2(dir[0], -dir[1]), scale: 0.9 + 0.16 * r(), beat: r() * 100, stroll,
+    colours: { skin, shirt: pick(SHIRTS) || skin, shorts: pick(SHORTS_), hair: pick(HAIRS) } };
 }
 
 const rand = seed => { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; };
@@ -31,7 +23,7 @@ const SPOTS = [[/francisqu/, 14], [/madrisqu|pirata/, 12], [/crasqu/, 10], [/agu
 
 export function buildBeachSets(places, ground, material) {
   const group = new THREE.Group();
-  group.userData.people = [];                               // where people stand: [x, z]
+  group.userData.people = [];                               // who is on the beaches (see person())
   group.userData.spots = [];                                // where the umbrellas stand: [x, z, bearing to the water (radians, from +x towards +z)]
   for (const place of places) {
     const label = `${place.id || ''} ${place.name || ''}`.toLowerCase(), spot = SPOTS.find(s => s[0].test(label));
@@ -66,16 +58,16 @@ export function buildBeachSets(places, ground, material) {
         }
       }
       mb.box(lx - Math.cos(rot) * 0.9, h + 0.2, lz - Math.sin(rot) * 0.9, 0.3, 0.2, 0.2, [0.1, 0.3, 0.7], rot, white);   // cool box
-      // People: someone standing by the umbrella looking out to sea, and now and then someone ankle deep at the water's edge.
+      // People: someone standing by the umbrella looking out to sea, and now and then someone strolling along
+      // the water's edge, ankle deep, a few metres each way.
       if (r() < 0.7) {
-        const a = rot + (r() - 0.5) * 2.4, d = 1.7 + 1.2 * r(), px = x + Math.cos(a) * d, pz = z + Math.sin(a) * d, turn = rot + (r() - 0.5) * 1.2;
-        addPerson(mb, px - place.pos[0], ground.heightAt(px, pz), pz - place.pos[1], [Math.cos(turn), Math.sin(turn)], r);
-        group.userData.people.push([px, pz]);
+        const a = rot + (r() - 0.5) * 2.4, d = 1.7 + 1.2 * r(), turn = rot + (r() - 0.5) * 1.2;
+        group.userData.people.push(person(x + Math.cos(a) * d, z + Math.sin(a) * d, [Math.cos(turn), Math.sin(turn)], r));
       }
       if (r() < 0.45) {
-        const out = -s + 0.8 + 2.5 * r(), along = (r() - 0.5) * 8, px = x + way[0] * out - way[1] * along, pz = z + way[1] * out + way[0] * along, turn = rot + (r() < 0.3 ? Math.PI : 0) + (r() - 0.5) * 1.5;
+        const out = -s + 0.3 + 1.2 * r(), along = (r() - 0.5) * 8, px = x + way[0] * out - way[1] * along, pz = z + way[1] * out + way[0] * along;
         const bed = ground.heightAt(px, pz);
-        if (bed > -0.6 && bed < 0.25) { addPerson(mb, px - place.pos[0], bed, pz - place.pos[1], [Math.cos(turn), Math.sin(turn)], r); group.userData.people.push([px, pz]); }
+        if (bed > -0.4 && bed < 0.25) group.userData.people.push(person(px, pz, [-way[1], way[0]], r, { dir: [-way[1], way[0]], reach: 5 + 6 * r(), speed: 0.9 + 0.35 * r() }));
       }
     }
     if (!taken.length) continue;
