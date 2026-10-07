@@ -1,0 +1,93 @@
+// Seabirds: frigatebirds circling high on the trade wind and pelicans gliding low over the water in a line.
+// Each bird is a body and two wings (three instanced meshes per flock), moved on simple paths.
+import * as THREE from 'three';
+import { MeshBuilder } from './landmarks.js';
+
+const rand = seed => { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; };
+
+// Body along +x (head at +x), wings along +-z from the body's centre line; sizes in metres.
+function parts(kind) {
+  const dark = kind === 'frigate' ? [0.02, 0.02, 0.025] : [0.16, 0.14, 0.12], span = kind === 'frigate' ? 2.2 : 2.0;
+  const body = new MeshBuilder(), wing = new MeshBuilder();
+  const len = kind === 'frigate' ? 1.0 : 1.2;
+  body.tri([len * 0.5, 0, 0], [-len * 0.2, 0, 0.09], [-len * 0.2, 0, -0.09], dark);
+  if (kind === 'frigate') {              // long forked tail
+    body.tri([-len * 0.2, 0, 0.07], [-len * 0.75, 0, 0.16], [-len * 0.25, 0, 0], dark);
+    body.tri([-len * 0.2, 0, -0.07], [-len * 0.75, 0, -0.16], [-len * 0.25, 0, 0], dark);
+  } else {                               // short tail, big bill
+    body.tri([-len * 0.2, 0, 0.09], [-len * 0.45, 0, 0], [-len * 0.2, 0, -0.09], dark);
+    body.tri([len * 0.5, 0, 0.02], [len * 0.82, -0.04, 0], [len * 0.5, 0, -0.02], [0.5, 0.42, 0.25]);
+  }
+  // One wing (the +z one): an angled, pointed blade; the other is its mirror.
+  const w = span / 2;
+  wing.tri([0.18, 0, 0], [-0.16, 0, 0], [0.02, 0, w * 0.5], dark);
+  wing.tri([0.02, 0, w * 0.5], [-0.16, 0, 0], [-0.2, 0, w * 0.55], dark);
+  wing.tri([0.02, 0, w * 0.5], [-0.2, 0, w * 0.55], [-0.32, 0, w], dark);
+  return { body: body.geometry(), wing: wing.geometry() };
+}
+
+// Where birds gather, by words in a place's name: [pattern, frigatebirds, pelicans].
+const FLOCKS = [[/faro|holand/, 9, 0], [/gran roque|village/, 3, 5], [/francisqu/, 4, 5], [/madrisqu|pirata/, 2, 5], [/agua isthmus|agua-isthmus/, 4, 4],
+  [/mosquises/, 6, 0], [/crasqu/, 2, 4], [/grande/, 5, 3], [/noronqu/, 2, 3], [/rock|cay/, 3, 4]];
+
+export class Birds {
+  constructor(places, ground, material) {
+    this.group = new THREE.Group();
+    this.flocks = [];
+    const geo = { frigate: parts('frigate'), pelican: parts('pelican') };
+    for (const place of places) {
+      const label = `${place.id || ''} ${place.name || ''}`.toLowerCase(), f = FLOCKS.find(x => x[0].test(label));
+      if (!f) continue;
+      const r = rand(Math.round(place.pos[0] * 7 + place.pos[1] * 13) + 5), base = Math.max(ground.heightAt(place.pos[0], place.pos[1]), 0);
+      for (const [kind, n] of [['frigate', f[1]], ['pelican', f[2]]]) {
+        if (!n) continue;
+        const birds = [];
+        if (kind === 'frigate') {
+          for (let i = 0; i < n; i++) birds.push({ cx: (r() - 0.5) * 500, cz: (r() - 0.5) * 500, radius: 50 + r() * 160, alt: base + 35 + r() * 110, speed: (r() < 0.5 ? -1 : 1) * (8 + r() * 4), phase: r() * 6.28 });
+        } else {
+          // A line astern, flying a long oval low over the sea beside the place.
+          const cx = (r() - 0.5) * 400, cz = (r() - 0.5) * 400, radius = 220 + r() * 200, squash = 0.25 + r() * 0.2, turn = r() * 6.28, dir = r() < 0.5 ? -1 : 1;
+          for (let i = 0; i < n; i++) birds.push({ cx, cz, radius, squash, turn, alt: 2.5 + r() * 1.5, speed: dir * 11, phase: -i * 0.022 * dir, line: true });
+        }
+        const meshes = ['body', 'wing', 'wing'].map(part => {
+          const m = new THREE.InstancedMesh(geo[kind][part], material, n);
+          m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+          this.group.add(m);
+          return m;
+        });
+        this.flocks.push({ centre: place.pos, kind, birds, meshes });
+      }
+    }
+    this.count = this.flocks.reduce((s, f) => s + f.birds.length, 0);
+    this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._qw = new THREE.Quaternion(); this._e = new THREE.Euler();
+    this._p = new THREE.Vector3(); this._s = new THREE.Vector3(1, 1, 1); this._axis = new THREE.Vector3(1, 0, 0);
+  }
+
+  update(eye, t) {
+    for (const f of this.flocks) {
+      const dx = f.centre[0] - eye.x, dz = f.centre[1] - eye.z, visible = dx * dx + dz * dz < 3500 * 3500;
+      for (const m of f.meshes) { m.visible = visible; if (visible) { m.position.set(dx, 0, dz); m.updateMatrixWorld(); } }
+      if (!visible) continue;
+      f.birds.forEach((b, i) => {
+        const a = b.phase + t * b.speed / b.radius, ca = Math.cos(a), sa = Math.sin(a), k = b.line ? b.squash : 1;
+        let x = ca * b.radius, z = sa * b.radius * k, vx = -sa * Math.sign(b.speed), vz = ca * k * Math.sign(b.speed);
+        if (b.line) { const c = Math.cos(b.turn), s = Math.sin(b.turn); [x, z, vx, vz] = [x * c - z * s, x * s + z * c, vx * c - vz * s, vx * s + vz * c]; }
+        const heading = Math.atan2(-vz, vx), bank = b.line ? 0 : -0.35 * Math.sign(b.speed);
+        // Frigatebirds hold their wings out and barely move them; pelicans give a few slow beats, then glide.
+        const beat = b.line ? Math.max(0, Math.sin(t * 0.9 + b.phase * 40)) * Math.sin(t * 5.5 + i) * 0.55 : Math.sin(t * 1.3 + i * 2.1) * 0.06;
+        const y = b.alt + (b.line ? 0.4 * Math.sin(t * 0.5 + b.phase * 30) : 6 * Math.sin(t * 0.11 + i));
+        this._e.set(bank, heading, 0, 'YXZ');
+        this._q.setFromEuler(this._e);
+        this._p.set(b.cx + x, y, b.cz + z);
+        f.meshes[0].setMatrixAt(i, this._m.compose(this._p, this._q, this._s));
+        // Wings: the same pose, rolled up or down about the body's long axis; the second wing is mirrored in z.
+        this._qw.setFromAxisAngle(this._axis, -(0.12 + beat));
+        f.meshes[1].setMatrixAt(i, this._m.compose(this._p, this._qw.premultiply(this._q), this._s));
+        this._qw.setFromAxisAngle(this._axis, 0.12 + beat);
+        f.meshes[2].setMatrixAt(i, this._m.compose(this._p, this._qw.premultiply(this._q), this._s.set(1, 1, -1)));
+        this._s.set(1, 1, 1);
+      });
+      for (const m of f.meshes) m.instanceMatrix.needsUpdate = true;
+    }
+  }
+}

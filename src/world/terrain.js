@@ -137,6 +137,31 @@ void main() {
   albedo *= mix(1.0, 0.6 + 0.8 * lrNoise(dxz * 0.9) * lrNoise(dxz * 0.23 + 3.1) * 2.0, benthic.g * nearby);
   albedo *= 1.0 + (lrNoise(dxz * 6.0) - 0.5) * 0.07 * (1.0 - smoothstep(0.05, 0.6, px));
   vec3 n = lrGroundNormal(wxz, px, max(px, 1.5));
+
+  // Rock (Gran Roque's hills): the 30 m elevation data is smooth, the real slopes are broken metamorphic rock.
+  // Add ruggedness as shading, strongest on steep high ground.
+  float rocky = smoothstep(0.12, 0.35, 1.0 - n.y) * smoothstep(2.0, 8.0, ground) * (1.0 - smoothstep(20.0, 120.0, px));
+  if (rocky > 0.01) {
+    vec2 r = (wxz + ground * vec2(1.25, 0.85)) / 9.0;                    // height in the mix, so cliffs are not streaked
+    float f0 = lrFbm(r) + 0.5 * lrFbm(r * 3.7 + 11.0), e = 0.35;
+    vec2 g = vec2(lrFbm(r + vec2(e, 0.0)) + 0.5 * lrFbm((r + vec2(e, 0.0)) * 3.7 + 11.0), lrFbm(r + vec2(0.0, e)) + 0.5 * lrFbm((r + vec2(0.0, e)) * 3.7 + 11.0)) - f0;
+    n = normalize(n - vec3(g.x, 0.0, g.y) * 2.2 * rocky);
+    albedo *= 1.0 + (f0 - 0.75) * 0.5 * rocky;                         // darker crevices, paler faces
+  }
+  // Sand ripples, seen only from close by: wave ripples half a metre apart under shallow water, finer wind
+  // ripples on the dry beach, both lying across the wind.
+  bool wetBed = water > 0.03;
+  float sandy = (1.0 - lrSaturate(benthic.r + benthic.g + land.r + land.g)) * (1.0 - rocky) * (1.0 - smoothstep(wetBed ? 0.03 : 0.004, wetBed ? 0.2 : 0.03, px));
+  if (sandy > 0.01 && ground < uSeaLevel + 3.0) {
+    vec2 d = lrDetailXZ(vRel.xz);
+    // Ripple crests wander: the direction swings with position, and patches of the bed have none.
+    float swing = (lrNoise(d * 0.13) - 0.5) * 1.6, cs = cos(swing), sn = sin(swing);
+    vec2 w0 = normalize(uWind.xy + 1e-4), wd = vec2(w0.x * cs - w0.y * sn, w0.x * sn + w0.y * cs);
+    float spacing = wetBed ? 0.5 : 0.09, tall = wetBed ? 0.007 * (1.0 - smoothstep(2.0, 5.0, water)) : 0.0012;
+    float patches = smoothstep(0.35, 0.65, lrNoise(d * 0.21 + 9.0));
+    float phase = dot(d, wd) * 6.2832 / spacing + 3.0 * lrNoise(d * 0.9) + 1.2 * lrNoise(d * 2.9);
+    n = normalize(n + vec3(wd.x, 0.0, wd.y) * tall * 6.2832 / spacing * sin(phase) * sandy * patches);
+  }
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0;
   vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * focus * lrCloudShadow(wxz) + uSkyE * (0.5 + 0.5 * n.y);
   if (water > -LR_WET_BAND && vCanopy < 0.02) {

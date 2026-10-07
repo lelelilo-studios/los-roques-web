@@ -18,6 +18,7 @@ import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
 import { Boats } from './world/boats.js';
+import { Birds } from './world/birds.js';
 import { localDate, sunDirection, sunPosition, sunTimes } from './world/sun.js';
 import { conditions } from './world/weather.js';
 import { fetchLiveWeather } from './world/liveWeather.js';
@@ -105,7 +106,8 @@ export async function start(canvas, onProgress = () => {}) {
   const boats = new Boats(places, ground, waves, data.cpu.waveMap, rect, landmarks.material);
   const opaque = new THREE.Scene();
   opaque.matrixWorldAutoUpdate = false;
-  opaque.add(terrain.mesh, landmarks.group, boats.group);
+  const birds = new Birds(places, ground, landmarks.material);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group);
   const ui = document.getElementById('ui');
   let syncPanel = null, labels = null;
   const app = {
@@ -182,6 +184,7 @@ export async function start(canvas, onProgress = () => {}) {
     landmarks.update(rig.eye, night);
     graph.starTurn = env.hours / 24 * 2 * Math.PI;
     boats.update(rig.eye, clock.time, shared.uSeaLevel.value);
+    birds.update(rig.eye, clock.time);
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
   }
@@ -261,7 +264,7 @@ export async function start(canvas, onProgress = () => {}) {
         gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
         size: { ...R.size }, dynamicScale: dynamic.scale, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
         terrain: terrain.clipmap.stats, water: water.clipmap.stats, programs: renderer.info.programs?.length,
-        places: places.map(p => p.id), labels: (features.labels || []).length, boats: boats.count, landmarks: landmarks.group.children.length,
+        places: places.map(p => p.id), labels: (features.labels || []).length, boats: boats.count, birds: birds.count, landmarks: landmarks.group.children.length,
       };
     },
   };
