@@ -39,7 +39,9 @@ void main() {
   // so the convention is simply "brighter than white".
   float glow = max(max(vColor.r, vColor.g), vColor.b) > 1.0 ? 1.0 : 0.0;
   vec3 albedo = glow > 0.5 ? vec3(0.05) : vColor;
-  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * lrCloudShadow(uCamXZ + vRel.xz) + uSkyE * (0.55 + 0.45 * n.y);
+  // Sun, sky, and the light the pale ground throws back up (what keeps a shaded wall from going sky-blue).
+  vec3 bounce = (uSunE * lrSaturate(uSunDir.y) + uSkyE) * vec3(0.46, 0.43, 0.36) * 0.5;
+  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * lrCloudShadow(uCamXZ + vRel.xz) + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
   float water = uSeaLevel - vRel.y;
   // Same convention as the terrain: under water write reflectance and depth, above it radiance.
   if (water > 0.0) outColor = vec4(albedo * light / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), water);

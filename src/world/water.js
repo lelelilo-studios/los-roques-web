@@ -86,20 +86,25 @@ void main() {
 
   vec2 wxz = uCamXZ + vRel.xz;
   float px = (length(gx) + length(gy)) * 0.5;
-  if (uCamY < vRel.y) {
-    // Seen from below. Inside a cone 97 degrees wide ("Snell's window") the whole sky is squeezed in, bent by
-    // the waves; outside it the surface is a mirror for the water below.
+  if (!gl_FrontFacing) {
+    // Seen from below (the alpha of -3000 tells the composite this pixel is looked at through water). Inside a
+    // cone 97 degrees wide ("Snell's window") the whole sky is squeezed in, bent by the waves; outside it the
+    // surface is a mirror for what lies below: the bed, seen through the water on the way down to it.
     vec2 sl = vec2(0.0);
     for (int i = 0; i < 4; i++) sl += vWeights[i] * textureGrad(tWaveB, vec3(lrWaveUV(vGrid, i), float(i)), gx / uWaveTile[i], gy / uWaveTile[i]).xy;
     vec3 nd = -normalize(vec3(-sl.x, 1.0, -sl.y)), up = normalize(vec3(vRel.x, vRel.y - uCamY, vRel.z));
     vec3 outDir = refract(up, nd, 1.34);
-    vec3 below = uSkyE / PI * 0.25 * vec3(0.25, 0.8, 1.0);            // what the mirror shows: the dim water beneath
+    float shoreU, deep = max(uSeaLevel - lrGround(wxz, px, shoreU), 0.05), lagoon = texture(tWaterType, lrMapUV(wxz)).r;
+    vec3 ab = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon), kd = ab + bb;
+    vec3 daylight = (uSunE * lrSaturate(uSunDir.y) * lrCloudShadow(wxz) + uSkyE) * 0.9;
+    vec3 mirrored = reflect(up, nd), through = exp(-(ab + 4.0 * bb) * deep / max(-mirrored.y, 0.08));
+    vec3 below = vec3(0.42, 0.40, 0.34) / PI * daylight * exp(-kd * deep) * through + daylight * exp(-kd * deep * 0.5) * bb / kd * 0.5 * (1.0 - through);
     vec3 c = below;
     if (dot(outDir, outDir) > 0.0) {
       float f = lrFresnel(dot(outDir, -nd));
       c = mix(lrSkyRadiance(normalize(vec3(outDir.x, abs(outDir.y) + 0.02, outDir.z))) + uSunE * 40.0 * pow(lrSaturate(dot(outDir, uSunDir)), 600.0) * lrCloudShadow(wxz), below, f);
     }
-    outColor = vec4(c, -1000.0);
+    outColor = vec4(c, -3000.0);
     return;
   }
   float shore;

@@ -40,6 +40,7 @@ uniform float uCloudOn;
 uniform float uStarTurn;       // radians the star field has turned
 uniform vec3 uWind;
 uniform float uRain;
+uniform float uUnderEye;       // 1 when the eye itself is under the sea surface
 uniform sampler2D tWaterType;
 
 // Falling rain as streaks in screen space: three sheets at different distances, slanted by the wind.
@@ -63,9 +64,13 @@ void main() {
   vec3 ray = uCamFwd + (vUv.x * 2.0 - 1.0) * uCamRight + (vUv.y * 2.0 - 1.0) * uCamUp;
   vec3 dir = normalize(ray);
   vec3 col;
-  if (uCamY < uSeaLevel) {
-    // Under water. Things write reflectance and their depth below the surface (alpha): light them with what
-    // daylight is left at that depth, then let the water between dim them and add its own glow.
+  // Is this pixel looked at through water? Decided per pixel from what was drawn, so the waterline across the
+  // lens falls exactly where the sea surface cuts the view: a submerged thing the water pass did not cover
+  // (alpha = its depth) or the surface seen from below (alpha -3000); empty pixels go by where the eye is.
+  bool throughWater = scene.a > -0.6 || scene.a < -2500.0 || (lrIsSky(depth) && uUnderEye > 0.5);
+  if (throughWater) {
+    // Things under water write reflectance and their depth below the surface: light them with what daylight
+    // is left at that depth, then let the water between dim them and add its own glow.
     float lagoon = texture(tWaterType, lrMapUV(uCamXZ)).r;
     vec3 a = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon), kd = a + bb, c = a + 4.0 * bb;
     vec3 surfaceLight = uSunE * lrSaturate(uSunDir.y) + uSkyE;
@@ -73,7 +78,7 @@ void main() {
     vec3 seen = scene.a > -0.6 ? scene.rgb / PI * surfaceLight * 0.9 * exp(-kd * max(scene.a, 0.0)) : scene.rgb;
     if (lrIsSky(depth)) seen = vec3(0.0);
     // The water's own glow: daylight scattered back towards the eye, brighter looking up, darker looking down.
-    float eyeDepth = uSeaLevel - uCamY;
+    float eyeDepth = max(uSeaLevel - uCamY, 0.0);
     vec3 glow = surfaceLight * 0.9 * exp(-kd * max(eyeDepth - dir.y * 3.0, 0.0)) * bb / kd * 0.5;
     vec3 through = exp(-c * far);
     col = seen * through + glow * (1.0 - through);
@@ -183,7 +188,7 @@ export class FrameGraph {
     const { targets } = R;
     this.copy = new FullscreenPass(copyFragment, { tSrc: { value: targets.scene.texture } });
     this.composite = new FullscreenPass(compositeFragment, uniformsFor(
-      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType'],
+      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType', 'uUnderEye'],
       { tScene: { value: targets.scene.texture }, tDepth: { value: targets.scene.depthTexture }, tCloud: { value: null }, uCloudOn: { value: 0 }, uStarTurn: { value: 0 } }));
     this.bloom = new Bloom(6);
     this.tonemap = new FullscreenPass(tonemapFragment, uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, 'uExposure'],

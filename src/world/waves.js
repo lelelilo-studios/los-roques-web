@@ -175,10 +175,13 @@ export class Waves {
     });
   }
 
-  /** Sea surface height (m, relative to sea level) from the two long cascades at world x/z: what boats float on. */
-  heightAt(x, z, t, weights) {
+  /**
+   * Sea surface height (m, relative to sea level) at world x/z from the first `cascades` cascades: two for what
+   * boats float on, three for the chop around a swimmer's head.
+   */
+  heightAt(x, z, t, weights, cascades = 2) {
     let h = 0;
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < cascades; i++) {
       let s = 0;
       for (const w of this.components[i]) s += w.a * Math.cos(w.kx * x + w.kz * z + w.phase - w.omega * t);
       h += s * weights[i];

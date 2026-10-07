@@ -9,7 +9,8 @@ import { shared } from './core/uniforms.js';
 import { loadData } from './data/loader.js';
 import { Ground } from './data/geoCPU.js';
 import { CameraRig, attachOrbitInput } from './camera/rig.js';
-import { OVERVIEW, shotFor } from './camera/bookmarks.js';
+import { OVERVIEW, shotFor, walkSpotFor } from './camera/bookmarks.js';
+import { Walker, attachWalkInput, buildingBlocker } from './camera/walk.js';
 import { Terrain } from './world/terrain.js';
 import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
@@ -23,10 +24,11 @@ import { buildBeachSets } from './world/beach.js';
 import { localDate, sunDirection, sunPosition, sunTimes } from './world/sun.js';
 import { conditions } from './world/weather.js';
 import { fetchLiveWeather } from './world/liveWeather.js';
-import { buildPanel } from './ui/panel.js';
+import { buildPanel, buildWalkHud } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
+const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false };
 
 export async function start(canvas, onProgress = () => {}) {
   const errors = [];
@@ -112,7 +114,16 @@ export async function start(canvas, onProgress = () => {}) {
   const birds = new Birds(places, ground, landmarks.material);
   opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group);
   const ui = document.getElementById('ui');
-  let syncPanel = null, labels = null;
+  let syncPanel = null, labels = null, hud = null, walkInput = null;
+
+  // ---- first person
+  const surfaceAt = (x, z) => {
+    const sea = shared.uSeaLevel.value;
+    return sea + waves.heightAt(x, z, clock.time, boats.weightsAt(x, z, sea - ground.heightAt(x, z)), 3);
+  };
+  const walker = new Walker({ ground, surfaceAt, blocked: buildingBlocker(features.buildings), rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
+  rig.walker = walker;
   const app = {
     env, places, attribution: manifest.attribution || [],
     setEnv(patch) {
@@ -124,15 +135,50 @@ export async function start(canvas, onProgress = () => {}) {
       }
       applyEnv(); syncPanel?.(status); saveHash();
     },
-    flyToPlace(p) { rig.setSnorkel(false); status.snorkel = false; rig.flyTo(shotFor(p), 4.5); syncPanel?.(status); },
-    /** Into the water at the point the camera is looking at (if it is deep enough to swim), or back out. */
-    setSnorkel(on) { status.snorkel = rig.setSnorkel(on) && on; status.snorkelNote = on && !status.snorkel ? 'Look at open water first (at least a metre deep).' : ''; syncPanel?.(status); },
+    flyToPlace(p) { app.setWalk(false); rig.flyTo(shotFor(p), 4.5); },
+    /**
+     * Into first person, or back to the air. With no pose you land where the camera is looking: on the nearest
+     * place's walking spot when seen from far off, otherwise on that very point (standing, wading or afloat).
+     * `pose`: { x, z, yaw (deg), pitch (deg), height, eye } or { near: [x, z], shore, face, ... }; `instant` skips the flight down.
+     */
+    setWalk(on, pose = null, instant = false) {
+      if (!on) {
+        if (rig.mode === 'walk') { rig.setMode('orbit'); walkInput?.release(); }
+        status.walk = false; hud?.classList.remove('on'); if (labels) labels.enabled = status.labels !== false; syncPanel?.(status); saveHash();
+        return;
+      }
+      let spot = pose;
+      if (!spot) {
+        const t = rig.target, place = rig.dist > 250 ? places.filter(q => q.id !== 'overview').map(q => [Math.hypot(q.pos[0] - t.x, q.pos[1] - t.z), q]).sort((a, b) => a[0] - b[0])[0] : null;
+        spot = place && place[0] < 900 ? walkSpotFor(place[1]) : { x: t.x, z: t.z, yaw: rig.yaw * 180 / Math.PI };
+      }
+      if (spot.near) {
+        // "So many metres up the beach from the waterline nearest this point, facing so many degrees off the sea."
+        const found = ground.findShore(spot.near[0], spot.near[1], spot.shore ?? -2) || { x: spot.near[0], z: spot.near[1], yaw: 0 };
+        spot = { ...spot, x: found.x, z: found.z, yaw: found.yaw + (spot.face ?? 0) };
+      }
+      // Never start inside a house: step outwards in a spiral to the nearest clear ground.
+      for (let i = 1; walker.blocked(spot.x, spot.z) && i < 400; i++) {
+        const a = i * 2.4, r = 0.6 * Math.sqrt(i);
+        const x = spot.x + Math.cos(a) * r, z = spot.z + Math.sin(a) * r;
+        if (!walker.blocked(x, z)) spot = { ...spot, x, z };
+      }
+      const arrive = () => {
+        walker.place({ x: spot.x, z: spot.z, yaw: (spot.yaw ?? 0) * Math.PI / 180, look: (spot.pitch ?? -4) * Math.PI / 180, height: spot.height ?? 1.65, eye: spot.eye ?? null });
+        rig.setMode('walk');
+        status.walk = true; hud?.classList.add('on'); if (labels) labels.enabled = false; syncPanel?.(status); saveHash();
+      };
+      if (instant || rig.mode === 'walk') return arrive();
+      // Come down to where the eyes will be, looking the way the walker will look, then hand over.
+      const yaw = (spot.yaw ?? 0) * Math.PI / 180;
+      rig.flyTo({ x: spot.x + Math.sin(yaw) * 7, z: spot.z - Math.cos(yaw) * 7, dist: 7.2, yaw: spot.yaw ?? 0, pitch: 13 }, Math.min(5, 1.6 + rig.dist / 400), arrive);
+    },
     async setCompare(x) {
       if (x >= 0 && !satellite) { satellite = await data.loadSatellite(); shared.tSatellite.value = satellite; }
       shared.uCompareX.value = status.compare = x;
       syncPanel?.(status);
     },
-    setLabels(on) { if (labels) labels.enabled = on; },
+    setLabels(on) { status.labels = on; if (labels) labels.enabled = on && rig.mode !== 'walk'; },
   };
 
   // ---- the view in the URL (so a link reopens the same scene)
@@ -142,7 +188,8 @@ export async function start(canvas, onProgress = () => {}) {
     clearTimeout(hashTimer);
     hashTimer = setTimeout(() => {
       const c = rig.get(), h = new URLSearchParams();
-      h.set('c', [c.x.toFixed(0), c.z.toFixed(0), c.dist.toFixed(0), c.yaw.toFixed(1), c.pitch.toFixed(1)].join(','));
+      if (rig.mode === 'walk') h.set('p', [walker.x.toFixed(1), walker.z.toFixed(1), (walker.yaw * 180 / Math.PI).toFixed(0), (walker.look * 180 / Math.PI).toFixed(0)].join(','));
+      else h.set('c', [c.x.toFixed(0), c.z.toFixed(0), c.dist.toFixed(0), c.yaw.toFixed(1), c.pitch.toFixed(1)].join(','));
       h.set('t', env.hours.toFixed(2)); h.set('m', String(env.month)); h.set('w', env.weather);
       history.replaceState(null, '', `#${h}`);
     }, 400);
@@ -153,8 +200,12 @@ export async function start(canvas, onProgress = () => {}) {
     if (h.has('t') && Number.isFinite(Number(h.get('t')))) env.hours = Number(h.get('t'));
     if (h.has('m') && Number(h.get('m')) >= 0 && Number(h.get('m')) < 12) env.month = Math.floor(Number(h.get('m')));
     if (h.has('w')) env.weather = h.get('w');
+    // p = a first-person spot: x, z, heading, look (degrees).
+    const w = (h.get('p') || '').split(',').map(Number);
+    if (w.length >= 3 && w.every(Number.isFinite)) { walkLink = { x: w[0], z: w[1], yaw: w[2], pitch: w[3] ?? -4 }; return true; }
     return c.length === 5;
   }
+  let walkLink = null;
 
   const dynamic = new DynamicResolution(1, 0.5);
   function resize() {
@@ -176,6 +227,12 @@ export async function start(canvas, onProgress = () => {}) {
     if (rig.step(dt)) saveHash();
     shared.uTime.value = clock.time;
     rig.seaLevel = shared.uSeaLevel.value;
+    if (rig.mode === 'walk') {
+      const moved = walker.x + walker.z + walker.yaw;
+      walker.step(dt, walkInput ? walkInput.read() : NO_INPUT);
+      if (moved !== walker.x + walker.z + walker.yaw) saveHash();
+    }
+    shared.uUnderEye.value = rig.mode === 'walk' && walker.under ? 1 : 0;
     rig.update(R.size.width / R.size.height, R.reversed);
     sky.overcast = Math.min(1, Math.max(0, (env.cloud - 0.45) / 0.4));
     sky.update();
@@ -207,8 +264,11 @@ export async function start(canvas, onProgress = () => {}) {
     layer.className = 'label-layer';
     ui.prepend(layer);                                   // under the panel
     labels = new Labels(layer, features.labels || [], ground);
+    hud = buildWalkHud(ui, () => app.setWalk(false));
+    walkInput = attachWalkInput(walker, canvas, { active: () => rig.mode === 'walk', onLeave: () => app.setWalk(false), buttons: [...hud.querySelectorAll('[data-walk]')] });
   }
   attachOrbitInput(rig, canvas, rect, saveHash);
+  if (walkLink) app.setWalk(true, walkLink, true);
 
   if (!params.freeze) {
     // Opening: glide down from the overview to the first place, unless the link asked for a view or motion is unwelcome.
@@ -233,8 +293,7 @@ export async function start(canvas, onProgress = () => {}) {
      * weather, wind (m/s), sun: {azimuth, elevation}|null, seaLevel, exposure, compare (0..1 or -1), show: {water, terrain} }
      */
     async setState(s = {}) {
-      if (s.snorkel !== undefined) { rig.seaLevel = shared.uSeaLevel.value; app.setSnorkel(!!s.snorkel); if (s.snorkel && typeof s.snorkel === 'object') Object.assign(rig, s.snorkel); }
-      if (s.cam) { rig.cancelFlight(); rig.set(s.cam); }
+      if (s.cam) { app.setWalk(false); rig.cancelFlight(); rig.set(s.cam); }
       if (s.time !== undefined) clock.time = s.time;
       if (s.seaLevel !== undefined) env.seaLevelOverride = s.seaLevel;
       if (s.show) { if (s.show.water !== undefined) water.mesh.visible = s.show.water; if (s.show.terrain !== undefined) terrain.mesh.visible = s.show.terrain; }
@@ -245,13 +304,18 @@ export async function start(canvas, onProgress = () => {}) {
       if (s.cloud !== undefined) env.cloudOverride = s.cloud;
       if (s.sun !== undefined) env.sunOverride = s.sun;
       applyEnv();
+      // walk: a first-person pose (see app.setWalk), set at once; false leaves first person. After the
+      // environment, because the pose depends on the sea level.
+      if (s.walk !== undefined) { if (s.walk) app.setWalk(true, s.walk, true); else app.setWalk(false); }
       if (s.compare !== undefined) await app.setCompare(s.compare);
       syncPanel?.(status);
     },
-    getState: () => ({ cam: rig.get(), time: clock.time, env: { ...env }, status: { ...status } }),
+    getState: () => ({ cam: rig.get(), mode: rig.mode, walk: { x: walker.x, z: walker.z, yaw: walker.yaw * 180 / Math.PI, look: walker.look * 180 / Math.PI, eye: walker.eyeY - shared.uSeaLevel.value, depth: walker.depth, diving: walker.diving, afloat: walker.afloat }, time: clock.time, env: { ...env }, status: { ...status } }),
+    /** Advances first person by `seconds` with a fixed input ({ fwd, right, run, down, up }), in 1/60 s steps: for tests. */
+    walkFor(seconds, input = {}) { for (let t = 0; t < seconds; t += 1 / 60) { clock.time += 1 / 60; walker.step(1 / 60, { ...NO_INPUT, ...input }); } },
     flyTo: id => { const p = places.find(q => q.id === id); if (p) app.flyToPlace(p); return !!p; },
     /** Jumps straight to a place's camera shot (no flight). */
-    goTo: id => { const p = places.find(q => q.id === id); if (p) { rig.cancelFlight(); rig.set(shotFor(p)); } return !!p; },
+    goTo: id => { const p = places.find(q => q.id === id); if (p) { app.setWalk(false); rig.cancelFlight(); rig.set(shotFor(p)); } return !!p; },
     renderOnce(dt = 0) { frame(dt); },
     /** Renders a frame and returns it as a PNG data URL. */
     capture() { frame(0); return canvas.toDataURL('image/png'); },

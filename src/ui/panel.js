@@ -46,8 +46,8 @@ export function buildPanel(root, app) {
   // ---- view options
   const compare = el('input', { type: 'checkbox', onchange: () => app.setCompare(compare.checked ? 0.5 : -1) });
   const labels = el('input', { type: 'checkbox', checked: '', onchange: () => app.setLabels(labels.checked) });
-  const snorkel = el('button', { class: 'chip', text: 'Snorkel here', 'aria-pressed': 'false', onclick: () => app.setSnorkel(snorkel.getAttribute('aria-pressed') !== 'true') });
-  const snorkelNote = el('small', { class: 'hint' });
+  const walk = el('button', { class: 'chip walk', text: 'Walk here', 'aria-pressed': 'false', onclick: () => app.setWalk(walk.getAttribute('aria-pressed') !== 'true') });
+  const walkNote = el('small', { class: 'hint', text: 'Stand on the sand, wade in, swim and dive, at the spot you are looking at.' });
   const info = el('button', { class: 'link', text: 'About this simulation and its data', onclick: () => dialog.showModal() });
 
   const panel = el('aside', { class: 'panel' }, toggle,
@@ -61,7 +61,7 @@ export function buildPanel(root, app) {
       el('h2', { text: 'View' }),
       el('label', { class: 'check' }, compare, el('span', { text: 'Compare with the satellite image' })),
       el('label', { class: 'check' }, labels, el('span', { text: 'Place names' })),
-      el('div', { class: 'row' }, snorkel), snorkelNote,
+      el('div', { class: 'row' }, walk), walkNote,
       info));
 
   // ---- satellite comparison divider
@@ -86,6 +86,7 @@ export function buildPanel(root, app) {
   root.append(panel, divider, dialog);
   if (matchMedia('(max-width: 640px)').matches) { panel.classList.add('collapsed'); toggle.setAttribute('aria-expanded', 'false'); }
 
+  let wasWalking = false;
   /** Refreshes the widgets from the environment state. */
   return function sync(status) {
     if (document.activeElement !== time) time.value = String(env.hours);
@@ -102,11 +103,26 @@ export function buildPanel(root, app) {
     facts.textContent = status.liveNote ? status.liveNote
       : status.live ? `Now at Los Roques: ${status.air != null ? `${status.air.toFixed(0)} °C, ` : ''}sea ${status.sea.toFixed(1)} °C${status.waveHeight != null ? `, waves ${status.waveHeight.toFixed(1)} m outside the reef` : ''}. Weather data by Open-Meteo.com`
         : `Typical ${MONTHS[env.month]}: sea ${status.sea.toFixed(1)} °C, air up to ${status.airMax} °C, ${level}`;
-    snorkel.setAttribute('aria-pressed', String(!!status.snorkel));
-    snorkel.textContent = status.snorkel ? 'Back to the air' : 'Snorkel here';
-    snorkelNote.textContent = status.snorkel ? 'Drag to look around, scroll or W/S to swim, R/F to go up and down.' : (status.snorkelNote || '');
+    walk.setAttribute('aria-pressed', String(!!status.walk));
+    walk.textContent = status.walk ? 'Back to the air' : 'Walk here';
+    // In first person the panel gets out of the way (it can be opened again from its title).
+    if (status.walk !== wasWalking) { wasWalking = !!status.walk; panel.classList.toggle('collapsed', wasWalking || matchMedia('(max-width: 640px)').matches); toggle.setAttribute('aria-expanded', String(!panel.classList.contains('collapsed'))); }
     const comparing = status.compare >= 0;
     divider.hidden = !comparing; compare.checked = comparing;
     if (comparing && !dragging) divider.style.left = `${status.compare * 100}%`;
   };
+}
+
+/** The few controls shown in first person: how to move, a way back, and buttons for touch screens. */
+export function buildWalkHud(root, onLeave) {
+  const touch = matchMedia('(pointer: coarse)').matches;
+  const hud = el('div', { class: 'walk-hud' },
+    el('p', { class: 'walk-hint', text: touch ? 'Left thumb walks · right thumb looks' : 'Click to look around · W A S D walk · Shift run · C crouch or dive · Space come up · Tab leaves' }),
+    el('button', { class: 'chip walk-leave', text: 'Back to the air', onclick: onLeave }),
+    el('div', { class: 'walk-pad' },
+      el('button', { class: 'icon', 'data-walk': 'up', 'aria-label': 'Come up', text: '▲' }),
+      el('button', { class: 'icon', 'data-walk': 'down', 'aria-label': 'Crouch or dive', text: '▼' })));
+  if (!touch) hud.classList.add('desktop');
+  root.append(hud);
+  return hud;
 }

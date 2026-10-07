@@ -3,6 +3,14 @@
 
 const smoothstep = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
+const _wx = [0, 0, 0, 0], _wy = [0, 0, 0, 0];
+/** Weights of the four texels around a sample at fraction f for a cubic B-spline. */
+export function bspline(f, out = [0, 0, 0, 0]) {
+  const f2 = f * f, f3 = f2 * f;
+  out[0] = (1 - 3 * f + 3 * f2 - f3) / 6; out[1] = (4 - 6 * f2 + 3 * f3) / 6; out[3] = f3 / 6; out[2] = 1 - out[0] - out[1] - out[3];
+  return out;
+}
+
 /** Height of a sand shore at signed distance s from the waterline (s > 0 seaward). Same as lrShoreProfile. */
 export function shoreProfile(s, mapHeight) {
   if (s >= 0) return -0.11 * s / (1 + 0.22 * s) - Math.max(s - 4, 0) * 0.02;
@@ -18,12 +26,22 @@ export class Ground {
    */
   constructor(height, shore, rect) { Object.assign(this, { height, shore, rect }); }
 
-  /** Bilinear sample of a raster at map coordinates u, v in 0..1. */
+  /**
+   * Bicubic B-spline sample of a raster at map coordinates u, v in 0..1: the same filter as lrBicubic in the
+   * shader (which builds it from four bilinear taps), with texels clamped at the edges.
+   */
   sample(map, u, v) {
-    const x = Math.min(map.width - 1.001, Math.max(0, u * map.width - 0.5)), y = Math.min(map.height - 1.001, Math.max(0, v * map.height - 0.5));
-    const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, i = y0 * map.width + x0, r = map.raw;
-    const top = r[i] + (r[i + 1] - r[i]) * fx, bottom = r[i + map.width] + (r[i + map.width + 1] - r[i + map.width]) * fx;
-    return (top + (bottom - top) * fy) * map.scale + map.offset;
+    const W = map.width, H = map.height, r = map.raw;
+    const sx = u * W - 0.5, sy = v * H - 0.5, ix = Math.floor(sx), iy = Math.floor(sy), fx = sx - ix, fy = sy - iy;
+    const wx = bspline(fx, _wx), wy = bspline(fy, _wy);
+    let sum = 0;
+    for (let j = 0; j < 4; j++) {
+      const row = Math.min(H - 1, Math.max(0, iy - 1 + j)) * W;
+      let line = 0;
+      for (let i = 0; i < 4; i++) line += wx[i] * r[row + Math.min(W - 1, Math.max(0, ix - 1 + i))];
+      sum += wy[j] * line;
+    }
+    return sum * map.scale + map.offset;
   }
 
   /** Signed distance to the shoreline at world x/z (positive seaward, clamped to +-300 m). */
@@ -32,7 +50,29 @@ export class Ground {
     return u < 0 || u > 1 || v < 0 || v > 1 ? 300 : this.sample(this.shore, u, v);
   }
 
-  /** Ground height above mean sea level at world x/z (bilinear where the shader is bicubic: within centimetres). */
+  /** Unit vector pointing seaward (up the shore-distance field) at world x/z, or null where the field is flat. */
+  seaward(x, z, d = 3) {
+    const gx = this.shoreAt(x + d, z) - this.shoreAt(x - d, z), gz = this.shoreAt(x, z + d) - this.shoreAt(x, z - d), l = Math.hypot(gx, gz);
+    return l < 1e-3 ? null : { x: gx / l, z: gz / l, slope: l / (2 * d) };
+  }
+
+  /**
+   * The point near (x, z) whose shore distance is `shore` metres (negative = up the beach), found by walking
+   * along the shore-distance gradient. Returns { x, z, yaw } with yaw (degrees) facing the sea, or null.
+   */
+  findShore(x, z, shore) {
+    for (let i = 0; i < 40; i++) {
+      const g = this.seaward(x, z), s = this.shoreAt(x, z);
+      if (!g) return null;
+      if (Math.abs(s - shore) < 0.02) return { x, z, yaw: Math.atan2(g.x, -g.z) * 180 / Math.PI };
+      const step = Math.max(-20, Math.min(20, (shore - s) / Math.max(g.slope, 0.3)));
+      x += g.x * step; z += g.z * step;
+    }
+    const g = this.seaward(x, z);
+    return g ? { x, z, yaw: Math.atan2(g.x, -g.z) * 180 / Math.PI } : null;
+  }
+
+  /** Ground height above mean sea level at world x/z: what lrGround gives in the shader at full detail. */
   heightAt(x, z) {
     const u = (x - this.rect.x) / this.rect.w, v = (z - this.rect.z) / this.rect.h;
     if (u < 0 || u > 1 || v < 0 || v > 1) return -64;

@@ -19,6 +19,27 @@ const SHOTS = {
 };
 const DEFAULT = { dist: 1700, yaw: 25, pitch: 24 };
 
+// Where you are put down in first person at each place: a point near `near` (default: the place), `shore` metres
+// from the waterline (negative = up the beach) and facing `face` degrees off the direction of the sea.
+const WALKS = {
+  'gran-roque-village': { near: [8990, -10060], shore: -4, face: 150 },
+  'faro-holandes': { near: [8963.7, -10636.8], shore: -260, face: 200 },
+  'francisqui-la-piscina': { shore: -3, face: 20 },
+  'madrisqui-cayo-pirata': { shore: -3, face: -30 },
+  crasqui: { shore: -3, face: 25 },
+  noronqui: { shore: -3, face: 0 },
+  'cayo-de-agua-isthmus': { shore: -1.5, face: 70 },
+  'cayo-de-agua-lighthouse': { shore: -6, face: 160 },
+  'dos-mosquises': { shore: -3, face: 10 },
+  'boca-del-medio': { shore: 30, face: 90 },
+  'boca-de-cote': { shore: 20, face: 0 },
+  'cayo-grande-mangroves': { shore: -2, face: 180 },
+};
+
+export function walkSpotFor(place) {
+  return { near: place.pos, shore: -3, face: 0, ...(WALKS[place.id] || {}) };
+}
+
 export const OVERVIEW = { id: 'overview', name: 'Whole archipelago', pos: [0, 0] };
 
 export function shotFor(place) {
