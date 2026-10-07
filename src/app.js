@@ -110,6 +110,7 @@ export async function start(canvas, onProgress = () => {}) {
     if (wind !== waves.wind.speed || c.windFrom !== waves.wind.from) waves.setWind(wind, c.windFrom);
     shared.uMieScale.value = c.haze;
     shared.uRain.value = c.rain;
+    if (params.freeze) shared.uWet.value = c.rain;         // (test pictures: as wet as it is raining)
     shared.uCloudLayer.value.y = 1750 + 1600 * c.rain;         // shower clouds tower
     env.cloud = env.cloudOverride ?? c.cloud;
     shared.uSeaLevel.value = env.seaLevelOverride ?? c.seaLevel;
@@ -326,6 +327,8 @@ export async function start(canvas, onProgress = () => {}) {
       if (moved !== walker.x + walker.z + walker.yaw) saveHash();
     }
     shared.uUnderEye.value = rig.mode === 'walk' && walker.under ? 1 : 0;
+    // Rain wets the ground in a quarter of a minute; the sun and the wind take a few minutes to dry it.
+    if (dt > 0) { const rain = shared.uRain.value, wet = shared.uWet.value; shared.uWet.value = rain > wet ? wet + (rain - wet) * (1 - Math.exp(-dt / 6)) : Math.max(rain, wet - dt / 200); }
     rig.update(R.size.width / R.size.height, R.reversed);
     sky.overcast = Math.min(1, Math.max(0, (env.cloud - 0.45) / 0.4));
     sky.update();

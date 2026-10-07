@@ -63,7 +63,8 @@ export const shared = {
   uCamFwd: { value: new THREE.Vector3(0, 0, -1) },
   uExposure: { value: 1 },
   uUnderEye: { value: 0 },
-  uRain: { value: 0 },                                        // 0 dry .. 1 a downpour
+  uRain: { value: 0 },
+  uWet: { value: 0 },                                         // how wet the rain has left things: 0 dry .. 1 soaked (lags the rain)                                        // 0 dry .. 1 a downpour
   uDebug: { value: new THREE.Vector4() },                     // x: debug view of the water pass (0 = off)
 };
 

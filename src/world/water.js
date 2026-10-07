@@ -79,6 +79,24 @@ float lrFoamPattern(vec2 rel, float amount, float px) {
   return mix(lace, amount, smoothstep(0.02, 0.14, px));
 }
 
+// Rain on water: every drop sends out a ring that widens and fades within a second, and throws up a speck of
+// spray where it lands. Drops land on a quarter-metre lattice, each cell on its own beat. Returns the slope the
+// rings add at p (detail coordinates); 'spray' is the white of the landings.
+vec2 lrRainRings(vec2 p, float amount, out float spray) {
+  vec2 g = floor(p * 4.0), slope = vec2(0.0);
+  spray = 0.0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+    vec2 c = mod(g + vec2(i, j), 256.0), h = lrHash22(c);
+    float beat = uTime / 1.1 + lrHash12(c + 5.0) * 9.0, age = fract(beat);
+    if (lrHash12(c + floor(beat) * 0.61 + 2.0) > 0.75 * amount) continue;
+    vec2 q = p - (g + vec2(i, j) + 0.15 + 0.7 * lrHash22(c + floor(beat))) * 0.25;
+    float r = length(q), x = r - 0.012 - 0.3 * age;
+    slope += q / max(r, 1e-3) * (1.0 - age) * (1.0 - age) * exp(-x * x / (2e-4 + 0.0016 * age)) * cos(x * 240.0) * 0.45;
+    spray += (1.0 - smoothstep(0.0, 0.09, age)) * (1.0 - smoothstep(0.004, 0.014, r));
+  }
+  return slope;
+}
+
 void main() {
   vec2 gx = dFdx(vGrid), gy = dFdy(vGrid);
   // Towards the horizon a pixel covers a long thin strip of sea. Past what anisotropic filtering can follow, widen
@@ -182,6 +200,8 @@ void main() {
   var += 0.004 * smoothstep(0.0, 0.015, column) * (1.0 - smoothstep(0.06, 0.3, column)) * (1.0 - close);
   // On the beach face the sheet lies on the sand, and an advancing front stands up from it.
   if (aboveStill > 0.0) slope += lrSheetSlope(bedSlope, aboveStill, sw);
+  float spray = 0.0;
+  if (close > 0.0 && uRain > 0.01 && column > 0.004) slope += lrRainRings(spot + uCamMod.xy, uRain, spray) * close;
   if (close > 0.0) {
     // Rings spreading from where you wade: a short train of ripples that widens and fades.
     for (int i = 0; i < 6; i++) {
@@ -265,6 +285,7 @@ void main() {
     float cover = lrFoamPattern(spot, lrSaturate(foam), px);
     col = mix(col, 0.82 * lit / PI, cover);
   }
+  col += spray * close * lit / PI * 0.5;
   if (swash > 0.003) {
     // (The bubbles ride with the water: the pattern is read where the water came from.)
     float tilt = length(bedSlope);

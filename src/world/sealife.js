@@ -154,13 +154,13 @@ export function buildSeaLife(textures, fp) {
     }),
     // Minnows (silversides): hundreds in a dark band along the beach, in knee-deep water, turning together.
     make({
-      geometry: fish(0.07, 0.016), cell: 0.18, grid: n(72), seed: 6, size: [0.8, 1.3],
-      rule: `vec2 school = floor(cell / 14.0); keep = step(0.45, lrHash12(school + 3.0)) * step(0.12, water) * step(water, 0.7) * step(shore, 9.0) * 0.85;`,
+      geometry: fish(0.065, 0.012), cell: 0.2, grid: n(64), seed: 6, size: [0.8, 1.25],
+      rule: `vec2 school = floor(cell / 14.0); keep = step(0.55, lrHash12(school + 3.0)) * step(0.12, water) * step(water, 0.7) * step(shore, 9.0) * 0.5;`,
       move: `float sh = lrHash12(school + 9.0);
         turn = 6.2832 * sh + 0.9 * sin(t * 0.23 + sh * 20.0) + 0.25 * sin(t * 1.7 + h.x * 6.0);
         shift = vec3(cos(turn), 0.0, sin(turn)) * 0.5 * sin(t * 0.31 + sh * 9.0) + vec3(0.0, water * (0.3 + 0.35 * h.w), 0.0);
         p.z += bend * 0.006 * sin(t * 14.0 + h.x * 30.0);
-        colour = colour.r < 0.5 ? vec3(0.05, 0.06, 0.05) : mix(vec3(0.22, 0.25, 0.24), vec3(0.03, 0.045, 0.04), step(0.0, position.y));`,
+        colour = colour.r < 0.5 ? vec3(0.12, 0.13, 0.1) : mix(vec3(0.4, 0.43, 0.42), vec3(0.1, 0.12, 0.085), step(0.0, position.y));`,
     }),
     // Reef fish, circling over the coral: blue tang, French grunt, bluehead wrasse, yellowtail snapper, sergeant major.
     make({

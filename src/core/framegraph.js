@@ -48,17 +48,30 @@ uniform float uRain;
 uniform float uUnderEye;       // 1 when the eye itself is under the sea surface
 uniform sampler2D tWaterType;
 
-// Falling rain as streaks in screen space: three sheets at different distances, slanted by the wind.
-float lrRainStreaks(vec2 uv) {
-  float a = 0.0;
+// Falling rain. The drops are streaks on cylinders round the eye whose axis is the way they fall (down, slanted
+// by the wind): looking level they cross the view at that slant, looking down they run together towards your
+// feet, as rain does. Three cylinders, 1.5 to 10 m away; nothing is drawn beyond what the pixel shows.
+float lrRain(vec3 dir, float far) {
+  vec3 fall = normalize(vec3(uWind.x * uWind.z, -9.0, uWind.y * uWind.z));               // drops fall at about 9 m/s
+  vec3 e1 = normalize(cross(fall, vec3(0.0, 0.0, 1.0))), e2 = cross(fall, e1);
+  float along = dot(dir, fall), across = sqrt(max(1.0 - along * along, 1e-4));
+  float az = atan(dot(dir, e1), dot(dir, e2)) * 0.15915494 + 0.5, h = along / across;     // round the axis (0..1); along it, per metre of radius
+  float pixel = length(dFdx(dir)) / across * 0.15915494, a = 0.0;
   for (int i = 0; i < 3; i++) {
-    float sc = 70.0 + 55.0 * float(i);
-    vec2 p = vec2((uv.x + uv.y * 0.12) * sc, uv.y * sc * 0.05 + uTime * (1.1 + 0.35 * float(i)));
+    float radius = i == 0 ? 1.5 : i == 1 ? 4.0 : 10.0;
+    if (radius / across > far) continue;
+    // (The eye holds a drop for about a thirtieth of a second: a streak a foot long. Each cell of the cylinder
+    // holds one or none, somewhere across it; a streak thinner than a pixel is drawn a pixel wide and fainter.)
+    float count = floor(6.2832 * radius / (0.035 + 0.015 * float(i))), tall = 0.7;
+    vec2 p = vec2(az * count, (h * radius - uTime * 9.0) / tall);
+    p.y += lrHash12(vec2(floor(p.x), 3.0 + float(i))) * 31.0;                    // (each column on its own beat: no rows of drops)
     vec2 cell = floor(p), f = fract(p);
-    float h = lrHash12(cell + 17.0 * float(i));
-    a += step(0.6, h) * smoothstep(0.07, 0.0, abs(f.x - 0.5 - (h - 0.8) * 0.9)) * smoothstep(0.0, 0.25, f.y) * smoothstep(1.0, 0.55, f.y);
+    float pick = lrHash12(cell + 17.0 * float(i)), at = 0.5 + (lrHash12(cell + 5.0) - 0.5) * 0.7, len = 0.3 + 0.25 * lrHash12(cell + 9.0);
+    float thick = 0.0015 / (6.2832 * radius) * count, wide = max(pixel * count, thick);
+    a += step(0.5, pick) * (0.4 + 0.6 * pick) * smoothstep(wide, 0.0, abs(f.x - at)) * min(thick / wide * 2.2, 1.0)
+       * smoothstep(0.0, 0.06, f.y) * smoothstep(len, len * 0.5, f.y);
   }
-  return a;
+  return a * smoothstep(0.05, 0.3, across);
 }
 uniform vec3 uCamRight, uCamUp, uCamFwd;
 in vec2 vUv;
@@ -165,12 +178,6 @@ void main() {
     if (scene.a > -0.6) scene.rgb *= (uSunE * lrSaturate(uSunDir.y) + uSkyE) / PI;
     col = lrAerial(scene.rgb, dir, lrViewZ(depth) * length(ray));
   }
-  if (uRain > 0.01) {
-    // Rain: a grey veil that thickens with distance, then the streaks nearest the eye.
-    vec3 grey = uSkyE / PI * 1.3;
-    float far = lrIsSky(depth) ? 30000.0 : lrViewZ(depth) * length(ray);
-    col = mix(col, grey, uRain * (1.0 - exp(-far / 2500.0)) * 0.9);
-  }
   if (uCloudOn > 0.5) {
     // The clouds were marched at reduced size with a different starting offset per pixel: a small tent blur
     // turns that grain into soft edges.
@@ -179,7 +186,14 @@ void main() {
                + texture(tCloud, vUv + t * vec2(-0.9, -0.4)) + texture(tCloud, vUv + t * vec2(0.4, -0.9)));
     col = col * cloud.a + cloud.rgb;
   }
-  if (uRain > 0.01) col += uRain * lrRainStreaks(vUv * vec2(uInvResolution.y / uInvResolution.x, 1.0)) * uSkyE / PI * 0.22;
+  if (uRain > 0.01) {
+    // Rain: a grey veil that thickens with distance (over sea, land and the foot of the sky alike; overhead the
+    // rain is only as deep as the cloud base is high), then the streaks nearest the eye.
+    vec3 grey = uSkyE / PI;
+    float far = lrIsSky(depth) ? min(30000.0, 700.0 / max(dir.y, 0.02)) : lrViewZ(depth) * length(ray);
+    col = mix(col, grey, uRain * (1.0 - exp(-far / 2500.0)) * 0.9);
+    col += uRain * lrRain(dir, lrIsSky(depth) ? 1e5 : far) * uSkyE / PI * 0.55;
+  }
   outColor = vec4(col, 1.0);
 }`;
 

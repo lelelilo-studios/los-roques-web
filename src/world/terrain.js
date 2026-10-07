@@ -68,6 +68,7 @@ ${clipmapFragment}
 ${detailGLSL}
 ${shadowGLSL}
 uniform float uRain;
+uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
 uniform vec4 uFoot[24];       // your footprints: x, z (detail coordinates, wrapped to 64 m), heading, time made
 uniform int uFootCount;
 uniform sampler2D tAlbedo;
@@ -217,7 +218,7 @@ void main() {
 
   // The beach face: where the swash is right now, and how wet it has left the sand.
   bool covered = water > 0.0 && vCanopy < 0.02, beach = water > -LR_WET_BAND && water <= 0.0 && vCanopy < 0.02;
-  LrSwash sw;
+  LrSwash sw = LrSwash(0.0, 0.0, 0.0, 1000.0, 0.0, 0.0, 0.0, 0.0, 1.0);
   float wetness = 0.0, wetLine = 0.0, fine = 1.0 - smoothstep(0.5, 4.0, px);
   if (beach) {
     sw = lrBeach(wxz, shore, vHs, -water, fine);
@@ -227,8 +228,10 @@ void main() {
     wetLine = 1.0 - smoothstep(sw.top - edge, sw.top + edge, -water);
     wetness = max(wetLine, 0.35 * (1.0 - smoothstep(0.0, 0.4 * sw.top + 0.01, -water - sw.top)) * lrSaturate(sw.top * 40.0));
   }
-  // Soaked sand: the wet beach face, the sand under the swash, and on down under the first hand's breadth of sea.
-  albedo *= mix(1.0, LR_SOAKED, fine * (covered ? smoothstep(-0.25, 0.0, -water) : wetness));
+  // 'wetness' is the sea's doing (it also smooths the sand); rain wets everything it falls on, as it lies.
+  float wetAll = covered ? 0.0 : max(wetness, uWet);
+  // Soaked sand: the wet beach face, rained-on ground, the sand under the swash, and on down under the first hand's breadth of sea.
+  albedo *= mix(1.0, LR_SOAKED, covered ? fine * smoothstep(-0.25, 0.0, -water) : max(fine * wetness, uWet));
 
   // Rock (Gran Roque's hills): the 30 m elevation data is smooth, the real slopes are broken metamorphic rock.
   // Add ruggedness as shading, strongest on steep high ground.
@@ -251,13 +254,14 @@ void main() {
   // and the wind's ripples are gone.
   float trodden = dryLand * smoothstep(0.3, 0.6, lrNoiseTile(d * 0.1875, 12.0) + 0.5 * land.b + 0.35 * (1.0 - smoothstep(4.0, 30.0, -shore)));
   if (sandy > 0.01) {
-    // Ripple crests wander: the direction swings with position, and patches of the bed have none.
-    float swing = (lrNoiseTile(d * 0.125, 8.0) - 0.5) * 1.6, cs = cos(swing), sn = sin(swing);
-    vec2 w0 = normalize(uWind.xy + 1e-4), wd = vec2(w0.x * cs - w0.y * sn, w0.x * sn + w0.y * cs);
+    // Ripple crests wander, and patches of the bed have none. (The wandering is a slow warp of the phase. Turning
+    // the direction itself by an angle that varies from place to place would wind the crests into rings round
+    // the origin of the detail coordinates.)
+    vec2 wd = normalize(uWind.xy + 1e-4);
     // (The swash smooths the sand it runs over: no wind ripples below the wet line.)
     float spacing = wetBed ? 0.5 : 0.09, tall = wetBed ? 0.004 * (1.0 - smoothstep(2.0, 5.0, water)) : 0.0012 * dryLand * (1.0 - trodden) * step(water, 0.0);
     float patches = smoothstep(0.35, 0.65, lrNoiseTile(d * 0.21875 + 9.0, 14.0));
-    float phase = dot(d, wd) * 6.2832 / spacing + 3.0 * lrNoiseTile(d * 0.875, 56.0) + 1.2 * lrNoiseTile(d * 2.875, 184.0);
+    float phase = dot(d, wd) * 6.2832 / spacing + (wetBed ? 22.0 : 55.0) * lrNoiseTile(d * (wetBed ? 0.25 : 0.5), wetBed ? 16.0 : 32.0) + 3.0 * lrNoiseTile(d * 0.875, 56.0) + 1.2 * lrNoiseTile(d * 2.875, 184.0);
     n = normalize(n + vec3(wd.x, 0.0, wd.y) * tall * 6.2832 / spacing * sin(phase) * sandy * patches);
     albedo *= 1.0 + 0.035 * sin(phase + 1.2) * sandy * patches * step(1e-5, tall);      // (darker, heavier grains gather in the troughs)
   }
@@ -265,9 +269,8 @@ void main() {
   // windward slope, a short steep lee side. Seen from a few metres to a few tens of metres.
   float ridged = sand * dryLand * (1.0 - trodden) * step(water, -0.25) * (1.0 - smoothstep(0.03, 0.12, px)) * smoothstep(6.0, 14.0, -shore);
   if (ridged > 0.01) {
-    float swing = (lrNoiseTile(d * 0.0625 + 4.0, 4.0) - 0.5) * 1.1, cs = cos(swing), sn = sin(swing);
-    vec2 w0 = normalize(uWind.xy + 1e-4), wd = vec2(w0.x * cs - w0.y * sn, w0.x * sn + w0.y * cs);
-    float spacing = 0.44, ph = dot(d, wd) / spacing + 1.4 * lrNoiseTile(d * 0.4375, 28.0) + 0.5 * lrNoiseTile(d * 1.3125 + 7.0, 84.0), f = fract(ph);
+    vec2 wd = normalize(uWind.xy + 1e-4);
+    float spacing = 0.44, ph = dot(d, wd) / spacing + 2.6 * lrNoiseTile(d * 0.1875 + 4.0, 12.0) + 0.7 * lrNoiseTile(d * 0.4375, 28.0) + 0.25 * lrNoiseTile(d * 1.3125 + 7.0, 84.0), f = fract(ph);
     // (Height over one ridge: rising over 80 % of it, falling over 20 %; its slope along the wind.)
     float rise = f < 0.8 ? 1.0 / 0.8 : -1.0 / 0.2, there = smoothstep(0.3, 0.6, lrNoiseTile(d * 0.15625 + 13.0, 10.0));
     n = normalize(n - vec3(wd.x, 0.0, wd.y) * 0.016 / spacing * rise * ridged * there * smoothstep(0.0, 0.06, min(f, abs(f - 0.8))));
@@ -311,7 +314,7 @@ void main() {
   }
   if (grainy > 0.01) {
     // Grains, flakes and bits of shell. Water between the grains evens the surface out.
-    float blend = smoothstep(0.35, 0.65, lrNoiseTile(d * 0.1875 + 9.0, 12.0)), evened = 1.0 - 0.6 * (covered ? 1.0 : wetness);
+    float blend = smoothstep(0.35, 0.65, lrNoiseTile(d * 0.1875 + 9.0, 12.0)), evened = 1.0 - 0.6 * (covered ? 1.0 : wetAll);
     vec4 ga = lrDetailTap(at, LR_GRAIN_A, 0.0, ddx, ddy), gb = lrDetailTap(at, LR_GRAIN_B, 0.0, ddx, ddy);
     vec2 slope = mix(ga.rg - uDetailMean[0].rg, lrUnturn(gb.rg - uDetailMean[0].rg), blend) * 2.0 * grainy * evened;
     n = normalize(vec3(n.x - slope.x, n.y, n.z - slope.y));
@@ -343,7 +346,7 @@ void main() {
   // Dry sand is rough: it sends light back towards the sun and less of it on, away from the sun (the
   // Oren-Nayar lobe, scaled so that seen from above at noon it is as before).
   float nl = lrSaturate(dot(n, uSunDir)), nv = lrSaturate(dot(n, V)), back = dot(uSunDir, V) - nl * nv;
-  float lobe = mix(1.0, 1.0 + 0.383 * back / (back > 0.0 ? max(max(nl, nv), 1e-3) : 1.0), sand * dryLand * (1.0 - smoothstep(0.3, 2.0, px)));
+  float lobe = mix(1.0, 1.0 + 0.383 * back / (back > 0.0 ? max(max(nl, nv), 1e-3) : 1.0), sand * dryLand * (1.0 - uWet) * (1.0 - smoothstep(0.3, 2.0, px)));
   vec3 light = uSunE * nl * lobe * focus * shade * sunCut + uSkyE * (0.5 + 0.5 * n.y) * openSky;
   // (A pit in shadow is still lit by the sunlit sand round it.)
   light += uSunE * lrSaturate(uSunDir.y) * shade * 0.14 * lumpy * (1.0 - sunCut * nl);
@@ -356,9 +359,17 @@ void main() {
   vec3 col = albedo * light / PI;
   if (grainy > 0.01 && uSunDir.y > 0.0) {
     // Sparkle, mostly on dry sand (the film on wet sand has its own glitter).
-    col += uSunE * shade * sunCut * lrGlints(d, px, n, normalize(uSunDir + V)) * 0.55 * grainy * (1.0 - 0.7 * wetness);
+    col += uSunE * shade * sunCut * lrGlints(d, px, n, normalize(uSunDir + V)) * 0.55 * grainy * (1.0 - 0.7 * wetAll);
   }
-  if (wetness > 0.0) {
+  float blowing = smoothstep(8.5, 13.0, uWind.z) * sand * dryLand * (1.0 - uWet) * step(water, -0.2) * (1.0 - smoothstep(0.02, 0.2, px));
+  if (blowing > 0.01) {
+    // A strong wind lifts the dry sand: pale streamers snaking along the ground downwind, never still.
+    vec2 w0 = normalize(uWind.xy + 1e-4), q = vec2(dot(dxz, w0), dot(dxz, vec2(-w0.y, w0.x)));
+    float streak = lrNoise(vec2(q.x * 0.5 - uTime * 3.2, q.y * 7.0)) * lrNoise(vec2(q.x * 0.13 - uTime * 1.1, q.y * 1.3) + 7.0)
+                 + 0.35 * lrNoise(vec2(q.x * 1.7 - uTime * 6.0, q.y * 19.0) + 3.0);
+    col = mix(col, albedo * (uSunE * lrSaturate(uSunDir.y) * shade + uSkyE) / PI * 1.12, 0.6 * blowing * smoothstep(0.42, 0.85, streak));
+  }
+  if (wetAll > 0.0) {
     // Wet sand is darker by exactly what the water model gives for water of no depth. On top lies the film the
     // sea leaves behind: a mirror for the sky and the sun just after the water has gone, matt a few seconds
     // later; the foot of the beach, where the water table comes out, never dries. With gloss = 1 this is the
@@ -367,6 +378,8 @@ void main() {
     // (The standing film is patchy, and as a film thins the grains come through it and break the mirror up.)
     float patchy = px < 0.3 ? smoothstep(0.3, 0.62, lrDetailTap(d, mat2(40.0, 0.0, 0.0, 40.0) / 64.0, 2.0, ddx, ddy).a + 0.3 * lrNoiseTile(d * 0.1875 + 2.0, 12.0)) : 0.7;
     float gloss = wetLine * max(exp(-sw.age / 3.0), 0.85 * patchy * (1.0 - smoothstep(0.0, 0.3 * sw.top + 0.01, -water)));
+    // (Rain: a film in patches while it falls, a dull damp surface after.)
+    gloss = max(gloss, uWet * (0.12 + 0.5 * uRain) * patchy * sand);
     vec2 fs = lrSheetSlope(-nG.xz / nG.y, -water, LrSwash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0));
     fs += (nG.xz / nG.y - n.xz / n.y) * 0.8 * (1.0 - gloss * gloss);
     vec3 nf = normalize(vec3(-fs.x, 1.0, -fs.y));
@@ -374,7 +387,7 @@ void main() {
     float fresnel = lrMeanFresnel(max(dot(nf, V), 0.0), sqrt(rough));
     vec3 mirror = reflect(-V, nf);
     mirror.y = abs(mirror.y) + 0.01;
-    col *= mix(vec3(1.0), lrWetSand(albedo * light / lit), wetness) * mix(1.0, (1.0 - fresnel) / 0.979, gloss);
+    col *= mix(vec3(1.0), lrWetSand(albedo * light / lit), wetAll) * mix(1.0, (1.0 - fresnel) / 0.979, gloss);
     col += gloss * (fresnel * lrEnv(normalize(mirror), rough) + uSunE * min(lrSunGlitter(V, nf, uSunDir, vec2(rough)), 400.0) * step(0.0, uSunDir.y) * shade);
     // What the sheet leaves behind: its last bubbles, bursting within a second or so, and a line of them at the
     // top of each wave's run (this wave's, and fainter the one before).
@@ -383,12 +396,24 @@ void main() {
       float left = 0.8 * exp(-max(since, 0.0) / 1.6) * exp(-sw.age / 0.9) * step(sw.age, 20.0);
       float line = exp(-abs(a - sw.reach) / 0.003) * step(0.28, sw.p) * exp(-(sw.p - 0.28) * LR_SWASH_T / 4.0)
                  + 0.5 * exp(-abs(a - sw.last) / 0.003) * exp(-(sw.p + 0.72) * LR_SWASH_T / 4.0);
-      float amount = max(left, 0.8 * line) * fine * sw.open * smoothstep(0.02, 0.12, vHs);
+      // (The line is a broken one: a few bubbles here, none there.)
+      float amount = max(left, 0.5 * line * smoothstep(0.3, 0.7, lrNoiseTile(d * 1.5 + 5.0, 96.0))) * fine * sw.open * smoothstep(0.02, 0.12, vHs);
       if (amount > 0.003) {
         vec2 uphill = tilt > 1e-4 ? -nG.xz / nG.y / tilt : vec2(0.0);
         vec2 f = lrFoam(d - uphill * lrSwashCarry(a, tilt), amount, px, ddx, ddy);
         col = mix(col, 0.85 * f.y * lit / PI, f.x);
       }
+    }
+    if (uRain > 0.01 && px < 0.03 && sand > 0.3) {
+      // Rain on sand: each drop leaves a little crater (they crowd together), and where one lands this instant
+      // there is a speck of spray.
+      float near = 1.0 - smoothstep(0.012, 0.03, px);
+      float pits = lrDetailTap(d, mat2(192.0, 0.0, 0.0, 192.0) / 64.0, 2.0, ddx, ddy).b + lrDetailTap(d, mat2(168.0, -96.0, 96.0, 168.0) / 64.0, 2.0, ddx, ddy).b;
+      col *= 1.0 - 0.22 * min(pits, 1.0) * uWet * near;
+      vec2 cell = floor(d / 0.03125), f = fract(d / 0.03125) - 0.5;
+      float beat = uTime * 4.0 + lrHash12(cell) * 7.0, hit = step(lrHash12(cell + floor(beat) * 0.37 + 3.0), 0.05 * uRain);
+      float spray = hit * (1.0 - smoothstep(0.0, 0.4, fract(beat))) * (1.0 - smoothstep(0.1, 0.32 + 0.3 * fract(beat), length(f - (lrHash22(cell + floor(beat)) - 0.5) * 0.4)));
+      col += spray * near * lit / PI * 0.35;
     }
   }
   outColor = vec4(col, -1000.0);
@@ -400,7 +425,7 @@ export class Terrain {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uTreesNear']),
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear']),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;
