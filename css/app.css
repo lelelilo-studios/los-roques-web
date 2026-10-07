@@ -96,6 +96,9 @@ dialog.about button { font: inherit; padding: 0.4rem 1rem; border-radius: 999px;
 }
 @keyframes hint-fade { to { opacity: 0; } }
 .walk-leave { position: absolute; top: 0.9rem; right: 0.9rem; pointer-events: auto; background: var(--panel) !important; }
+.walk-sound { position: absolute; top: 0.9rem; right: 9.4rem; pointer-events: auto; background: var(--panel) !important; color: var(--ink) !important; font-weight: 400 !important; }
+.walk-sound[aria-pressed='true'] { border-color: var(--accent); }
+.walk-sound[aria-pressed='false'] { color: var(--ink-dim) !important; }
 .walk-pad { position: absolute; right: 1rem; bottom: 4.2rem; display: flex; flex-direction: column; gap: 0.6rem; pointer-events: auto; }
 .walk-pad .icon { width: 3rem; height: 3rem; font-size: 1rem; background: var(--panel); touch-action: none; user-select: none; }
 .walk-hud.desktop .walk-pad { display: none; }

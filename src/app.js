@@ -18,6 +18,7 @@ import { Waves } from './world/waves.js';
 import { Detail } from './world/detail.js';
 import { EnvMap } from './world/env.js';
 import { Shadows } from './world/shadow.js';
+import { Sound, measure, runup } from './audio/ambience.js';
 import { MeshBuilder } from './world/landmarks.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
@@ -145,11 +146,47 @@ export async function start(canvas, onProgress = () => {}) {
     const sea = shared.uSeaLevel.value;
     return sea + waves.heightAt(x, z, clock.time, boats.weightsAt(x, z, sea - ground.heightAt(x, z)), 3);
   };
+  // ---- sound (walking only)
+  const sound = new Sound(), raw = [0, 0, 0, 0];
+  /** Height of the waves arriving at a place, and how loud the reef's surf is there (from the wave map). */
+  function seaAt(x, z) {
+    const m = data.cpu.waveMap, u = (x - rect.x) / rect.w, v = (z - rect.z) / rect.h;
+    if (u < 0 || u > 1 || v < 0 || v > 1) { waves.weightsAt(1, 1, raw); return { hs: 4 * Math.hypot(raw[0], raw[1], raw[2]), reef: 0 }; }
+    const i = (Math.min(m.height - 1, Math.floor(v * m.height)) * m.width + Math.min(m.width - 1, Math.floor(u * m.width))) * 4;
+    waves.weightsAt(m.rgba[i + 1] / 255, m.rgba[i] / 255, raw);
+    const hs = 4 * Math.hypot(raw[0], raw[1], raw[2]), far = (m.rgba[i + 2] / 255) ** 2 * 250;
+    return { hs, reef: m.rgba[i + 3] / 255 * Math.exp(-far / 80) * Math.min(1, hs / 0.6) };
+  }
+  let shoreTimer = 0, shorePoints = [];
+  function soundScene(dt) {
+    shoreTimer -= dt;
+    if (shoreTimer <= 0) {
+      // Three points of the nearest waterline: straight to the sea and nine metres along the shore either way.
+      shoreTimer = 0.25; shorePoints = [];
+      const near = Math.abs(ground.shoreAt(walker.x, walker.z)) < 160 ? ground.findShore(walker.x, walker.z, 0) : null;
+      if (near) {
+        const a = near.yaw * Math.PI / 180, sea = [Math.sin(a), -Math.cos(a)];
+        for (const along of [0, -9, 9]) {
+          const q = along ? ground.findShore(near.x + sea[1] * -along, near.z + sea[0] * along, 0) : near;
+          if (!q) continue;
+          // (A puddle or a creek carries no waves: see lrOpenWater.)
+          const open = ground.shoreAt(q.x + sea[0] * 8, q.z + sea[1] * 8) > 3 ? 1 : 0.1;
+          shorePoints.push({ x: q.x, z: q.z, hs: seaAt(q.x + sea[0] * 12, q.z + sea[1] * 12).hs * open, dist: 0, bearing: 0 });
+        }
+      }
+    }
+    for (const q of shorePoints) { q.dist = Math.hypot(q.x - walker.x, q.z - walker.z); q.bearing = Math.atan2(q.x - walker.x, -(q.z - walker.z)) - walker.yaw; }
+    return { time: clock.time, shores: shorePoints, reef: seaAt(walker.x, walker.z).reef, wind: waves.wind.speed, rain: shared.uRain.value, under: walker.under,
+      depth: walker.depth, speed: Math.hypot(walker.vx, walker.vz), day: status.sunElevation > 2 };
+  }
+
   // Your footprints: the last 24 paces on sand, left and right of the line walked.
   let prints = 0;
   const wrap64 = v => ((v % 64) + 64) % 64;
   let rings = 0;
   function stamp(step) {
+    const above = ground.heightAt(step.x, step.z) - shared.uSeaLevel.value;
+    sound.step({ depth: step.depth, side: step.side, wet: above < runup(seaAt(step.x, step.z).hs) + 0.02 ? 1 : 0 });
     if (step.depth > 0.03) {
       // Wading: each pace sends a ring out over the water.
       shared.uRing.value[rings++ % 6].set(wrap64(step.x), wrap64(step.z), clock.time, Math.min(1, 0.4 + step.depth * 2));
@@ -181,6 +218,7 @@ export async function start(canvas, onProgress = () => {}) {
      */
     setWalk(on, pose = null, instant = false) {
       if (!on) {
+        sound.stop();
         if (rig.mode === 'walk') { rig.setMode('orbit'); walkInput?.release(); }
         status.walk = false; hud?.classList.remove('on'); if (labels) labels.enabled = status.labels !== false; syncPanel?.(status); saveHash();
         return;
@@ -208,6 +246,7 @@ export async function start(canvas, onProgress = () => {}) {
         const x = spot.x + Math.cos(a) * r, z = spot.z + Math.sin(a) * r;
         if (!walker.blocked(x, z)) spot = { ...spot, x, z };
       }
+      if (!instant) sound.start();                         // (a click brought us here: the browser lets sound begin)
       const arrive = () => {
         walker.place({ x: spot.x, z: spot.z, yaw: (spot.yaw ?? 0) * Math.PI / 180, look: (spot.pitch ?? -4) * Math.PI / 180, height: spot.height ?? 1.65, eye: spot.eye ?? null });
         rig.setMode('walk');
@@ -223,6 +262,8 @@ export async function start(canvas, onProgress = () => {}) {
       shared.uCompareX.value = status.compare = x;
       syncPanel?.(status);
     },
+    /** Sound on or off (remembered). */
+    setSound(on) { sound.setMuted(!on); if (on && rig.mode === 'walk') sound.start(); status.sound = !sound.muted; syncPanel?.(status); const b = hud?.querySelector('.walk-sound'); if (b) { b.setAttribute('aria-pressed', String(!sound.muted)); b.textContent = sound.muted ? 'Sound off' : 'Sound on'; } },
     setLabels(on) { status.labels = on; if (labels) labels.enabled = on && rig.mode !== 'walk'; },
   };
 
@@ -275,6 +316,7 @@ export async function start(canvas, onProgress = () => {}) {
     if (rig.mode === 'walk') {
       const moved = walker.x + walker.z + walker.yaw;
       for (const step of walker.step(dt, walkInput ? walkInput.read() : NO_INPUT)) stamp(step);
+      sound.update(dt, soundScene(dt));
       if (moved !== walker.x + walker.z + walker.yaw) saveHash();
     }
     shared.uUnderEye.value = rig.mode === 'walk' && walker.under ? 1 : 0;
@@ -322,7 +364,9 @@ export async function start(canvas, onProgress = () => {}) {
     layer.className = 'label-layer';
     ui.prepend(layer);                                   // under the panel
     labels = new Labels(layer, features.labels || [], ground);
-    hud = buildWalkHud(ui, () => app.setWalk(false));
+    hud = buildWalkHud(ui, () => app.setWalk(false), on => app.setSound(on), !sound.muted);
+    // (Arriving by a link there was no click yet: the first one in first person starts the sound.)
+    for (const type of ['pointerdown', 'keydown']) addEventListener(type, () => { if (rig.mode === 'walk' && !sound.on) sound.start(); });
     walkInput = attachWalkInput(walker, canvas, { active: () => rig.mode === 'walk', onLeave: () => app.setWalk(false), buttons: [...hud.querySelectorAll('[data-walk]')] });
   }
   attachOrbitInput(rig, canvas, rect, saveHash);
@@ -348,6 +392,26 @@ export async function start(canvas, onProgress = () => {}) {
     errors,
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
     umbrellas: landmarks.umbrellas,
+    /** Renders a few scenes of sound offline and measures them: [{ name, rms, peak, bad }]. */
+    async soundCheck() {
+      const shore = (hs, dist) => [{ x: 10, z: 20, hs, dist, bearing: 0.4 }, { x: 19, z: 20, hs, dist: dist + 4, bearing: -0.6 }];
+      const base = { shores: [], reef: 0, wind: 0, rain: 0, under: false, depth: 0, speed: 0, day: false };
+      const scenes = {
+        'quiet inland, no wind': [() => ({ ...base })],
+        'small waves at 4 m': [t => ({ ...base, time: t, shores: shore(0.1, 4), wind: 5 })],
+        'lively waves at 2 m': [t => ({ ...base, time: t, shores: shore(0.3, 2), wind: 8 })],
+        'strong wind, far from the sea': [() => ({ ...base, wind: 13 })],
+        'reef and squall': [() => ({ ...base, reef: 1, rain: 1, wind: 11 })],
+        'walking on dry sand': [() => ({ ...base }), [0.6, 1.1, 1.6, 2.1, 2.6].map((t, i) => [t, { depth: 0, wet: 0, side: i & 1 }])],
+        'walking on wet sand': [() => ({ ...base }), [0.6, 1.1, 1.6, 2.1, 2.6].map((t, i) => [t, { depth: 0, wet: 1, side: i & 1 }])],
+        'wading knee deep': [() => ({ ...base, depth: 0.45, speed: 0.8 }), [0.6, 1.3, 2.0, 2.7].map((t, i) => [t, { depth: 0.45, wet: 1, side: i & 1 }])],
+        'under water': [t => ({ ...base, time: t, shores: shore(0.3, 2), under: true })],
+      };
+      const out = [];
+      for (const [name, [scene, steps]] of Object.entries(scenes)) out.push({ name, ...await measure(3.5, scene, steps || []) });
+      return out;
+    },
+    sound,
     groundAt: (x, z) => ({ height: ground.heightAt(x, z), shore: ground.shoreAt(x, z) }),
     /**
      * For tests and screenshots. { cam: {x, z, dist, yaw, pitch, fov}, time (wave clock, s), hours (local), month (0-11),

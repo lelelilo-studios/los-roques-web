@@ -114,11 +114,12 @@ export function buildPanel(root, app) {
 }
 
 /** The few controls shown in first person: how to move, a way back, and buttons for touch screens. */
-export function buildWalkHud(root, onLeave) {
+export function buildWalkHud(root, onLeave, onSound, soundOn) {
   const touch = matchMedia('(pointer: coarse)').matches;
   const hud = el('div', { class: 'walk-hud' },
     el('p', { class: 'walk-hint', text: touch ? 'Left thumb walks · right thumb looks' : 'Click to look around · W A S D walk · Shift run · C crouch or dive · Space come up · Tab leaves' }),
     el('button', { class: 'chip walk-leave', text: 'Back to the air', onclick: onLeave }),
+    el('button', { class: 'chip walk-sound', text: soundOn ? 'Sound on' : 'Sound off', 'aria-pressed': String(!!soundOn), title: 'Waves, wind and your steps', onclick: e => onSound(e.currentTarget.getAttribute('aria-pressed') !== 'true') }),
     el('div', { class: 'walk-pad' },
       el('button', { class: 'icon', 'data-walk': 'up', 'aria-label': 'Come up', text: '▲' }),
       el('button', { class: 'icon', 'data-walk': 'down', 'aria-label': 'Crouch or dive', text: '▼' })));
