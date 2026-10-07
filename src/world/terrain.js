@@ -121,6 +121,8 @@ float lrCaustics(vec2 rel, float water, float px) {
 // How far your footprints press the sand in at d (metres, negative = down). 'soft' is 1 on dry sand (deep,
 // slumped edges, a rim pushed up round it) and 0 on wet (shallow and crisp); prints made before 'since', when
 // the sea last covered this point, have been washed out.
+// How damp the sand is at the point last asked about: a print left by a wet foot is dark until the sun dries it.
+float lrFootDamp = 0.0;
 float lrFootprints(vec2 d, float soft, float since) {
   float h = 0.0;
   for (int i = 0; i < 24; i++) {
@@ -128,12 +130,15 @@ float lrFootprints(vec2 d, float soft, float since) {
     vec4 f = uFoot[i];
     vec2 q = mod(d - f.xy + 32.0, 64.0) - 32.0;
     if (f.w < since || dot(q, q) > 0.05) continue;
-    vec2 fwd = vec2(sin(f.z), -cos(f.z)), l = vec2(dot(q, fwd), dot(q, vec2(-fwd.y, fwd.x)));     // along the foot, across it
+    // (The heading is kept within a turn; 64 added to it marks a print made with a wet foot.)
+    float wetFoot = step(32.0, f.z), yaw = f.z - 64.0 * wetFoot;
+    vec2 fwd = vec2(sin(yaw), -cos(yaw)), l = vec2(dot(q, fwd), dot(q, vec2(-fwd.y, fwd.x)));     // along the foot, across it
     // A sole 26 cm long, 10 cm wide at the ball and 7 at the heel (dry sand slumps: the hollow is wider),
     // pressed deepest under the heel and the ball: a bowl in dry sand, a flat floor with a crisp edge in wet.
     float along = l.x / (0.13 + 0.02 * soft), r = length(vec2(along, l.y / (mix(0.036, 0.052, smoothstep(-0.1, 0.06, l.x)) * (1.0 + 0.3 * soft))));
     h += -mix(0.007, 0.024, soft) * pow(max(1.0 - r * r, 0.0), mix(0.6, 1.4, soft)) * (0.75 + 0.4 * smoothstep(0.25, 0.85, abs(along)))
        + soft * 0.004 * smoothstep(0.8, 1.05, r) * (1.0 - smoothstep(1.05, 1.5, r));
+    lrFootDamp = max(lrFootDamp, wetFoot * (1.0 - smoothstep(0.85, 1.2, r)) * exp(-(uTime - f.w) / 45.0));
   }
   return h;
 }
@@ -366,6 +371,7 @@ void main() {
       n = normalize(vec3(n.x - slope.x / e, n.y, n.z - slope.y / e));
       openSky *= 1.0 + 16.0 * min(h0, 0.0);                 // (the bottom of a print 2 cm deep sees two thirds of the sky)
       albedo *= 1.0 + 4.0 * min(h0, 0.0) * soft;            // pressed sand is a shade darker
+      albedo *= 1.0 - 0.42 * lrFootDamp * soft;              // and darker still where a wet foot has left it damp
     }
   }
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);

@@ -49,6 +49,7 @@ in vec3 vColor;
 in vec3 vNormal;
 in vec3 vObj;
 uniform float uBodySand;    // (your own body) how much sand is stuck to your feet, 0..1
+uniform vec3 uWind;         // xy = the way the wind blows, z = its speed, m/s
 #endif
 layout(location = 0) out vec4 outColor;
 void main() {
@@ -59,6 +60,24 @@ void main() {
 #endif
   vec3 toEye = vec3(-vRel.x, uCamY - vRel.y, -vRel.z);
   if (dot(n, toEye) < 0.0) n = -n;
+  // (Cloth or skin, by colour: skin is the one that is redder than it is green.)
+  float cloth = 1.0 - smoothstep(1.1, 1.3, vColor.r / max(vColor.g, 1e-3)), mottle = 1.0;
+#ifdef LR_SMOOTH
+  {
+    // Cloth hangs in folds a few millimetres deep, and the wind keeps them moving; skin is smooth, with a
+    // little unevenness of tone. The folds are a height over the body's own surface (so they stay on it as it
+    // moves), turned into a slope with screen derivatives; from far off they fade out.
+    vec3 dpdx = dFdx(vRel), dpdy = dFdy(vRel);
+    float fine = 1.0 - smoothstep(0.004, 0.02, length(dpdx) + length(dpdy)), gust = clamp(uWind.z / 10.0, 0.2, 1.2);
+    vec2 q = vec2(vObj.x * 18.0 + vObj.z * 11.0 + vObj.y * 5.0, vObj.y * 7.0 + vObj.z * 6.0)
+           + 0.35 * gust * vec2(sin(uTime * 2.1 + vObj.y * 9.0), cos(uTime * 1.7 + vObj.x * 8.0));
+    float h = cloth * fine * (0.004 * lrNoise(q) + 0.0015 * lrNoise(q * 3.1 + 5.0));
+    vec3 r1 = cross(dpdy, n), r2 = cross(n, dpdx);
+    float det = dot(dpdx, r1);
+    n = normalize(abs(det) * n - sign(det) * (dFdx(h) * r1 + dFdy(h) * r2));
+    mottle = 1.0 + fine * mix(0.07 * (lrNoise(vObj.xy * 38.0 + vObj.z * 21.0) - 0.5), 0.05 * (lrNoise(vObj.xz * 700.0 + vObj.y * 900.0) - 0.5), cloth);
+  }
+#endif
   // Colours above 1 mark things that give off light (lamps, lit windows): negative alpha channel is not available,
   // so the convention is simply "brighter than white".
   float glow = max(max(vColor.r, vColor.g), vColor.b) > 1.0 ? 1.0 : 0.0;
@@ -91,8 +110,7 @@ void main() {
   }
 #endif
   // (Cloth drinks the water and goes much darker; skin only a little, but it shines.)
-  float cloth = 1.0 - smoothstep(1.1, 1.3, vColor.r / max(vColor.g, 1e-3));
-  albedo *= 1.0 - wet * mix(0.12, 0.34, cloth) * (1.0 - glow);
+  albedo *= mottle * (1.0 - wet * mix(0.12, 0.34, cloth) * (1.0 - glow));
   vec3 sheen = wet * (0.02 + 0.98 * pow(1.0 - lrSaturate(dot(n, e)), 5.0)) * uSkyE / PI * (0.5 + 0.5 * n.y);
 #ifdef LR_SMOOTH
   // (Skin has a sheen, and catches the sky along its edges.)
@@ -107,7 +125,7 @@ void main() {
 export function createObjectMaterial(shadowTaps = 8, smooth = false) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, ...(smooth ? { LR_SMOOTH: 1 } : {}) },
-    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 } }),
+    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet', 'uWind'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 } }),
   });
 }
 

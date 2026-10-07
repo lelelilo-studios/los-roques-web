@@ -226,9 +226,11 @@ export async function start(canvas, onProgress = () => {}) {
   let prints = 0;
   const wrap64 = v => ((v % 64) + 64) % 64;
   let rings = 0;
+  /** Whether your feet are wet (from the water you stood in a little while ago). */
+  const feetWet = () => Math.max(soak.amount * (soak.high > 0.02 ? 1 : 0), soak.nowAmount) > 0.2;
   function stamp(step) {
     // (Wet feet pick up sand at every step on the dry beach; the sea washes it off again.)
-    if (step.depth < 0.02 && !onDeck(step.x, step.z) && Math.max(soak.amount * (soak.high > 0.02 ? 1 : 0), soak.nowAmount) > 0.2) soak.sand = Math.min(1, soak.sand + 0.3);
+    if (step.depth < 0.02 && !onDeck(step.x, step.z) && feetWet()) soak.sand = Math.min(1, soak.sand + 0.3);
     // (On a pier: the knock of boards, and no prints in the sand below.)
     if (onDeck(step.x, step.z) && step.depth < 0.03) { sound.step({ side: step.side, surface: 'wood' }); return; }
     const above = ground.heightAt(step.x, step.z) - shared.uSeaLevel.value;
@@ -240,7 +242,7 @@ export async function start(canvas, onProgress = () => {}) {
     }
     // The print is where that foot came down: a hip's width to its side, and ahead of you by the reach of the pace (see world/body.js).
     const side = step.side ? 0.1 : -0.1, ahead = 0.34 * Math.min(step.stride ?? 1, 1.6) - 0.08, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
-    shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), step.yaw + (step.side ? 0.12 : -0.12), clock.time);
+    shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), Math.atan2(Math.sin(step.yaw), Math.cos(step.yaw)) + (step.side ? 0.12 : -0.12) + (feetWet() ? 64 : 0), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
   }
   // Walls, and the people and umbrella poles on the beaches (a coarse grid of small circles).
