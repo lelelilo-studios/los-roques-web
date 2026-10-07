@@ -16,7 +16,7 @@ export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, S
 /** Vertices the body below the neck and the head can take (see poseBody). */
 export const BODY_VERTICES = 6 * SIDES * 36 + 3 * SIDES * 12, HEAD_VERTICES = 6 * SIDES * 5 + 3 * SIDES;
 /** The same with `detail` (your own body: hands with fingers and thumbs, feet with toes). */
-export const BODY_VERTICES_DETAIL = BODY_VERTICES + 60 * SIDES + 1900;
+export const BODY_VERTICES_DETAIL = BODY_VERTICES + 66 * SIDES + 1900;
 const LIMB = new Float64Array(11 * 12), SKIN_RINGS = new Float64Array(8 * (SIDES + 1) * 6);
 const add = (p, a, ka, b = null, kb = 0, c = null, kc = 0) => [p[0] + a[0] * ka + (b ? b[0] * kb : 0) + (c ? c[0] * kc : 0), p[1] + a[1] * ka + (b ? b[1] * kb : 0) + (c ? c[1] * kc : 0), p[2] + a[2] * ka + (b ? b[2] * kb : 0) + (c ? c[2] * kc : 0)];
 const unit = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -390,6 +390,7 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     if (detail) {
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       t.tube(elbow, wrist, [0.036, 0.04], [0.021, 0.028], SKIN);
+      t.cap(elbow, wrist, [0.021, 0.028], SKIN, 0.9);                   // (the round of the wrist: no gap where the hand bends back from the forearm)
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
       const rest = [-side, -0.6 * wade, 0.35 * (1 - wade)], loose = 0.55 - 0.3 * wade;
       const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, [0, -1, 0]) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN);

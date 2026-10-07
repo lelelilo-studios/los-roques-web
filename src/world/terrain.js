@@ -346,6 +346,27 @@ void main() {
     n = normalize(n + vec3(wd.x, 0.0, wd.y) * tall * 6.2832 / spacing * sin(phase) * sandy * patches);
     albedo *= 1.0 + 0.035 * sin(phase + 1.2) * sandy * patches * step(1e-5, tall);      // (darker, heavier grains gather in the troughs)
   }
+  // A flat that the sea runs across in sheets (the sandbar of Cayo de Agua, awash at high water) keeps ripple
+  // marks: low crests a hand's breadth apart, lying along the bar, across the flow; a film of water stands in
+  // the troughs between them and mirrors the sky while the crests drain and go matt. A beach face has none:
+  // the swash planes it smooth. (How flat: how much further from the waterline than a beach face would put it.)
+  float marks = sand * wetness * (1.0 - smoothstep(0.012, 0.035, px)) * smoothstep(1.5, 5.0, -shore - max(-water, 0.0) / 0.08) * (1.0 - smoothstep(0.02, 0.1, water)), troughs = 0.0;
+  if (marks > 0.01) {
+    vec2 along = uSandbarP.x > 0.0 ? normalize(uSandbar.zw - uSandbar.xy) : normalize(uWind.xy + 1e-4), across = vec2(-along.y, along.x);
+    marks *= smoothstep(0.25, 0.55, lrNoiseTile(d * 0.15625 + 13.0, 10.0));               // (in patches: here and there the sand is planed flat)
+    // Two sets of crests a few degrees apart and of slightly different spacing, each taking over from the other
+    // in patches: where they meet, crests pinch out and fork, as ripple marks do. Each wanders as it goes (the
+    // phase is bent by an eighth of a turn in a hand's length: less than that and they looked ruled).
+    vec2 across2 = normalize(across + 0.27 * along);
+    float bend = 9.0 * lrNoiseTile(d * 2.875 + 6.0, 184.0) + 20.0 * lrNoiseTile(d * 0.875 + 2.0, 56.0) + 3.0 * lrNoiseTile(d * 7.5 + 1.0, 480.0);
+    float p1 = dot(d, round(across * 64.0 / 0.085) / 64.0) * 6.2832 + bend, p2 = dot(d, round(across2 * 64.0 / 0.097) / 64.0) * 6.2832 + bend * 0.8 + 2.0;
+    float other = smoothstep(0.38, 0.62, lrNoiseTile(d * 0.6875 + 17.0, 44.0)), tall = 0.0028 * (0.45 + 1.1 * lrNoiseTile(d * 1.3125 + 9.0, 84.0));     // (some crests stand higher than others)
+    // (A gentle side up, a short steep side down: the mark of water that mostly ran one way.)
+    vec2 lean = mix(across * (cos(p1) + 0.35 * cos(2.0 * p1)) / 0.085, across2 * (cos(p2) + 0.35 * cos(2.0 * p2)) / 0.097, other);
+    n = normalize(n + vec3(lean.x, 0.0, lean.y) * tall * 6.2832 * marks);
+    troughs = marks * smoothstep(0.1, 0.75, 0.5 - mix(0.5 * sin(p1) + 0.12 * sin(2.0 * p1), 0.5 * sin(p2) + 0.12 * sin(2.0 * p2), other));
+    albedo *= 1.0 - 0.07 * troughs + 0.03 * marks;                                         // (wetter and darker in the troughs)
+  }
   // Up the beach, out of reach of the sea and of feet, the wind builds low ridges a step apart: a gentle
   // windward slope, a short steep lee side. Seen from a few metres to a few tens of metres.
   float ridged = sand * dryLand * (1.0 - trodden) * step(water, -0.25) * (1.0 - smoothstep(0.03, 0.12, px)) * smoothstep(6.0, 14.0, -shore);
@@ -470,6 +491,8 @@ void main() {
     float patchy = px < 0.3 ? smoothstep(0.3, 0.62, lrDetailTap(d, mat2(40.0, 0.0, 0.0, 40.0) / 64.0, 2.0, ddx, ddy).a + 0.3 * lrNoiseTile(d * 0.1875 + 2.0, 12.0)) : 0.7;
     // (Sand a hand's breadth above the sea is soaked through: the film stays, thinner in patches, and mirrors the sky.)
     float gloss = wetLine * max(exp(-sw.age / 3.0), (0.5 + 0.5 * patchy) * (1.0 - smoothstep(0.0, 0.5 * sw.top + 0.02, -water)));
+    // (Ripple marks: the film lies in the troughs and the crests stand clear of it.)
+    gloss = mix(gloss, max(gloss, 0.92) * smoothstep(0.25, 0.7, troughs), smoothstep(0.0, 0.3, marks) * wetLine);
     // (Rain: a film in patches while it falls, a dull damp surface after.)
     gloss = max(gloss, uWet * (0.12 + 0.5 * uRain) * patchy * sand);
     // Puddles: on the hard-trodden streets of the village the rain stands in the hollows (beach sand drinks it).

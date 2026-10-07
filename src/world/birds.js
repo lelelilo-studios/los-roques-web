@@ -64,6 +64,8 @@ export class Birds {
   }
 
   update(eye, t) {
+    /** How near the nearest bird is to the eye, metres (for tests: none should skim past at arm's length). */
+    this.nearest = Infinity;
     for (const f of this.flocks) {
       const dx = f.centre[0] - eye.x, dz = f.centre[1] - eye.z, visible = dx * dx + dz * dz < 3500 * 3500;
       for (const m of f.meshes) { m.visible = visible; if (visible) { m.position.set(dx, 0, dz); m.updateMatrixWorld(); } }
@@ -78,7 +80,9 @@ export class Birds {
         let y = b.alt + (b.line ? 0.4 * Math.sin(t * 0.5 + b.phase * 30) : 6 * Math.sin(t * 0.11 + i));
         // (A bird does not skim past someone standing on the beach at arm's length: it rises over you as it
         // comes near. They are a few flat triangles, made to be seen at a distance.)
-        if (eye.y < 30) { const near = Math.hypot(dx + b.cx + x, dz + b.cz + z); y += 14 * (1 - Math.min(1, Math.max(0, (near - 25) / 45)) ** 2) * (b.line ? 1 : 0.4); }
+        const near = Math.hypot(dx + b.cx + x, dz + b.cz + z);
+        if (eye.y < 30) y += 14 * (1 - Math.min(1, Math.max(0, (near - 25) / 45)) ** 2) * (b.line ? 1 : 0.4);
+        this.nearest = Math.min(this.nearest, Math.hypot(near, y - eye.y));
         this._e.set(bank, heading, 0, 'YXZ');
         this._q.setFromEuler(this._e);
         this._p.set(b.cx + x, y, b.cz + z);
