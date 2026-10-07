@@ -133,21 +133,21 @@ export function buildPlants(textures, fp) {
   const leafy = { twoSided: true, through: 0.35 };
   return [
     // Mangroves stand in the water and on the mud: their own height follows the canopy map.
-    make({ geometry: mangrove(101), cell: 3.4, grid: n(26), seed: 31, size: [0.8, 1.25], look: leafy,
+    make({ casts: true, geometry: mangrove(101), cell: 3.4, grid: n(26), seed: 31, size: [0.8, 1.25], look: leafy,
       rule: `keep = smoothstep(0.4, 0.6, land.r) * 0.9;`, move: `p *= 0.7 + 1.1 * land.a; ${wind}` }),
-    make({ geometry: mangrove(202), cell: 4.6, grid: n(20), seed: 32, size: [0.7, 1.1], look: leafy,
+    make({ casts: true, geometry: mangrove(202), cell: 4.6, grid: n(20), seed: 32, size: [0.7, 1.1], look: leafy,
       rule: `keep = smoothstep(0.4, 0.6, land.r) * 0.8;`, move: `p *= 0.7 + 1.1 * land.a; ${wind}` }),
     make({ geometry: purslane(), cell: 0.9, grid: n(56), seed: 33, size: [0.7, 1.5], lift: 0.0, look: leafy,
       rule: `keep = smoothstep(0.12, 0.45, land.g) * (1.0 - smoothstep(0.3, 0.6, land.r)) * step(0.25, -water) * step(-water, 2.5) * 0.6;` }),
-    make({ geometry: shrub(301), cell: 2.4, grid: n(34), seed: 34, size: [0.55, 1.3], look: leafy,
+    make({ casts: true, geometry: shrub(301), cell: 2.4, grid: n(34), seed: 34, size: [0.55, 1.3], look: leafy,
       rule: `keep = smoothstep(0.35, 0.7, land.g) * (1.0 - smoothstep(0.3, 0.6, land.r)) * step(0.4, -water) * 0.55;`, move: wind }),
-    make({ geometry: cardon(), cell: 8.0, grid: n(24), seed: 35, size: [0.7, 1.4],
+    make({ casts: true, geometry: cardon(), cell: 8.0, grid: n(24), seed: 35, size: [0.7, 1.4],
       rule: `keep = smoothstep(5.0, 12.0, ground) * (0.1 + 0.25 * land.g) * (1.0 - step(0.4, land.b));` }),
-    make({ geometry: pricklyPear(), cell: 5.0, grid: n(26), seed: 36, size: [0.8, 1.5],
+    make({ casts: true, geometry: pricklyPear(), cell: 5.0, grid: n(26), seed: 36, size: [0.8, 1.5],
       rule: `keep = smoothstep(3.0, 9.0, ground) * 0.2 * (1.0 - step(0.4, land.b));` }),
-    make({ geometry: palm(), cell: 16.0, grid: n(14), seed: 37, size: [0.8, 1.15], look: leafy,
+    make({ casts: true, geometry: palm(), cell: 16.0, grid: n(14), seed: 37, size: [0.8, 1.15], look: leafy,
       rule: `keep = smoothstep(0.25, 0.5, land.b) * (1.0 - smoothstep(0.55, 0.8, land.b)) * step(0.6, -water) * 0.3;`, move: wind }),
-    make({ geometry: bougainvillea(), cell: 11.0, grid: n(16), seed: 38, size: [0.7, 1.2], look: leafy,
+    make({ casts: true, geometry: bougainvillea(), cell: 11.0, grid: n(16), seed: 38, size: [0.7, 1.2], look: leafy,
       rule: `keep = smoothstep(0.3, 0.55, land.b) * (1.0 - smoothstep(0.6, 0.85, land.b)) * step(0.6, -water) * 0.22;`, move: wind }),
   ];
 }

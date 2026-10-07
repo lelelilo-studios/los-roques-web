@@ -23,7 +23,8 @@ import { Turtle, buildStatue } from './world/creatures.js';
 import { buildConchMounds, buildShoreLife } from './world/shorelife.js';
 import { buildPlants } from './world/plants.js';
 import { Sound, measure, runup } from './audio/ambience.js';
-import { MeshBuilder } from './world/landmarks.js';
+import { createObjectMaterial } from './world/landmarks.js';
+import { Body } from './world/body.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
@@ -126,19 +127,8 @@ export async function start(canvas, onProgress = () => {}) {
   const opaque = new THREE.Scene();
   opaque.matrixWorldAutoUpdate = false;
   const birds = new Birds(places, ground, landmarks.material);
-  // Your own figure: never drawn, it only casts your shadow.
-  const figure = (() => {
-    const mb = new MeshBuilder(), c = [0.5, 0.5, 0.5];
-    for (const side of [-0.095, 0.095]) mb.tube(side, 0, 0, 0.86, 0.045, 0.075, 6, c);    // legs
-    mb.tube(0, 0, 0.84, 1.18, 0.15, 0.13, 8, c);                                           // hips and waist
-    mb.tube(0, 0, 1.18, 1.44, 0.13, 0.18, 8, c, true);                                     // chest and shoulders
-    for (const side of [-0.235, 0.235]) mb.tube(side, 0, 0.78, 1.42, 0.042, 0.055, 6, c); // arms, hanging a little clear
-    mb.tube(0, 0, 1.44, 1.5, 0.05, 0.05, 5, c);                                            // neck
-    mb.tube(0, 0, 1.5, 1.62, 0.085, 0.1, 8, c); mb.tube(0, 0, 1.62, 1.72, 0.1, 0.06, 8, c, true);   // head
-    const m = new THREE.Mesh(mb.geometry(), landmarks.material);
-    m.frustumCulled = false; m.visible = false; m.matrixAutoUpdate = false;
-    return m;
-  })();
+  // Your own body: seen when you look down, and the caster of your shadow (the head only ever in the shadow).
+  const body = new Body(createObjectMaterial(tier.fp.shadowTaps, true));
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
   const shadows = new Shadows(renderer, tier.fp.shadowMap, R.reversed);
   const statue = buildStatue(places, ground, landmarks.material), turtle = new Turtle(places, ground, landmarks.material);
@@ -150,7 +140,8 @@ export async function start(canvas, onProgress = () => {}) {
   shared.uTreesNear.value = tier.fp.life ? 1 : 0;
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, figure, lifeGroup);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup);
+  const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
   let syncPanel = null, labels = null, hud = null, walkInput = null;
@@ -206,8 +197,9 @@ export async function start(canvas, onProgress = () => {}) {
       shared.uRing.value[rings++ % 6].set(wrap64(step.x), wrap64(step.z), clock.time, Math.min(1, 0.4 + step.depth * 2));
       return;
     }
-    const side = step.side ? 0.085 : -0.085, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
-    shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side), wrap64(step.z + sy * side), step.yaw + (step.side ? 0.12 : -0.12), clock.time);
+    // The print is where that foot came down: a hip's width to its side, and ahead of you by the reach of the pace (see world/body.js).
+    const side = step.side ? 0.1 : -0.1, ahead = 0.34 * Math.min(step.stride ?? 1, 1.6) - 0.08, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
+    shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), step.yaw + (step.side ? 0.12 : -0.12), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
   }
   const walker = new Walker({ ground, surfaceAt, blocked: buildingBlocker(features.buildings), rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
@@ -355,16 +347,13 @@ export async function start(canvas, onProgress = () => {}) {
     turtle.update(rig.eye, clock.time, shared.uSeaLevel.value);
     shared.uWaveHere.value.fromArray(boats.weightsAt(rig.eye.x, rig.eye.z, 3));
     // Shadows of things: round the walker (and of the walker), or round what the orbit camera looks at.
-    const walking = rig.mode === 'walk';
+    const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
+    body.mesh.visible = standing;
+    if (standing) { body.pose({ phase: walker.phase, stride: walker.stride, eye: walker.body, look: walker.look }); body.place(walker.eyeY - walker.body, walker.yaw); }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
-      const standing = walking && !walker.afloat && !walker.diving;
-      if (standing) {
-        figure.position.set(0, walker.eyeY - walker.body, 0); figure.rotation.set(0, -walker.yaw, 0); figure.scale.set(1, walker.body / 1.65, 1);
-        figure.updateMatrix(); figure.matrixWorld.copy(figure.matrix);
-      }
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: ground.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup], standing ? [figure] : []);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup], standing ? [body.headMesh] : [], casters);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);

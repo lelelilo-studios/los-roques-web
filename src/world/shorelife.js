@@ -67,15 +67,17 @@ function lizard() {
 export function buildShoreLife(textures, fp) {
   if (!fp.life) return [];
   const n = g => (fp.life > 1 ? g : Math.round(g * 0.7 / 2) * 2), make = o => new Scatter(o, textures, fp.shadowTaps);
-  // The tide line: where the highest water of the last days left what it carried, a hand's breadth or two above the sea.
-  const line = `${SAND} float above = -water; keep = sand * max(1.0 - smoothstep(0.03, 0.1, abs(above - 0.26)), 0.03 * step(0.3, above) * step(above, 2.0));`;
+  // The tide line: what the highest water of the last days carried is left in a wandering line a few metres up
+  // the beach from the waterline; beyond it only the odd piece.
+  const line = `${SAND} float above = -water, off = shore + 3.6 + 1.6 * (lrNoise(wxz / 6.0) - 0.5) + 0.8 * (lrNoise(wxz / 1.7) - 0.5);
+    keep = sand * step(0.1, above) * max(1.0 - smoothstep(0.15, 0.7, abs(off)), 0.01 * step(above, 2.0));`;
   return [
     make({ geometry: coralBits(), cell: 0.3, grid: n(60), seed: 21, size: [0.7, 1.8], lift: 0.002, rule: `${line} keep *= 0.55;` }),
     make({ geometry: shells(), cell: 0.42, grid: n(48), seed: 22, size: [0.8, 1.7], lift: 0.002, rule: `${line} keep *= 0.5;` }),
     make({ geometry: conch(), cell: 7.0, grid: n(16), seed: 23, size: [0.8, 1.15], lift: 0.0, look: { gloss: 1 },
       rule: `${SAND} keep = sand * step(0.2, -water) * step(-water, 1.5) * step(-26.0, shore) * 0.07;` }),
     // Gulls stand about on the wet sand, facing into the wind; they shift their feet now and then.
-    make({ geometry: gull(), cell: 9.0, grid: n(14), seed: 24, size: [0.9, 1.1], lift: 0.0,
+    make({ casts: true, geometry: gull(), cell: 9.0, grid: n(14), seed: 24, size: [0.9, 1.1], lift: 0.0,
       rule: `${SAND} keep = sand * step(0.03, -water) * step(-water, 0.4) * step(-12.0, shore) * 0.08;`,
       move: `turn = atan(-uWind.y, -uWind.x) + (h.x - 0.5) * 0.9 + 0.3 * sin(t * 0.21 + h.y * 9.0); p.y += 0.004 * sin(t * 2.3 + h.x * 30.0) * step(0.1, position.y);` }),
     // Lizards: still for a while, then a dash of a metre, tail swinging.

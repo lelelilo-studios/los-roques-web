@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
-import { shadowGLSL } from './shadow.js';
+import { CASTER_UNIFORMS, casterFragment, casterGLSL, shadowGLSL } from './shadow.js';
 
 const vertexShader = (rule, move) => /* glsl */`
 #include <lr_common>
@@ -21,6 +21,9 @@ uniform sampler2D tLand;      // r mangrove, g scrub, b built-up, a canopy heigh
 uniform vec4 uLattice;        // xy = index of the middle cell (wrapped to 4096), zw = that cell's corner relative to the camera
 uniform vec4 uKind;           // cell size (m), half the lattice (cells), seed, sway
 uniform vec4 uSize;           // smallest and largest scale, height above the ground, 1 = lean with the ground
+#ifdef LR_CASTER
+${casterGLSL}
+#endif
 in vec2 aCell;                // this instance's cell, counted from the middle one
 in float aBend;               // how much this vertex moves with the water or the wind (0 at the root)
 out vec3 vRel;
@@ -48,7 +51,11 @@ void main() {
   p = vec3(p.x * ct - p.z * st, p.y, p.x * st + p.z * ct) + shift;
   vRel = vec3(rel.x + p.x, ground + uSize.z + p.y, rel.y + p.z);
   vColor = colour;
+#ifdef LR_CASTER
+  gl_Position = vFade > 0.0 ? lrShadowClip(vRel) : vec4(2.0, 2.0, 2.0, 1.0);
+#else
   gl_Position = vFade > 0.0 ? projectionMatrix * viewMatrix * vec4(vRel.x, vRel.y - lrCurveDrop(vRel.xz), vRel.z, 1.0) : vec4(2.0, 2.0, 2.0, 1.0);
+#endif
 }`;
 
 const fragmentShader = /* glsl */`
@@ -81,11 +88,11 @@ void main() {
  * @param {string} o.rule  GLSL setting `keep` (0..1) from wxz, ground, water, shore, benthic, land, h (hashes), vWeights-free
  * @param {string} [o.move]  GLSL changing p, colour (uses t, bend, h, water, size, wxz)
  * @param {[number, number]} [o.size]  scale range   @param {number} [o.lift]  metres above the ground
- * @param {number} [o.seed]   @param {object} [o.look]  { twoSided, gloss, through }
+ * @param {number} [o.seed]   @param {object} [o.look]  { twoSided, gloss, through }   @param {boolean} [o.casts]  casts a shadow
  * @param {object} textures  { benthic, land }   @param {number} shadowTaps
  */
 export class Scatter {
-  constructor({ geometry, cell, grid, rule, move = '', size = [1, 1], lift = 0, seed = 1, sway = 0, look = {} }, textures, shadowTaps = 4) {
+  constructor({ geometry, cell, grid, rule, move = '', size = [1, 1], lift = 0, seed = 1, sway = 0, look = {}, casts = false }, textures, shadowTaps = 4) {
     this.cell = cell; this.grid = grid;
     const g = new THREE.InstancedBufferGeometry();
     g.index = geometry.index;
@@ -103,6 +110,12 @@ export class Scatter {
         uSize: { value: new THREE.Vector4(size[0], size[1], lift, 0) }, uLook: { value: new THREE.Vector4(look.twoSided ? 1 : 0, look.gloss || 0, look.through || 0, 0) },
       }),
     });
+    /** The same thing drawn into the shadow map (same vertex shader, so shadows sway with what casts them), or null. */
+    this.caster = casts ? new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: vertexShader(rule, move), fragmentShader: casterFragment, vertexColors: true, side: THREE.DoubleSide, defines: { LR_CASTER: 1 },
+      uniforms: { ...uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...WAVE_UNIFORMS, ...CASTER_UNIFORMS]),
+        tBenthic: this.material.uniforms.tBenthic, tLand: this.material.uniforms.tLand, uLattice: this.material.uniforms.uLattice, uKind: this.material.uniforms.uKind, uSize: this.material.uniforms.uSize },
+    }) : null;
     this.mesh = new THREE.Mesh(g, this.material);
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false;
     /** Things further than this from the eye are not drawn (metres). */

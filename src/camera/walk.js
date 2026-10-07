@@ -32,6 +32,7 @@ export class Walker {
     this.diving = false; this.diveTimer = 0; this.phase = 0; this.bob = 0; this.bobAmount = 1;
     this.pinned = false;                                          // a test pose holds the eye where it was put
     this.depth = 0; this.afloat = false;
+    this.stride = 0;                                              // pace against an easy walk: 0 standing, 1 walking, about 2 running
   }
 
   /**
@@ -39,7 +40,7 @@ export class Walker {
    * surface at that spot at that moment (negative = under water) and stays fixed until the walker moves.
    */
   place({ x, z, yaw = this.yaw, look = this.look, height = STAND, eye = null }) {
-    Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, diveTimer: 0 });
+    Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, diveTimer: 0, stride: 0 });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
     this.body = height;
@@ -85,6 +86,9 @@ export class Walker {
       speed = Math.max(wadeSpeed(d, input.run), (input.run ? 1.5 : 0.8) * smooth(0.7, 1.1, d));
     }
     const onGround = !this.diving && !this.afloat;
+    // (Crouched you shuffle along at less than half the pace.)
+    const crouch = Math.min(1, Math.max(0, (STAND - this.body) / (STAND - CROUCH)));
+    if (onGround) speed *= 1 - 0.55 * crouch;
     const k = 1 - Math.exp(-dt * (onGround ? 9 : 3.5));
     this.vx += (wx * speed - this.vx) * k; this.vz += (wz * speed - this.vz) * k;
 
@@ -125,14 +129,15 @@ export class Walker {
       this.diveTimer = 0;
     }
 
-    // Steps: the head bobs once per pace of 0.72 m, and each pace is reported.
+    // Steps: the head bobs once per pace of 0.72 m (shorter crouched), and each pace is reported.
     if (onGround && travelled > 0) {
       const before = Math.floor(this.phase / Math.PI);
-      this.phase += travelled / 0.72 * Math.PI;
+      this.phase += travelled / (0.72 * (1 - 0.45 * crouch)) * Math.PI;
       const after = Math.floor(this.phase / Math.PI);
-      if (after !== before) steps.push({ x: this.x, z: this.z, yaw: this.yaw, side: after & 1, depth: Math.max(this.surf - g2, 0) });
+      if (after !== before) steps.push({ x: this.x, z: this.z, yaw: this.yaw, side: after & 1, depth: Math.max(this.surf - g2, 0), stride: this.stride });
     }
     const stride = onGround ? Math.min(1, Math.hypot(this.vx, this.vz) / 1.2) : 0;
+    this.stride += ((onGround ? Math.hypot(this.vx, this.vz) / 1.4 : 0) - this.stride) * (1 - Math.exp(-dt * 8));
     this.bob += (0.022 * this.bobAmount * stride * Math.abs(Math.sin(this.phase)) - this.bob) * (1 - Math.exp(-dt * 12));
     return steps;
   }

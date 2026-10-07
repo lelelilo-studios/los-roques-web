@@ -12,11 +12,17 @@ const vertexShader = /* glsl */`
 #include <lr_common>
 out vec3 vRel;
 out vec3 vColor;
+#ifdef LR_SMOOTH
+out vec3 vNormal;           // (round things: normals come with the mesh; everything else is flat-shaded)
+#endif
 void main() {
 #ifdef USE_INSTANCING
   vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
 #else
   vec4 wp = modelMatrix * vec4(position, 1.0);
+#endif
+#ifdef LR_SMOOTH
+  vNormal = mat3(modelMatrix) * normal;
 #endif
   vRel = wp.xyz;
   vColor = color;
@@ -32,9 +38,16 @@ ${shadowGLSL}
 uniform float uNight;       // 0 by day, 1 at night: windows and lamps glow
 in vec3 vRel;
 in vec3 vColor;
+#ifdef LR_SMOOTH
+in vec3 vNormal;
+#endif
 layout(location = 0) out vec4 outColor;
 void main() {
+#ifdef LR_SMOOTH
+  vec3 n = normalize(vNormal);
+#else
   vec3 n = normalize(cross(dFdx(vRel), dFdy(vRel)));
+#endif
   vec3 toEye = vec3(-vRel.x, uCamY - vRel.y, -vRel.z);
   if (dot(n, toEye) < 0.0) n = -n;
   // Colours above 1 mark things that give off light (lamps, lit windows): negative alpha channel is not available,
@@ -50,9 +63,9 @@ void main() {
   else outColor = vec4(albedo * light / PI + glow * (vColor - 1.0) * uNight * 0.02, -1000.0);
 }`;
 
-export function createObjectMaterial(shadowTaps = 8) {
+export function createObjectMaterial(shadowTaps = 8, smooth = false) {
   return new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps },
+    glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, ...(smooth ? { LR_SMOOTH: 1 } : {}) },
     uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], { uNight: { value: 0 } }),
   });
 }
