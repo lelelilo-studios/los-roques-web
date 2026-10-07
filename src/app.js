@@ -574,6 +574,14 @@ export async function start(canvas, onProgress = () => {}) {
       body.pose({ phase: walker.phase, stride: Math.max(walker.stride, walker.turned), eye: eyeUp, look: walker.look, slope, wade, breath: Math.sin(clock.time * 1.45),
         pace: speed > 0.3 ? paceLength(speed, walker.crouched, walker.legs) : null, sink: onDeck(walker.x, walker.z) ? 0 : firm ? 0.004 : 0.011, touch: reach });
       posedAt = frames; body.place(walker.eyeY - walker.body, walker.yaw, 0, walker.sway);
+      if (figure) {
+        // What of her rests on the sand or hangs just over it (for the soft dark under it: terrain.js).
+        const cy = Math.cos(walker.yaw), sy = Math.sin(walker.yaw), base = walker.eyeY - walker.body, list = shared.uContact.value;
+        const put = (i, q, r) => list[i].set(q[0] * cy - q[2] * sy - cy * walker.sway, base + q[1], q[0] * sy + q[2] * cy - sy * walker.sway, r);
+        body.joints.ankles.forEach((a, i) => { put(i * 2, [a[0], a[1] - 0.025, a[2] + 0.02], 0.05); put(i * 2 + 1, [a[0], Math.max(a[1] - 0.05, 0.02), a[2] - 0.11], 0.045); });
+        body.joints.wrists.forEach((w, i) => { const t = body.joints.fingertips[i] || w; put(4 + i, [(w[0] + t[0]) / 2, (w[1] + t[1]) / 2, (w[2] + t[2]) / 2], 0.05); });
+        body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
+      }
       if (figure) { figure.mesh.visible = !folded; figure.setPose(figureRig.pose(body.joints, eyeUp), eyeUp); figure.place(-Math.cos(walker.yaw) * walker.sway, walker.eyeY - walker.body, -Math.sin(walker.yaw) * walker.sway, walker.yaw); }
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
       hand.act(dt, { ...reachable, joints: body.joints, eye: rig.eye, material: body.mesh.material,
@@ -581,6 +589,7 @@ export async function start(canvas, onProgress = () => {}) {
     }
     else if (walking) {
       if (hand.ik > 0 || hand.amount > 0) hand.reset();          // (swimming: the hand has other work)
+      for (const c of shared.uContact.value) c.w = 0;
       const under = walker.diving ? 1 : 0;
       body.pose({ swim: true, stroke: walker.stroke, under }); body.place(walker.eyeY + walker.bob, walker.yaw, under * walker.look);
       if (figure) { figure.setPose(figureRig.pose(body.joints, 0), 0); figure.place(0, walker.eyeY + walker.bob, 0, walker.yaw, under * walker.look); }
@@ -598,6 +607,7 @@ export async function start(canvas, onProgress = () => {}) {
       const inWater = standing && walker.depth > 0.012 ? 1 : 0, cy = Math.cos(walker.yaw), sy = Math.sin(walker.yaw), speed = Math.hypot(walker.vx, walker.vz);
       (body.joints?.ankles || []).forEach((a, i) => shared.uLeg.value[i].set(wrap64(rig.eye.x + a[0] * cy - a[2] * sy), wrap64(rig.eye.z + a[0] * sy + a[2] * cy), inWater, speed));
     } else {
+      for (const c of shared.uContact.value) c.w = 0;
       shared.uLeg.value[0].z = shared.uLeg.value[1].z = 0;
     }
     if (shadows.enabled && (walking || rig.dist < 1500)) {

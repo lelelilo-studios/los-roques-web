@@ -421,6 +421,14 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], a = (0.7 * swing * c - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = 0.14 + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
     let elbow = [sh[0] + side * (0.025 + 0.14 * wade), sh[1] - PROP.upperArm * Math.cos(a), sh[2] - PROP.upperArm * Math.sin(a)];
     const wrist = [elbow[0] - side * 0.015, elbow[1] - PROP.forearm * Math.cos(a + bend), elbow[2] - PROP.forearm * Math.sin(a + bend)];
+    // Squatting, the arms come to rest: forearms over the knees, elbows out, hands hanging loose in front.
+    const squat = crouch * crouch * (3 - 2 * crouch) * (1 - wade);
+    if (squat > 0) {
+      const over = [knee[0] + side * 0.012, knee[1] + 0.035, knee[2] - 0.09];
+      for (let i = 0; i < 3; i++) wrist[i] += (over[i] - wrist[i]) * squat;
+      const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * 0.8, -0.45, 0.35]);
+      for (let i = 0; i < 3; i++) elbow[i] += (bent[i] - elbow[i]) * squat;
+    }
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid
     // flat, fingers pointing away from you, the wrist a hand's length behind the fingertip and just above it.
     const reaching = touch && side > 0 && touch.amount > 0 ? touch.amount * touch.amount * (3 - 2 * touch.amount) : 0;
@@ -445,8 +453,11 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     if (detail) {
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
-      const rest = [-side, -0.6 * wade, 0.35 * (1 - wade)], loose = 0.55 - 0.3 * wade;
-      const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow, sleeve);
+      // (Squatting: palms down, fingers hanging.)
+      const rest = [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat], loose = 0.55 - 0.3 * wade - 0.15 * squat;
+      // (Hanging from the knee, the hand points forward and down, whatever way the forearm lies.)
+      const hang = unit([fore[0] * (1 - squat), fore[1] * (1 - squat) - 0.55 * squat, fore[2] * (1 - squat) - 0.83 * squat]);
+      const tip = t.hand(wrist, point ? mix(hang, point) : hang, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow, sleeve);
       joints.fingertips.push(tip);
       // (How the hand is held: the frame of its palm, how far the fingers are curled and parted.)
       joints.hands.push({ ...t.palm, curl: point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, spread: point ? (touch.spread ?? 0) * reaching : 0 });

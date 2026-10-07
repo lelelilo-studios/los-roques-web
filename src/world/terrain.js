@@ -72,6 +72,7 @@ uniform vec4 uTouchSeg[24];  // what your hand has drawn or pressed in the sand:
 uniform vec4 uTouchInfo[24]; // for each: when; kind (0 fingers drawn along, 1 a hand pressed flat, 2 a heap poured out, 3 a spot wetted, 4 the hollow a handful left);
                              // the hand's heading (1, 4) or the heap's height or how wet (2, 3); how far apart the furrows lie (0) or how wide (2, 3)
 uniform int uTouchCount;
+uniform vec4 uContact[8];    // the parts of you on or just over the ground: where (x, z relative to the camera; y absolute) and how big (m)
 uniform vec4 uLeg[3];        // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
 uniform vec4 uFoot[24];       // your footprints: x, z (detail coordinates, wrapped to 64 m), heading, time made
@@ -472,6 +473,18 @@ void main() {
   // Oren-Nayar lobe, scaled so that seen from above at noon it is as before).
   float nl = lrSaturate(dot(n, uSunDir)), nv = lrSaturate(dot(n, V)), back = dot(uSunDir, V) - nl * nv;
   float lobe = mix(1.0, 1.0 + 0.383 * back / (back > 0.0 ? max(max(nl, nv), 1e-3) : 1.0), sand * dryLand * (1.0 - uWet) * (1.0 - smoothstep(0.3, 2.0, px)));
+  if (px < 0.05) {
+    // Under and beside whatever of you rests on the sand, less of the sky reaches it: the soft dark that makes a
+    // foot or a hand sit on the ground, in the sun and inside your own shadow alike. (Each part as a ball: the
+    // share of the sky it hides from a point of the ground.)
+    float hidden = 0.0;
+    for (int i = 0; i < 8; i++) {
+      vec3 to = uContact[i].xyz - vec3(vRel.x, ground, vRel.z);
+      float r = uContact[i].w, l2 = dot(to, to);
+      if (r > 0.0 && l2 < 36.0 * r * r) hidden += lrSaturate(dot(n, to) * inversesqrt(l2)) * min(r * r / l2, 1.0);
+    }
+    openSky *= 1.0 - 0.8 * lrSaturate(hidden) * (1.0 - smoothstep(0.02, 0.05, px));
+  }
   vec3 light = uSunE * nl * lobe * focus * shade * sunCut + uSkyE * (0.5 + 0.5 * n.y) * openSky;
   // (A pit in shadow is still lit by the sunlit sand round it.)
   light += uSunE * lrSaturate(uSunDir.y) * shade * 0.14 * lumpy * (1.0 - sunCut * nl);

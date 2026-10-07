@@ -79,6 +79,11 @@ void main() {
   // (The head is not drawn: you look out of it. It is still there for the shadow.)
   if (vPart > 0.001) discard;
   vec3 n = normalize(vNormal), V = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
+  // The grain of the skin, seen from near: it breaks up the sheen (a hand at arm's length; it fades with distance).
+  // (Only where a pixel is much smaller than the grain: nearer the limit it showed as stubble.)
+  float fine = 1.0 - smoothstep(0.00012, 0.0004, length(fwidth(vRel)));
+  vec3 pores = vec3(lrNoise(vRest.xy * 1100.0 + vRest.z * 500.0), lrNoise(vRest.yz * 1100.0 + vRest.x * 500.0 + 5.0), lrNoise(vRest.zx * 1100.0 + vRest.y * 500.0 + 9.0)) - 0.5;
+  n = normalize(n + fine * 0.07 * pores);
   float cloud = lrCloudShadow(uCamXZ + vRel.xz), nl = dot(n, uSunDir);
   // (A round limb turns away from the sun gradually; where its skin is nearly edge-on to the light the shadow
   // map cannot tell lit from self-shadowed: there the turning away alone does the darkening.)

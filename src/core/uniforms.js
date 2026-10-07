@@ -18,6 +18,8 @@ export const shared = {
   uLeg: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] },                        // your two shins where they stand in the water: x, z (wrapped to 64 m), 1 if in water, how fast you move (m/s)
   // What your hand has drawn or pressed in the sand: strokes from (x, z) to (x, z), wrapped to 64 m; and for each its time, kind (0 fingers drawn along, 1 a hand pressed flat), heading of a press (radians).
   uTouchSeg: { value: Array.from({ length: 24 }, () => new THREE.Vector4()) }, uTouchInfo: { value: Array.from({ length: 24 }, () => new THREE.Vector4(-1e9, 0, 0, 0)) }, uTouchCount: { value: 0 },
+  // The parts of you that rest on the ground or hang just over it (heels, balls of the feet, hands, knees): where each is (x, z relative to the camera; y absolute) and how big (m; 0 = none).
+  uContact: { value: Array.from({ length: 8 }, () => new THREE.Vector4()) },
   uRing: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -1e9, 0)) },     // rings you send out wading: x, z (wrapped to 64 m), time, strength
   tShadow: { value: null }, uShadowC: { value: new THREE.Vector3() }, uShadowR: { value: new THREE.Vector3(1, 0, 0) }, uShadowU: { value: new THREE.Vector3(0, 0, 1) },
   uShadowP: { value: new THREE.Vector4(1, 1, 0, 0) },
@@ -87,7 +89,7 @@ export const CHUNK_UNIFORMS = {
   shore: ['uLift'],
   detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
   rings: ['uRing', 'uLeg'],
-  touch: ['uTouchSeg', 'uTouchInfo', 'uTouchCount'],
+  touch: ['uTouchSeg', 'uTouchInfo', 'uTouchCount', 'uContact'],
   shadow: ['tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP', 'tShadowB', 'uShadowB', 'uShadowBP'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
   atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa', 'tEnv'],
