@@ -25,6 +25,7 @@ import { buildPlants } from './world/plants.js';
 import { Sound, measure, runup } from './audio/ambience.js';
 import { shoreCrest } from './data/shoreCPU.js';
 import { createObjectMaterial } from './world/landmarks.js';
+import { pierWalk } from './world/piers.js';
 import { Body } from './world/body.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
@@ -192,6 +193,8 @@ export async function start(canvas, onProgress = () => {}) {
   const wrap64 = v => ((v % 64) + 64) % 64;
   let rings = 0;
   function stamp(step) {
+    // (On a pier: the knock of boards, and no prints in the sand below.)
+    if (onDeck(step.x, step.z) && step.depth < 0.03) { sound.step({ side: step.side, surface: 'wood' }); return; }
     const above = ground.heightAt(step.x, step.z) - shared.uSeaLevel.value;
     sound.step({ depth: step.depth, side: step.side, wet: above < runup(seaAt(step.x, step.z).hs) + 0.02 ? 1 : 0 });
     if (step.depth > 0.03) {
@@ -217,7 +220,12 @@ export async function start(canvas, onProgress = () => {}) {
     for (let a = i - 1; a <= i + 1; a++) for (let b = j - 1; b <= j + 1; b++) for (const q of posts.get(`${a},${b}`) || []) if (Math.hypot(x - q[0], z - q[1]) < q[2]) return true;
     return false;
   };
-  const walker = new Walker({ ground, surfaceAt, blocked, rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
+  // What you stand on: the ground, or a pier's deck once your feet are up at its level (coming up its gangway
+  // from the beach; from the water you pass under it).
+  const pierAt = pierWalk(features.piers, ground);
+  const onDeck = (x, z) => { const deck = pierAt(x, z); return deck && (deck.ramp || walker.eyeY - walker.body > deck.height - 0.5) ? deck : null; };
+  const footing = { heightAt(x, z) { const g = ground.heightAt(x, z), deck = onDeck(x, z); return deck ? Math.max(g, deck.height) : g; } };
+  const walker = new Walker({ ground: footing, surfaceAt, blocked, rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
   rig.walker = walker;
   const app = {
@@ -249,7 +257,11 @@ export async function start(canvas, onProgress = () => {}) {
         const t = rig.target, place = rig.dist > 250 ? places.filter(q => q.id !== 'overview').map(q => [Math.hypot(q.pos[0] - t.x, q.pos[1] - t.z), q]).sort((a, b) => a[0] - b[0])[0] : null;
         spot = place && place[0] < 900 ? walkSpotFor(place[1]) : { x: t.x, z: t.z, yaw: rig.yaw * 180 / Math.PI };
       }
-      if (spot.person) {
+      if (spot.pier) {
+        // "So many metres out along the pier whose landward end is nearest this point, facing out to sea."
+        const q = pierAt.spot(spot.pier, spot.along ?? 8);
+        if (q) { spot = { ...spot, x: q.x, z: q.z, yaw: q.yaw + (spot.face ?? 0) }; walker.eyeY = 50; }        // (feet above the deck: you are put down on it)
+      } else if (spot.person) {
         // "So many metres from the person standing nearest this point, looking at them from `side` radians round."
         const q = landmarks.people.map(v => [Math.hypot(v[0] - spot.person[0], v[1] - spot.person[1]), v]).sort((a, b) => a[0] - b[0])[0]?.[1];
         if (q) {
@@ -380,7 +392,7 @@ export async function start(canvas, onProgress = () => {}) {
       body.pose({ swim: true, stroke: walker.stroke, under }); body.place(walker.eyeY + walker.bob, walker.yaw, under * walker.look);
     }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
-      const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: ground.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
+      const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup], walking ? [body.headMesh] : [], casters);
     } else shared.uShadowP.value.z = 0;
@@ -447,6 +459,7 @@ export async function start(canvas, onProgress = () => {}) {
         'reef and squall': [() => ({ ...base, reef: 1, rain: 1, wind: 11 })],
         'walking on dry sand': [() => ({ ...base }), [0.6, 1.1, 1.6, 2.1, 2.6].map((t, i) => [t, { depth: 0, wet: 0, side: i & 1 }])],
         'walking on wet sand': [() => ({ ...base }), [0.6, 1.1, 1.6, 2.1, 2.6].map((t, i) => [t, { depth: 0, wet: 1, side: i & 1 }])],
+        'walking on a pier': [() => ({ ...base }), [0.6, 1.1, 1.6, 2.1, 2.6].map((t, i) => [t, { side: i & 1, surface: 'wood' }])],
         'wading knee deep': [() => ({ ...base, depth: 0.45, speed: 0.8 }), [0.6, 1.3, 2.0, 2.7].map((t, i) => [t, { depth: 0.45, wet: 1, side: i & 1 }])],
         'under water': [t => ({ ...base, time: t, shores: shore(0.3, 2), under: true })],
       };

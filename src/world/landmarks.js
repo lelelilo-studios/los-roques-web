@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { shadowGLSL } from './shadow.js';
+import { PIER_DECK, pierRuns } from './piers.js';
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -286,19 +287,34 @@ function buildRunway(runway, ground, material) {
   return mesh(mb, material, ax, az);
 }
 
-/** A wooden pier on piles along a polyline. */
-function buildPier(pier, material) {
-  const line = pier.line || [];
-  if (line.length < 2) return null;
-  const [ox, oz] = line[0], w = Math.max(pier.width || 2.5, 1.5) / 2, mb = new MeshBuilder(), wood = [0.36, 0.28, 0.2], pile = [0.2, 0.16, 0.12];
-  for (let i = 0; i < line.length - 1; i++) {
-    const ax = line[i][0] - ox, az = line[i][1] - oz, bx = line[i + 1][0] - ox, bz = line[i + 1][1] - oz, len = Math.hypot(bx - ax, bz - az);
-    if (len < 0.5) continue;
-    const rot = Math.atan2(bz - az, bx - ax);
-    mb.box((ax + bx) / 2, 1.05, (az + bz) / 2, len / 2 + w * 0.2, 0.09, w, wood, rot);
-    for (let d = 1; d < len; d += 4) for (const side of [-1, 1]) {
-      const t = d / len, x = ax + (bx - ax) * t - Math.sin(rot) * side * (w - 0.15), z = az + (bz - az) * t + Math.cos(rot) * side * (w - 0.15);
-      mb.tube(x, z, -3.5, 1.35, 0.11, 0.11, 6, pile);
+/** A wooden pier on piles: a gangway up from the beach, a deck of planks with gaps between them, bollards. */
+function buildPier(pier, material, ground) {
+  const r = pierRuns([pier], ground)[0];
+  if (!r) return null;
+  const ox = r.segs[0].ax, oz = r.segs[0].az, mb = new MeshBuilder(), pile = [0.2, 0.16, 0.12], rnd = rand(Math.round(ox * 7 + oz * 3));
+  const plank = () => { const k = 0.82 + 0.3 * rnd(); return [0.4 * k, 0.33 * k, 0.26 * k]; };       // sun-bleached boards, no two alike
+  for (const s of r.segs) {
+    const ax = s.ax - ox, az = s.az - oz, rot = Math.atan2(s.dz, s.dx), w = r.w;
+    const at = (d, side) => [ax + s.dx * d - s.dz * side, az + s.dz * d + s.dx * side];
+    // The gangway: boards sloping up from the beach to the deck.
+    for (let d = Math.max(0, -s.run); s.run + d < r.ramp && d < s.len; d += 0.16) {
+      const d1 = Math.min(d + 0.15, s.len), y0 = r.g0 + (PIER_DECK - r.g0) * (s.run + d) / r.ramp, y1 = r.g0 + (PIER_DECK - r.g0) * Math.min((s.run + d1) / r.ramp, 1);
+      const a0 = at(d, -w * 0.8), b0 = at(d, w * 0.8), a1 = at(d1, -w * 0.8), b1 = at(d1, w * 0.8), c = plank();
+      mb.quad([a0[0], y0, a0[1]], [b0[0], y0, b0[1]], [b1[0], y1, b1[1]], [a1[0], y1, a1[1]], c);
+    }
+    // The deck: a board every 16 cm with a finger's gap, on two beams.
+    for (let d = Math.max(r.ramp - s.run, 0) + 0.075; d < s.len + (s === r.segs[r.segs.length - 1] ? 0 : w); d += 0.16) {
+      const c = at(d, 0);
+      mb.box(c[0], PIER_DECK - 0.025, c[1], 0.075, 0.025, w, plank(), rot);
+    }
+    for (const side of [-1, 1]) {
+      const c = at(s.len / 2, side * (w - 0.25));
+      mb.box(c[0], PIER_DECK - 0.14, c[1], s.len / 2, 0.09, 0.06, pile, rot);
+    }
+    for (let d = 1; d < s.len; d += 4) for (const side of [-1, 1]) {
+      const c = at(d, side * (w - 0.15));
+      if (s.run + d < r.ramp) continue;
+      mb.tube(c[0], c[1], -3.5, PIER_DECK + 0.22, 0.11, 0.11, 6, pile, true);
     }
   }
   return mesh(mb, material, ox, oz);
@@ -319,7 +335,7 @@ export class Landmarks {
     for (const m of buildVillage(features.buildings || [], ground, this.material)) add(m);
     for (const l of features.lighthouses || []) if (l.pos) add(buildLighthouse(l, ground, this.material));
     for (const r of features.runways || []) if (r.a && r.b) add(buildRunway(r, ground, this.material));
-    for (const p of features.piers || []) add(buildPier(p, this.material));
+    for (const p of features.piers || []) add(buildPier(p, this.material, ground));
     for (const m of extra) add(m);
   }
 

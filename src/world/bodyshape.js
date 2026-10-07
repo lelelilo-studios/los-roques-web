@@ -134,7 +134,8 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {} }) {
     t.tube(elbow, wrist, [0.036, 0.04], [0.026, 0.03], SKIN);
     t.tube(wrist, tip, [0.036, 0.018], [0.03, 0.012], SKIN);
     t.cap(wrist, tip, [0.03, 0.012], SKIN);
-    t.tube([sh[0], sh[1] - 0.005, sh[2]], [side * 0.085, sy + 0.05, sh[2] - 0.01], [0.05, 0.058], [0.05, 0.05], SHIRT);      // the round of the shoulder, sloping to the neck
+    t.tube([sh[0] - side * 0.01, sh[1] - 0.012, sh[2]], [side * 0.075, sy + 0.03, sh[2] - 0.01], [0.045, 0.056], [0.03, 0.045], SHIRT);      // the slope from the shoulder to the neck
+    t.cap(sleeve, sh, [0.052, 0.056], SHIRT, 0.3);                    // the round of the shoulder
     joints.wrists.push(wrist);
   }
   // The trunk: seat, hips, waist, chest, shoulders, up to the base of the neck.

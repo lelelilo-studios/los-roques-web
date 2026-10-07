@@ -275,9 +275,10 @@ void main() {
     vec2 wd = normalize(uWind.xy + 1e-4);
     float spacing = 0.44, ph = dot(d, wd) / spacing + 2.6 * lrNoiseTile(d * 0.1875 + 4.0, 12.0) + 0.7 * lrNoiseTile(d * 0.4375, 28.0) + 0.25 * lrNoiseTile(d * 1.3125 + 7.0, 84.0), f = fract(ph);
     // (Height over one ridge: rising over 80 % of it, falling over 20 %; its slope along the wind.)
-    float rise = f < 0.8 ? 1.0 / 0.8 : -1.0 / 0.2, there = smoothstep(0.3, 0.6, lrNoiseTile(d * 0.15625 + 13.0, 10.0));
+    // (Crests are short: they start, fork and die out within a few steps, never a line you could follow.)
+    float rise = f < 0.8 ? 1.0 / 0.8 : -1.0 / 0.2, there = smoothstep(0.3, 0.6, lrNoiseTile(d * 0.15625 + 13.0, 10.0)) * smoothstep(0.3, 0.65, lrNoiseTile(d * 0.5625 + 21.0, 36.0));
     n = normalize(n - vec3(wd.x, 0.0, wd.y) * 0.016 / spacing * rise * ridged * there * smoothstep(0.0, 0.06, min(f, abs(f - 0.8))));
-    albedo *= 1.0 - 0.05 * ridged * there * smoothstep(0.75, 0.8, f) * (1.0 - smoothstep(0.92, 1.0, f));      // coarse grains on the lee side
+    albedo *= 1.0 - 0.03 * ridged * there * smoothstep(0.75, 0.8, f) * (1.0 - smoothstep(0.92, 1.0, f));      // coarse grains on the lee side
   }
 
   // ---- Close up: the sand itself.

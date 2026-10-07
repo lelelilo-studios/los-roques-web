@@ -111,9 +111,15 @@ export class Ambience {
     src.start(t, this.rnd() * 4, attack + decay + 0.05);
   }
 
-  /** A footfall: `depth` of water there (m), `wet` 0..1 how wet the sand is, `side` 0 left / 1 right. */
-  step({ depth = 0, wet = 0, side = 0 }) {
+  /** A footfall: `depth` of water there (m), `wet` 0..1 how wet the sand is, `side` 0 left / 1 right, `surface` 'sand' or 'wood'. */
+  step({ depth = 0, wet = 0, side = 0, surface = 'sand' }) {
     const pan = side ? 0.12 : -0.12;
+    if (surface === 'wood') {
+      // A board on a pier: a hollow knock and the click of the foot on it.
+      this.burst('brown', 'lowpass', 210 + 60 * this.rnd(), 1.4, 0.7, 0.004, 0.1, pan);
+      this.burst('pink', 'bandpass', 950, 1.0, 0.07, 0.003, 0.04, pan, 0.006);
+      return;
+    }
     if (depth > 0.03) {
       // In water: a splash, longer the deeper, and the plunk of the foot going in.
       const d = clamp01(depth * 2.2);
