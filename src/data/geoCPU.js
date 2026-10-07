@@ -14,7 +14,7 @@ export function bspline(f, out = [0, 0, 0, 0]) {
 /** Height of a sand shore at signed distance s from the waterline (s > 0 seaward). Same as lrShoreProfile. */
 export function shoreProfile(s, mapHeight) {
   if (s >= 0) return -0.11 * s / (1 + 0.22 * s) - Math.max(s - 4, 0) * 0.02;
-  const berm = Math.min(1, Math.max(0.08, mapHeight * 1.2 + 0.05));
+  const berm = Math.min(1, Math.max(0.3, mapHeight * 1.2 + 0.05));
   return berm * (1 - Math.exp(s * 0.11 / berm));
 }
 

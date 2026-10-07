@@ -26,11 +26,12 @@ float lrBicubic(sampler2D tex, vec2 uv, vec2 size) {
 }
 
 // Height of a sand shore at signed distance s from the waterline (s > 0 is seaward), relative to mean sea level.
-// Land side: rises at 0.11 m/m and levels off at a berm whose height follows the mapped ground there (up to
-// +1 m), so a low sand spit like the Cayo de Agua isthmus stays low enough for a high tide to cover.
+// Land side: rises at 0.11 m/m and levels off at a berm whose height follows the mapped ground there, between
+// 0.3 and 1 m: no beach is flooded by the tide alone (the highest sea level is +0.17 m), but on a sand spit
+// as low as the Cayo de Agua isthmus the swash of a high tide runs right across.
 // Sea side: a step to -0.5 m a few metres out, then a 1:50 terrace.
 float lrShoreProfile(float s, float mapHeight) {
-  float berm = clamp(mapHeight * 1.2 + 0.05, 0.08, 1.0);
+  float berm = clamp(mapHeight * 1.2 + 0.05, 0.3, 1.0);
   float up = berm * (1.0 - exp(min(s, 0.0) * 0.11 / berm));
   float dn = -0.11 * s / (1.0 + 0.22 * max(s, 0.0)) - max(s - 4.0, 0.0) * 0.02;
   return s < 0.0 ? up : dn;
