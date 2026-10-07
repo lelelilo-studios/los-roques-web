@@ -16,7 +16,7 @@ export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, S
 /** Vertices the body below the neck and the head can take (see poseBody). */
 export const BODY_VERTICES = 6 * SIDES * 36 + 3 * SIDES * 12, HEAD_VERTICES = 6 * SIDES * 5 + 3 * SIDES;
 /** The same with `detail` (your own body: hands with fingers and thumbs, feet with toes). */
-export const BODY_VERTICES_DETAIL = BODY_VERTICES + 108 * SIDES + 2100;
+export const BODY_VERTICES_DETAIL = BODY_VERTICES + 108 * SIDES + 6800;
 const LIMB = new Float64Array(11 * 12), SKIN_RINGS = new Float64Array(8 * (SIDES + 1) * 6);
 const add = (p, a, ka, b = null, kb = 0, c = null, kc = 0) => [p[0] + a[0] * ka + (b ? b[0] * kb : 0) + (c ? c[0] * kc : 0), p[1] + a[1] * ka + (b ? b[1] * kb : 0) + (c ? c[1] * kc : 0), p[2] + a[2] * ka + (b ? b[2] * kb : 0) + (c ? c[2] * kc : 0)];
 const unit = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -83,9 +83,10 @@ export class Tubes {
    * across the bend (square to the mean of their directions), so the stretches meet all the way round. (Rings
    * square to each stretch's own axis left a wedge open on the outside of every bend: dark slits across the
    * instep and at the finger joints.) `across` is where the first radius of each pair points (the body's x if
-   * null); `n` sides (at most SIDES); `tip` > 0 rounds the far end off that far beyond the last point.
+   * null); `n` sides (at most SIDES); `tip` > 0 rounds the far end off that far beyond the last point. `tint` =
+   * { dir, colour }: skin facing `dir` takes that colour instead (the palm of a hand is paler than its back).
    */
-  skin(pts, radii, colours, across = null, n = SIDES, tip = 0) {
+  skin(pts, radii, colours, across = null, n = SIDES, tip = 0, tint = null) {
     const m = pts.length, dirs = [], ring = SKIN_RINGS, step = (n + 1) * 6;
     for (let i = 0; i < m - 1; i++) dirs.push(unit([pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]]));
     const taper = i => ((radii[i][0] + radii[i][1]) - (radii[i + 1][0] + radii[i + 1][1])) / (2 * (Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]) || 1e-6));
@@ -108,7 +109,11 @@ export class Tubes {
     let q = this.n * 3;
     const put = (o, colour) => {
       pos[q] = ring[o]; pos[q + 1] = ring[o + 1]; pos[q + 2] = ring[o + 2]; nor[q] = ring[o + 3]; nor[q + 1] = ring[o + 4]; nor[q + 2] = ring[o + 5];
-      col[q] = colour[0]; col[q + 1] = colour[1]; col[q + 2] = colour[2]; q += 3;
+      if (tint) {
+        const k = Math.min(1, Math.max(0, (ring[o + 3] * tint.dir[0] + ring[o + 4] * tint.dir[1] + ring[o + 5] * tint.dir[2] + 0.15) / 0.8));
+        col[q] = colour[0] + (tint.colour[0] - colour[0]) * k; col[q + 1] = colour[1] + (tint.colour[1] - colour[1]) * k; col[q + 2] = colour[2] + (tint.colour[2] - colour[2]) * k;
+      } else { col[q] = colour[0]; col[q + 1] = colour[1]; col[q + 2] = colour[2]; }
+      q += 3;
     };
     for (let i = 0; i < m - 1; i++) {
       const colour = Array.isArray(colours[0]) ? colours[i] : colours;
@@ -181,27 +186,39 @@ export class Tubes {
     const fxN = cross(f, N), A = [fxN[0] * side, fxN[1] * side, fxN[2] * side];        // across the palm, towards the thumb
     const K = add(wrist, f, 0.096);
     this.palm = { wrist: wrist.slice(), knuckles: K, f: f.slice(), N, A };
-    // (The palm is one skin from inside the wrist to the knuckles: closed at the wrist, however the hand is bent.)
-    this.skin([add(wrist, f, -0.016), add(wrist, f, -0.004), wrist, K], [[0.006, 0.005], [0.022, 0.015], [0.027, 0.017], [0.04, 0.0125]], colour, A, 6);
+    // The palm is paler than the back of the hand, and so are the pads of the fingers.
+    const pale = { dir: N, colour: [colour[0] * 1.22, colour[1] * 1.2, colour[2] * 1.24] }, back = [-N[0], -N[1], -N[2]];
+    // (One skin from inside the wrist to the knuckles: closed at the wrist, however the hand is bent.)
+    this.skin([add(wrist, f, -0.016), add(wrist, f, -0.004), wrist, add(wrist, f, 0.05), K], [[0.006, 0.005], [0.022, 0.015], [0.027, 0.017], [0.038, 0.0135], [0.04, 0.0115]], colour, A, 8, 0, pale);
+    // The two cushions of the palm, with the hollow between them that things lie in: the ball of the thumb,
+    // and the heel of the hand below the little finger. And the knuckles, standing a little proud on the back.
+    // (Each a rounded cushion, not a spindle: its ends are blunt.)
+    const pad = (c, d, len, r) => this.skin([-1, -0.82, -0.45, 0, 0.45, 0.82, 1].map(k => add(c, d, k * len)), [0.12, 0.58, 0.9, 1, 0.9, 0.58, 0.12].map(k => [r[0] * k, r[1] * k]), colour, A, 8, 0, pale);
+    pad(add(wrist, f, 0.036, A, 0.017, N, 0.005), unit(add([0, 0, 0], f, 0.85, A, 0.5)), 0.03, [0.0155, 0.0125]);
+    pad(add(wrist, f, 0.04, A, -0.0155, N, 0.0045), f, 0.03, [0.0125, 0.0115]);
     let middle = K;
     for (let i = 0; i < 4; i++) {
       // Three bones to a finger, each bent a little more than the one before it (a relaxed hand curls most at
-      // the tips); the fingers lie side by side, the little one set back along the knuckle line.
-      const L = [0.076, 0.085, 0.079, 0.062][i], r = [0.0086, 0.009, 0.0086, 0.0076][i], c1 = curl * (0.4 + 0.1 * i), c2 = c1 + curl * 0.7, c3 = c2 + curl * 0.55;
+      // the tips); the fingers lie side by side, the little one set back along the knuckle line. A finger is
+      // thickest at its joints and waisted between them, a little flattened, the pad of its tip rounded.
+      const L = [0.076, 0.085, 0.079, 0.062][i], r = [0.0088, 0.0092, 0.0088, 0.0077][i], c1 = curl * (0.4 + 0.1 * i), c2 = c1 + curl * 0.7, c3 = c2 + curl * 0.55;
       // (Spread, each finger turns a few degrees away from the middle of the hand, and its root moves with it.)
       const fan = (1.5 - i) * 0.13 * spread, g = add([0, 0, 0], f, Math.cos(fan), A, Math.sin(fan));
       const B = add(K, A, 0.0285 - 0.019 * i + (1.5 - i) * 0.0025 * spread, f, -0.0016 * i * i);
       const M1 = add(B, g, Math.cos(c1) * 0.46 * L, N, Math.sin(c1) * 0.46 * L), M2 = add(M1, g, Math.cos(c2) * 0.29 * L, N, Math.sin(c2) * 0.29 * L), T = add(M2, g, Math.cos(c3) * 0.25 * L, N, Math.sin(c3) * 0.25 * L);
-      this.skin([B, M1, M2, T], [[r, r * 0.92], [r * 0.93, r * 0.85], [r * 0.84, r * 0.76], [r * 0.7, r * 0.6]], colour, A, 6, r * 0.6);
+      const mid = (p, q2) => [(p[0] + q2[0]) / 2, (p[1] + q2[1]) / 2, (p[2] + q2[2]) / 2], flat = 0.9;
+      this.skin([B, mid(B, M1), M1, mid(M1, M2), M2, mid(M2, T), T],
+        [[r, r * flat], [r * 0.9, r * 0.84], [r * 0.97, r * 0.88], [r * 0.83, r * 0.77], [r * 0.9, r * 0.8], [r * 0.8, r * 0.74], [r * 0.7, r * 0.6]], colour, A, 8, r * 0.62, pale);
+      this.skin([add(B, f, -0.011, back, 0.0065), add(B, back, 0.0085), add(B, f, 0.01, back, 0.006)], [[0.002, 0.002], [r * 0.95, r * 0.6], [0.002, 0.002]], colour, A, 6);      // the knuckle
       // (The nail lies on the back of the last joint.)
-      const along = [T[0] - M2[0], T[1] - M2[1], T[2] - M2[2]], back = [-N[0], -N[1], -N[2]];
-      this.nail(add(M2, along, 0.2, back, r * 0.74), add(M2, along, 0.86, back, r * 0.62), A, r * 0.56, back);
+      const along = [T[0] - M2[0], T[1] - M2[1], T[2] - M2[2]];
+      this.nail(add(M2, along, 0.2, back, r * 0.78), add(M2, along, 0.86, back, r * 0.64), A, r * 0.56, back);
       if (i === 1) middle = T;
     }
-    // The thumb stands off the edge of the palm, turned towards the fingers.
-    const B = add(wrist, f, 0.026, A, 0.027, N, 0.006), d1 = unit(add([0, 0, 0], f, 0.62, A, 0.72, N, 0.12 + 0.35 * curl)), M = add(B, d1, 0.046);
-    const d2 = unit(add([0, 0, 0], f, 0.82, A, 0.42, N, 0.2 + 0.45 * curl)), T = add(M, d2, 0.032);
-    this.skin([add(B, d1, -0.012), B, M, T], [[0.008, 0.009], [0.0115, 0.0125], [0.0095, 0.0105], [0.0075, 0.0085]], colour, N, 6, 0.006);      // (its root goes into the heel of the hand)
+    // The thumb stands off the edge of the palm, turned towards the fingers: its root is in the ball of the thumb.
+    const B = add(wrist, f, 0.03, A, 0.028, N, 0.006), d1 = unit(add([0, 0, 0], f, 0.62, A, 0.72, N, 0.12 + 0.35 * curl)), M = add(B, d1, 0.044);
+    const d2 = unit(add([0, 0, 0], f, 0.82, A, 0.42, N, 0.2 + 0.45 * curl)), T = add(M, d2, 0.033);
+    this.skin([add(B, d1, -0.014), B, add(B, d1, 0.024), M, add(M, d2, 0.018), T], [[0.009, 0.0095], [0.0125, 0.013], [0.0105, 0.0112], [0.011, 0.0115], [0.0095, 0.0098], [0.0082, 0.0085]], colour, N, 8, 0.0065, pale);
     return middle;
   }
   /** A rounded end on a tube (a low cone of triangles to a point just beyond b). */
@@ -401,7 +418,7 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       t.tube(elbow, wrist, [0.036, 0.04], [0.021, 0.028], SKIN);
       // (The wrist is a ball between the two: whichever way the hand bends from the forearm, the joint is closed.)
-      { const w = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]); t.skin([add(wrist, w, -0.02), add(wrist, w, -0.012), add(wrist, w, -0.002), add(wrist, w, 0.008), add(wrist, w, 0.015)], [[0.004, 0.004], [0.0165, 0.019], [0.02, 0.0225], [0.0165, 0.019], [0.004, 0.004]], SKIN); }
+      { const w = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]); t.skin([add(wrist, w, -0.02), add(wrist, w, -0.012), add(wrist, w, -0.002), add(wrist, w, 0.008), add(wrist, w, 0.015)], [[0.004, 0.004], [0.0165, 0.02], [0.0195, 0.0235], [0.0165, 0.019], [0.004, 0.004]], SKIN); }
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
       const rest = [-side, -0.6 * wade, 0.35 * (1 - wade)], loose = 0.55 - 0.3 * wade;
       const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0);

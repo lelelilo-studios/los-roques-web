@@ -15,11 +15,55 @@ const clamp01 = v => Math.min(1, Math.max(0, v));
 const wrap64 = v => ((v % 64) + 64) % 64;
 // How fast a handful runs out (handfuls a second when the hand is full), how many grains or drops a handful is
 // drawn as, their size (m), and how much stays on the hand.
+// (Slowly: a handful of dry sand takes eight seconds to run out, water four.)
 const STUFF = {
-  dry: { rate: 0.3, things: 1700, size: [0.0014, 0.0025], left: 0 },
+  dry: { rate: 0.2, things: 650, size: [0.0014, 0.0025], left: 0 },
   wet: { rate: 0.2, things: 260, size: [0.003, 0.0065], left: 0.12 },
-  water: { rate: 0.75, things: 520, size: [0.0022, 0.0042], left: 0 },
+  water: { rate: 0.42, things: 260, size: [0.0022, 0.0042], left: 0 },
 };
+// The streams: one from each of the three gaps between the four fingers, each a ribbon of so many samples.
+const GAPS = 3, SAMPLES = 64, GRAVITY = 9.8;
+
+const streamVertex = /* glsl */`
+#include <lr_common>
+in vec2 aUV;       // across the stream, -1..1; and when this part of it left the hand (s)
+in vec3 aInfo;     // how strongly it was running then, 0..1; how long it has been falling (s); which gap
+out vec3 vRel;
+out vec2 vUV;
+out vec3 vInfo;
+void main() { vRel = position; vUV = aUV; vInfo = aInfo; gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0); }`;
+const streamFragment = /* glsl */`
+#include <lr_common>
+${shadowGLSL}
+uniform float uWater;
+in vec3 vRel;
+in vec2 vUV;
+in vec3 vInfo;
+layout(location = 0) out vec4 outColor;
+void main() {
+  float u = vUV.x, s = vUV.y, k = vInfo.x, tau = vInfo.y, seed = vInfo.z * 17.0;
+  // (Under the hand the stream is in its shadow, but not in the dark: the sunlit sand below lights it from
+  // underneath. With the sky alone it came out deep blue.)
+  vec3 bounce = uSunE * max(uSunDir.y, 0.0) * 0.3 * vec3(0.76, 0.7, 0.6);
+  vec3 light = (uSunE * max(uSunDir.y, 0.0) * lrShadow(vRel, vec3(0.0, 1.0, 0.0)) + uSkyE + bounce) / PI;
+  if (uWater > 0.5) {
+    // Water leaves the hand as a thread and breaks into beads as it falls (a thread of water cannot keep its
+    // shape: it necks and parts within a hand's breadth).
+    float bead = 0.5 + 0.5 * sin(s * 150.0 + seed + 4.0 * lrNoise(vec2(s * 14.0, seed)));
+    float parted = smoothstep(0.03, 0.2, tau), round_ = 1.0 - u * u;
+    if (k < 0.03 || round_ < 0.12 || bead < parted * (0.82 - 0.3 * k) || round_ * mix(1.0, bead, parted) < 0.2) discard;
+    outColor = vec4(light * vec3(0.8, 0.86, 0.9) + uSunE * 0.035 * smoothstep(0.35, 0.0, abs(u + 0.3)) * step(0.5, bead + 1.0 - parted), -1000.0);
+  } else {
+    // Sand leaves it as a dense thread of grains, which spreads and thins as it speeds up. The grains are tied
+    // to the moment they left the hand, so they travel down the stream and draw out into streaks as they go.
+    float grain = 0.6 * lrNoise(vec2(u * 2.2 + seed, s * 380.0)) + 0.4 * lrNoise(vec2(u * 5.0 - seed, s * 1300.0 + 9.0));
+    float dense = k * (1.0 - u * u * u * u) * mix(1.0, 0.5, smoothstep(0.0, 0.3, tau));
+    if (grain > 0.18 + 0.72 * dense) discard;
+    float shade = lrNoise(vec2(u * 7.0 + seed * 3.0, s * 700.0));
+    // (Falling, grains show their shaded sides: a stream is a shade darker than the sunlit beach behind it.)
+    outColor = vec4(mix(vec3(0.26, 0.23, 0.19), vec3(0.5, 0.46, 0.4), shade) * light, -1000.0);
+  }
+}`;
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -62,14 +106,15 @@ void main() {
   // (Grains big enough to tell apart at arm's length: darker ones, and flakes of shell.)
   vec3 sand = vec3(0.7, 0.65, 0.56) * (0.78 + 0.2 * fine + 0.12 * coarse + 0.14 * bits) * (1.0 - 0.32 * step(0.8, bits)) + 0.2 * step(0.86, lrNoise(vLocal.xz * 480.0 + 11.0));
   sand *= mix(1.0, 0.56, wet);                                                            // (wet sand is darker by that much)
-  vec3 col = sand * (uSunE * lrSaturate(dot(grain, uSunDir)) * lit + uSkyE * (0.5 + 0.5 * grain.y)) / PI;
+  vec3 col = sand * (uSunE * lrSaturate(dot(grain, uSunDir)) * lit + uSkyE * (0.5 + 0.5 * grain.y) + uSunE * max(uSunDir.y, 0.0) * 0.12 * vec3(0.76, 0.7, 0.6)) / PI;
   col += wet * uSunE * lit * 0.5 * pow(lrSaturate(dot(reflect(-V, grain), uSunDir)), 60.0);  // and glistens
   // Water in the palm: the skin seen through it, the sky in it, the sun's glint off it.
   float fresnel = 0.02 + 0.98 * pow(1.0 - lrSaturate(dot(n, V)), 5.0);
   // (Its surface trembles, so the sky shows in it brokenly even looking straight down, and it is brightest round its rim.)
   float tremble = lrNoise(vLocal.xz * 180.0 + uTime * 3.0), rim = smoothstep(0.55, 0.15, rise);
-  float sky = max(fresnel, 0.16 + 0.3 * tremble * tremble + 0.25 * rim);
-  vec3 pool = vec3(0.44, 0.33, 0.27) * (uSunE * lrSaturate(uSunDir.y) * lit + uSkyE) / PI * (1.0 - sky) + sky * uSkyE / PI * 1.5
+  // (Clear water a few millimetres deep: mostly the palm seen through it, a little darker for being wet.)
+  float sky = max(fresnel, 0.05 + 0.14 * tremble * tremble + 0.22 * rim);
+  vec3 pool = vec3(0.5, 0.37, 0.29) * (uSunE * lrSaturate(uSunDir.y) * lit + uSkyE) / PI * (1.0 - sky) + sky * uSkyE / PI * 1.5
             + uSunE * lit * (4.0 * pow(lrSaturate(dot(reflect(-V, normalize(n + 0.12 * vec3(tremble - 0.5, 0.0, lrNoise(vLocal.zx * 180.0 - uTime * 2.6) - 0.5))), uSunDir)), 500.0) + 0.02 * rim);
   outColor = vec4(mix(col, pool, water), -1000.0);
 }`;
@@ -98,6 +143,21 @@ export class Hand {
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.shadow], { uSize: { value: new THREE.Vector3(1, 1, 1) }, uStuff: { value: new THREE.Vector2() } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
+    // The streams between the fingers: ribbons turned to the eye, rebuilt every frame from where each part of
+    // them left the hand and how long it has been falling since.
+    const verts = GAPS * SAMPLES * 2, sIdx = [];
+    this.sPos = new THREE.BufferAttribute(new Float32Array(verts * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.sUV = new THREE.BufferAttribute(new Float32Array(verts * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    this.sInfo = new THREE.BufferAttribute(new Float32Array(verts * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    for (let g = 0; g < GAPS; g++) for (let j = 0; j < SAMPLES - 1; j++) { const a = (g * SAMPLES + j) * 2; sIdx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    const ribbons = new THREE.BufferGeometry();
+    ribbons.setAttribute('position', this.sPos); ribbons.setAttribute('aUV', this.sUV); ribbons.setAttribute('aInfo', this.sInfo); ribbons.setIndex(sIdx);
+    this.streams = new THREE.Mesh(ribbons, new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: streamVertex, fragmentShader: streamFragment, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps },
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.shadow], { uWater: { value: 0 } }),
+    }));
+    this.streams.frustumCulled = false; this.streams.matrixAutoUpdate = false; this.streams.visible = false;
+    this.trail = Array.from({ length: GAPS }, () => []);
     this.count = shared.uTouchSeg.value.length;
     this.reset();
   }
@@ -116,7 +176,10 @@ export class Hand {
       empty: 0,           // how long it has been empty, held up
       tip: null, from: null, speed: 0, mark: -1, marks: 0, heap: null, spot: null,
       spoke: 0, ringed: 0, wet: 0, sand: 0, floor: 0, at: null,
+      pushed: -1, epoch: 0, bounce: 0, lastK: null, pour: null,
     });
+    if (this.trail) for (const t of this.trail) t.length = 0;
+    if (this.streams) this.streams.visible = false;
     shared.uTouchCount.value = 0; shared.uLeg.value[2].z = 0;
     if (this.mesh) this.mesh.visible = false;
   }
@@ -222,7 +285,7 @@ export class Hand {
       // The fingers have closed: the handful is taken. Out of the sand it leaves a hollow with their gouges in
       // it (where the hand had only pressed, not where it was drawn along).
       if (this.grip >= 1 && !this.took) {
-        this.took = true; this.amount = 1; this.owed = 0; this.empty = 0; this.heap = this.spot = null;
+        this.took = true; this.amount = 1; this.owed = 0; this.empty = 0; this.heap = this.spot = null; this.epoch = time;
         this.sound.touch(this.kind, 'take');
         if (sandy && this.mark >= 0 && info[this.mark].y > 0.5) { info[this.mark].set(time, 4, c.yaw, this.kind === 'dry' ? 1 : 0.7); this.mark = -1; }
         if (!sandy) this.ring(tip[0], tip[2], time, 0.3);
@@ -251,14 +314,19 @@ export class Hand {
 
     // Held up: what is in the palm, and its running out between the fingers.
     const palm = touching?.palm;
+    let running = 0;
     this.pour = null; this.mesh.visible = false;
+    if (!palm || this.lift <= 0.25) this.lastK = null;
     if (palm && this.lift > 0.25) {
       const stuff = STUFF[this.kind], K = c.world(palm.knuckles), f = c.turn(palm.f), N = c.turn(palm.N), A = c.turn(palm.A);
       // (Sand beds itself into the palm; water lies on it.)
       const lift = sandy ? 0.006 : 0.0125, middle = [K[0] - f[0] * 0.04 + N[0] * lift, K[1] - f[1] * 0.04 + N[1] * lift, K[2] - f[2] * 0.04 + N[2] * lift];
       // Where it lands: on the ground under the hand, or on the sea if that is deeper there than a finger.
       const ground = c.groundAt(K[0], K[2]), sea = c.surf - ground > 0.01, floor = sea ? c.surf : ground;
-      this.pour = { K, f, N, A, floor, sea, ground };
+      // (What leaves the hand leaves with the hand's own motion.)
+      const v = this.lastK && dt > 0 ? [0, 1, 2].map(i => Math.max(-1.5, Math.min(1.5, (K[i] - this.lastK[i]) / dt))) : [0, 0, 0];
+      this.lastK = K;
+      this.pour = { K, f, N, A, floor, sea, ground, v };
       if (this.amount > 0.004) {
         // The heap (or the pool) in the palm: smaller as it goes.
         const k = Math.cbrt(this.amount), r = sandy ? 0.013 + 0.024 * k : 0.014 + 0.024 * Math.sqrt(this.amount), h = sandy ? 0.003 + 0.019 * k : 0.004 + 0.004 * this.amount;
@@ -271,6 +339,7 @@ export class Hand {
           // It runs out: fast at first, slower as the heap goes down (the last of it clings). Sent down with
           // the button while you stand, the hand opens and lets it all go three times as fast.
           const rate = stuff.rate * (0.3 + 0.7 * Math.sqrt(this.amount)) * (c.want && !c.canReach ? 3 : 1), gone = Math.min(this.amount, rate * dt);
+          running = Math.min(1, rate / stuff.rate);
           this.release(gone, time, dt);
           this.amount -= gone;
           if (this.amount <= Math.max(stuff.left, 0.004)) { this.amount = 0; this.empty = 0; this.sound.touch(this.kind, 'up'); }
@@ -279,6 +348,7 @@ export class Hand {
         }
       } else if (dt > 0) this.empty += dt;
     }
+    this.flow(dt, c, running > 0 && this.kind !== 'wet' ? this.pour : null, running);
     // (A wet hand dries in a minute or so in this sun and wind; dry sand falls off it sooner.)
     if (dt > 0 && !this.down && this.amount < 0.02) { this.wet = Math.max(0, this.wet - dt / 70); this.sand = Math.max(0, this.sand - dt / (this.wet > 0.3 ? 60 : 6)); }
     const wrist = c.joints.wrists[1], end = c.joints.fingertips[1];
@@ -286,6 +356,85 @@ export class Hand {
       const mid = c.world([(wrist[0] + end[0]) / 2, (wrist[1] + end[1]) / 2, (wrist[2] + end[2]) / 2]);
       c.material.uniforms.uHandWet.value.set(mid[0] - c.eye.x, mid[1], mid[2] - c.eye.z, this.wet);
       c.material.uniforms.uHandSand.value = this.sand;
+    }
+  }
+
+  /** Where the stream from gap i (0 between the first two fingers .. 2) leaves the hand. */
+  gapAt(p, i) {
+    const a = [0.019, 0, -0.019][i];
+    return [p.K[0] + p.A[0] * a + p.f[0] * 0.012 - p.N[0] * 0.011, p.K[1] + p.A[1] * a + p.f[1] * 0.012 - p.N[1] * 0.011, p.K[2] + p.A[2] * a + p.f[2] * 0.012 - p.N[2] * 0.011];
+  }
+
+  /**
+   * The streams between the fingers. Each is remembered as the points at which it left the hand, a seventieth
+   * of a second apart, with the moment and the motion it left with; each point has since fallen freely, and
+   * the ribbon is drawn through where they are now: so a stream trails behind a moving hand, starts from the
+   * hand when the pouring starts, and its tail falls away when it stops. As the handful goes, the streams
+   * fail one after another, the last a thin trickle.
+   * @param {object | null} pour  the hand's frame while it pours (this.pour), else null
+   * @param {number} running  how fast, 0..1
+   */
+  flow(dt, c, pour, running) {
+    const time = c.time, eye = c.eye, water = this.kind === 'water', r = this.spray.random;
+    if (pour && dt > 0 && time - this.pushed >= 1 / 75) {
+      this.pushed = time;
+      for (let i = 0; i < GAPS; i++) {
+        const k = running * clamp01((this.amount - [0.0, 0.1, 0.24][i]) / 0.12) * (0.8 + 0.2 * Math.sin(time * (6 + i) + i * 2.1));
+        this.trail[i].unshift({ t: time, p: this.gapAt(pour, i), v: [pour.v[0] + pour.f[0] * 0.03, pour.v[1] - 0.08, pour.v[2] + pour.f[2] * 0.03], k, floor: pour.floor, sea: pour.sea });
+        if (this.trail[i].length > SAMPLES - 1) this.trail[i].pop();
+      }
+    }
+    const pos = this.sPos.array, uv = this.sUV.array, info = this.sInfo.array;
+    let any = false, landed = null;
+    for (let i = 0; i < GAPS; i++) {
+      const trail = this.trail[i], base = i * SAMPLES * 2;
+      let n = 0;
+      // One point of the stream: two vertices, either side of it, on the line across the eye's view of its fall.
+      const write = (x, y, z, vx, vy, vz, when, k, tau) => {
+        const ex = eye.x - x, ey = eye.y - y, ez = eye.z - z;
+        let sx = vy * ez - vz * ey, sy = vz * ex - vx * ez, sz = vx * ey - vy * ex;
+        const sl = Math.hypot(sx, sy, sz) || 1, half = (water ? 0.0014 + 0.0012 * tau : 0.0012 + 0.0075 * tau) * (0.5 + 0.5 * k) / sl;
+        sx *= half; sy *= half; sz *= half;
+        for (const side of [-1, 1]) {
+          const o = base + n * 2 + (side > 0 ? 1 : 0);
+          pos[o * 3] = x - eye.x + sx * side; pos[o * 3 + 1] = y + sy * side; pos[o * 3 + 2] = z - eye.z + sz * side;
+          uv[o * 2] = side; uv[o * 2 + 1] = when - this.epoch;
+          info[o * 3] = k; info[o * 3 + 1] = tau; info[o * 3 + 2] = i;
+        }
+        n++;
+      };
+      // (The top of it is at the hand, wherever that is this very frame.)
+      if (pour && trail.length) { const at = this.gapAt(pour, i), q = trail[0]; write(at[0], at[1], at[2], q.v[0], q.v[1], q.v[2], time, q.k, 0); }
+      for (let j = 0; j < trail.length && n < SAMPLES; j++) {
+        const q = trail[j], tau = time - q.t, x = q.p[0] + q.v[0] * tau, z = q.p[2] + q.v[2] * tau, y = q.p[1] + q.v[1] * tau - 0.5 * GRAVITY * tau * tau;
+        if (y <= q.floor) {
+          // It has landed: the stream ends here, and what was below this is forgotten.
+          write(x, q.floor, z, q.v[0], q.v[1] - GRAVITY * tau, q.v[2], q.t, q.k, tau);
+          trail.length = j === 0 && !pour ? 0 : j + 1;
+          if (q.k > 0.05) landed = [x, q.floor, z, q.k, q.sea];
+          break;
+        }
+        write(x, y, z, q.v[0], q.v[1] - GRAVITY * tau, q.v[2], q.t, q.k, tau);
+      }
+      if (n > 1) any = true;
+      // (The rest of the ribbon is folded away into its last point.)
+      const last = base + Math.max(n - 1, 0) * 2;
+      for (let o = base + n * 2; o < base + SAMPLES * 2; o++) {
+        pos[o * 3] = n ? pos[last * 3] : 0; pos[o * 3 + 1] = n ? pos[last * 3 + 1] : -1e4; pos[o * 3 + 2] = n ? pos[last * 3 + 2] : 0;
+        info[o * 3] = 0; info[o * 3 + 1] = 0; info[o * 3 + 2] = i; uv[o * 2] = 0; uv[o * 2 + 1] = 0;
+      }
+    }
+    this.sPos.needsUpdate = this.sUV.needsUpdate = this.sInfo.needsUpdate = true;
+    this.streams.visible = any;
+    this.streams.material.uniforms.uWater.value = water ? 1 : 0;
+    // Where a stream lands: grains bounce and roll off the heap; drops leap from the sea.
+    if (landed && dt > 0 && (!water || landed[4])) {
+      this.bounce += dt * (water ? 26 : 45) * landed[3];
+      for (; this.bounce >= 1; this.bounce--) {
+        const a = r() * 2 * Math.PI, out = water ? 0.15 + 0.35 * r() : 0.08 + 0.3 * r();
+        this.spray.put(wrap64(landed[0] + (r() - 0.5) * 0.012), landed[1] + 0.003, wrap64(landed[2] + (r() - 0.5) * 0.012), landed[1], time, [Math.cos(a) * out, water ? 0.5 + 0.7 * r() : 0.2 + 0.45 * r(), Math.sin(a) * out],
+          water ? 0.002 + 0.002 * r() : 0.0012 + 0.001 * r(), water);
+      }
     }
   }
 
