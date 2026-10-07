@@ -1,0 +1,163 @@
+// Land and seabed: one clipmap mesh shaded from the data maps.
+//
+// Output convention for everything opaque (the water pass relies on it):
+//   alpha = water depth above the fragment (sea level - ground), positive when submerged;
+//   rgb   = lit reflectance when submerged (the water pass turns it into what you see through the water),
+//           radiance when above water.
+import * as THREE from 'three';
+import { Clipmap, clipmapFragment, clipmapVertex } from '../core/clipmap.js';
+import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
+import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
+
+// Lumpy tops of tree crowns: 1 = average height. Used for the canopy's shape (vertices) and its shading (pixels).
+const crownsGLSL = /* glsl */`
+float lrCrowns(vec2 wxz) { return 0.72 + 0.36 * lrNoise(wxz / 4.3) + 0.2 * lrNoise(wxz / 1.7); }
+`;
+
+const vertexShader = /* glsl */`
+#include <lr_common>
+#include <lr_geo>
+${wavesGLSL}
+${clipmapVertex}
+${crownsGLSL}
+uniform sampler2D tLand;   // r mangrove, g scrub, b built-up, a canopy height / 25.5 m
+out vec3 vRel;      // position relative to the camera in x/z, absolute height in y (before the curvature drop)
+out float vViewZ;
+out vec4 vWeights;  // local wave heights (for the caustics)
+out float vCanopy;  // height of the tree canopy drawn above the ground here, metres
+void main() {
+  float cell, shore;
+  vec2 rel = lrClipmapRel(cell), wxz = uCamXZ + rel;
+  float h = lrGround(wxz, cell, shore);
+  vWeights = lrWaveWeights(wxz, uSeaLevel - h);
+  // Mangrove stands are drawn as a shell over the ground: the data says where and how tall, noise makes the
+  // edge ragged and the top lumpy like tree crowns. (The ground function itself stays the ground: mangroves stand in water.)
+  vec4 land = textureLod(tLand, lrMapUV(wxz), log2(max(cell / uMpp, 1.0)));
+  float stand = smoothstep(0.34, 0.62, land.r + (lrNoise(wxz / 11.0) - 0.5) * 0.5 * step(cell, 16.0));
+  // (Cells too coarse to carry the crowns get the average height; the shading still shows them.)
+  // From far away the trees are too small to matter as geometry (and coarse cells would smear the shell over
+  // sand and water): there the canopy is only shaded, per pixel.
+  vCanopy = stand * max(land.a * 25.5, 3.0) * mix(lrCrowns(wxz), 1.0, smoothstep(1.0, 3.0, cell)) * (1.0 - smoothstep(4.0, 10.0, cell));
+  h += vCanopy;
+  vRel = vec3(rel.x, h, rel.y);
+  vec4 view = viewMatrix * vec4(rel.x, h - lrCurveDrop(rel), rel.y, 1.0);
+  vViewZ = -view.z;
+  gl_Position = projectionMatrix * view;
+}`;
+
+const fragmentShader = /* glsl */`
+#include <lr_common>
+#include <lr_geo>
+#include <lr_shore>
+#include <lr_cloud_shadow>
+${wavesGLSL}
+${clipmapFragment}
+uniform sampler2D tAlbedo;
+uniform sampler2D tSatellite;
+uniform sampler2D tBenthic;   // r seagrass, g coral/algae, b rubble, a confidence
+uniform sampler2D tLand;      // r mangrove, g scrub, b built-up, a canopy height / 25.5 m
+uniform float uCompareX;
+${crownsGLSL}
+in vec3 vRel;
+in float vViewZ;
+in vec4 vWeights;
+in float vCanopy;
+layout(location = 0) out vec4 outColor;
+
+// Sunlight focused and spread by the waves above a bed point 'water' metres down: the wavy surface acts as a
+// sheet of weak lenses, and the brightness is one over the area a bundle of rays is squeezed into. Each ray is
+// traced back to where it entered; the sun's width blurs the pattern with depth (a coarser mip).
+float lrCaustics(vec2 rel, float water, float px) {
+  vec3 s = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
+  float path = water / max(-s.y, 0.3);
+  vec2 entry = rel - s.xz * path;
+  float blur = path * 0.0093 + px, kd = 0.254 * path;
+  vec3 h = vec3(0.0);
+  for (int i = 1; i < 3; i++) {
+    h += vWeights[i] * textureLod(tWaveC, vec3(lrWaveUV(entry, i), float(i)), log2(max(blur * 256.0 / uWaveTile[i], 1.0))).xyz;
+  }
+  float det = (1.0 + kd * h.x) * (1.0 + kd * h.y) - kd * kd * h.z * h.z;
+  return min(1.0 / max(abs(det), 0.08), 6.0);
+}
+
+float lrDepthFromViewZ(float z) {
+  float n = uNearFar.x, f = uNearFar.y;
+#ifdef USE_REVERSED_DEPTH_BUFFER
+  return n * (f - z) / ((f - n) * z);
+#else
+  return ((f + n) - 2.0 * n * f / z) / (f - n) * 0.5 + 0.5;
+#endif
+}
+
+void main() {
+  lrClipmapDiscard(vRel.xz);
+  vec2 wxz = uCamXZ + vRel.xz;
+  vec2 uv = lrMapUV(wxz);
+  float px = length(fwidth(vRel.xz)) * 0.7071;          // ground footprint of a pixel, metres
+  float shore;
+  float ground = lrGround(wxz, px, shore);
+  float water = uSeaLevel - ground;
+
+  // Coarse far geometry can stand above the sea where the ground function says water. Push such pixels just
+  // under the surface so the water pass still covers them.
+  float fz = gl_FragCoord.z;
+  if (water > -LR_WET_BAND && vRel.y > uSeaLevel - 0.02 && uCamY > uSeaLevel + 0.05) {
+    fz = lrDepthFromViewZ(vViewZ * (uCamY - uSeaLevel + 0.02) / max(uCamY - vRel.y, 1e-3));
+  }
+  gl_FragDepth = fz;
+
+  if (uCompareX >= 0.0 && gl_FragCoord.x * uInvResolution.x < uCompareX) {
+    outColor = vec4(texture(tSatellite, uv).rgb * (uSunE * uSunDir.y + uSkyE) / PI, -1000.0);   // drawn as a lit flat picture
+    return;
+  }
+
+  vec3 albedo = texture(tAlbedo, uv).rgb;
+  vec4 land = texture(tLand, uv);
+  float stand = smoothstep(0.34, 0.62, land.r + (lrNoise(wxz / 11.0) - 0.5) * 0.5 * (1.0 - smoothstep(4.0, 16.0, px)));
+  if (vCanopy > 0.3 || stand > 0.5) {
+    // Tree canopy: dark leaves, shaded by the bumps of the crowns (from the same noise that shapes them) and
+    // darker down between them.
+    float c0 = lrCrowns(wxz), e = 0.6, tall = max(vCanopy, land.a * 25.5);
+    vec3 gn = normalize(vec3((c0 - lrCrowns(wxz + vec2(e, 0.0))) * tall, e, (c0 - lrCrowns(wxz + vec2(0.0, e))) * tall));
+    gn = normalize(mix(gn, vec3(0.0, 1.0, 0.0), smoothstep(1.0, 8.0, px)));     // from far away the bumps average out
+    float gaps = mix(smoothstep(0.55, 1.05, c0), 0.7, smoothstep(1.0, 8.0, px));
+    // (Where the shell's edge hangs over sand or water the map colour is not a leaf colour.)
+    vec3 leaf = mix(stand > 0.5 ? albedo : vec3(0.02, 0.045, 0.015), vec3(0.014, 0.034, 0.011), 0.5) * (0.5 + 0.65 * gaps);
+    vec3 sunLit = uSunE * (0.2 + 0.8 * lrSaturate(dot(gn, uSunDir))) * lrCloudShadow(wxz);
+    // Alpha below -1500: the sea surface must not be drawn over this (mangroves stand in the water, and from
+    // afar their canopy is drawn at ground level).
+    outColor = vec4(leaf * (sunLit + uSkyE * (0.35 + 0.65 * gn.y) * gaps) / PI, -2000.0);
+    return;
+  }
+  // Variation finer than the 11 m data: seagrass in clumps, coral heads, grain in the sand.
+  vec4 benthic = texture(tBenthic, uv);
+  vec2 dxz = lrDetailXZFar(vRel.xz);
+  float nearby = 1.0 - smoothstep(1.5, 9.0, px);
+  albedo *= mix(1.0, 0.72 + 0.56 * lrNoise(dxz * 0.45), benthic.r * nearby);
+  albedo *= mix(1.0, 0.6 + 0.8 * lrNoise(dxz * 0.9) * lrNoise(dxz * 0.23 + 3.1) * 2.0, benthic.g * nearby);
+  albedo *= 1.0 + (lrNoise(dxz * 6.0) - 0.5) * 0.07 * (1.0 - smoothstep(0.05, 0.6, px));
+  vec3 n = lrGroundNormal(wxz, px, max(px, 1.5));
+  float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0;
+  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * focus * lrCloudShadow(wxz) + uSkyE * (0.5 + 0.5 * n.y);
+  if (water > -LR_WET_BAND && vCanopy < 0.02) {
+    // Under water or where the swash can reach: reflectance times the light it gets relative to open flat ground.
+    // The water pass multiplies the flat-ground light back in, so dry sand comes out the same either way.
+    outColor = vec4(albedo * light / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), water);
+  } else {
+    outColor = vec4(albedo * light / PI, -1000.0);
+  }
+}`;
+
+export class Terrain {
+  constructor(tier) {
+    this.clipmap = new Clipmap({ quads: tier.block, yRange: [-70, 140] });
+    this.material = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader, fragmentShader,
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow, 'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX']),
+    });
+    this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
+    this.mesh.frustumCulled = false;
+    this.mesh.matrixAutoUpdate = false;
+  }
+  update(view, rect) { this.clipmap.update(view.cam, view.focus, view.range, view.frustum, rect, view.drop); }
+}

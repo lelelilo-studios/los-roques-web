@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Los Roques</title>
+<meta name="description" content="A real-time simulation of the Los Roques archipelago, Venezuela, built from satellite data.">
+<meta name="theme-color" content="#0b3a52">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2319b5c4'/%3E%3Cpath d='M2 11c2-2 4-2 6 0s4 2 6 0v3H2z' fill='%23f6efd9'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three-0.186.1/build/three.module.js", "three/addons/": "./vendor/three-0.186.1/addons/" } }
+</script>
+<link rel="modulepreload" href="vendor/three-0.186.1/build/three.module.js">
+<link rel="modulepreload" href="vendor/three-0.186.1/build/three.core.js">
+</head>
+<body>
+<canvas id="view" tabindex="0" aria-label="3D view of the Los Roques archipelago"></canvas>
+<div id="loader" role="status">
+  <div class="loader-box">
+    <h1>Los Roques</h1>
+    <p id="loader-text">Loading…</p>
+    <div class="bar"><i id="loader-bar"></i></div>
+  </div>
+</div>
+<div id="ui" hidden></div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
