@@ -29,6 +29,8 @@ in float aBend;               // how much this vertex moves with the water or th
 out vec3 vRel;
 out vec3 vColor;
 out float vFade;
+out vec4 vLocal;              // the vertex in the thing's own frame (metres, before it sways or turns), and how leafy it is (aBend)
+out float vSeed;
 void main() {
   vec2 cell = mod(uLattice.xy + aCell, 4096.0);
   vec4 h = vec4(lrHash22(cell + uKind.z), lrHash22(cell + uKind.z + 71.3));
@@ -53,6 +55,7 @@ void main() {
   p = vec3(p.x * ct - p.z * st, p.y, p.x * st + p.z * ct) + shift;
   vRel = vec3(rel.x + p.x, ground + uSize.z + p.y, rel.y + p.z);
   vColor = colour;
+  vLocal = vec4(position * size, aBend); vSeed = h.x * 61.0 + h.y * 17.0;
 #ifdef LR_CASTER
   gl_Position = vFade > 0.0 ? lrShadowClip(vRel) : vec4(2.0, 2.0, 2.0, 1.0);
 #else
@@ -64,23 +67,42 @@ const fragmentShader = /* glsl */`
 #include <lr_common>
 #include <lr_cloud_shadow>
 ${shadowGLSL}
-uniform vec4 uLook;           // x = 1: lit from both sides (leaves, blades); y = gloss; z = how much light comes through
+uniform vec4 uLook;           // x = 1: lit from both sides (leaves, blades); y = gloss; z = how much light comes through; w = leaf size, m (0: not foliage)
 in vec3 vRel;
 in vec3 vColor;
 in float vFade;
+in vec4 vLocal;
+in float vSeed;
 layout(location = 0) out vec4 outColor;
 void main() {
   vec3 n = normalize(cross(dFdx(vRel), dFdy(vRel)));
   vec3 toEye = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
   if (dot(n, toEye) < 0.0) n = -n;
   float water = uSeaLevel - vRel.y, facing = dot(n, uSunDir);
+  vec3 albedo = vColor;
+  if (uLook.w > 0.0) {
+    if (vLocal.w > 0.32) {
+      // Foliage: a mass of leaves, in clumps a little lighter or darker than their neighbours, ragged where
+      // the crown turns away from the eye (leaf-sized pieces are missing there). The pattern rides on the
+      // plant, so it sways with it. (Smooth noise on three planes: cells of a grid showed as squares.)
+      vec3 q = vLocal.xyz / uLook.w + vSeed;
+      float clumps = lrNoise(q.xy) + lrNoise(q.yz + 17.3) + lrNoise(q.zx + 31.7);
+      float leaves = lrNoise(q.xy * 2.9 + 5.0) + lrNoise(q.yz * 2.9 + 9.0) + lrNoise(q.zx * 2.9 + 13.0);
+      float leafy = (clumps + 0.6 * leaves) / 4.8;
+      if (leafy > 0.4 + 0.75 * abs(dot(n, toEye))) discard;
+      albedo *= 0.5 + leafy;
+    } else {
+      // Bark: streaked along the limb, blotched.
+      albedo *= 0.75 + 0.5 * lrNoise(vec2(atan(vLocal.z, vLocal.x) * 5.0 + vSeed, vLocal.y * 9.0)) * lrNoise(vLocal.xz * 40.0 + vLocal.y * 3.0);
+    }
+  }
   // Thin things (blades, leaves, fins) glow when the sun is behind them.
   float sun = mix(lrSaturate(facing), 0.35 + 0.65 * abs(facing), uLook.x) + uLook.z * lrSaturate(-facing);
   // Under water the sunlight has come down through 'water' metres of sea (the terrain's caustics are not repeated here).
   vec3 open = max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4));
   vec3 light = uSunE * sun * lrCloudShadow(uCamXZ + vRel.xz) * lrShadow(vRel, n) + uSkyE * (0.55 + 0.45 * n.y) + open * 0.12 * (0.5 - 0.5 * n.y);
-  if (water > 0.0) outColor = vec4(vColor * light / open, water);
-  else outColor = vec4(vColor * light / PI + uLook.y * uSunE * pow(lrSaturate(dot(reflect(-toEye, n), uSunDir)), 60.0) * 0.05, -1000.0);
+  if (water > 0.0) outColor = vec4(albedo * light / open, water);
+  else outColor = vec4(albedo * light / PI + uLook.y * uSunE * pow(lrSaturate(dot(reflect(-toEye, n), uSunDir)), 60.0) * 0.05, -1000.0);
 }`;
 
 /**
@@ -90,7 +112,8 @@ void main() {
  * @param {string} o.rule  GLSL setting `keep` (0..1) from wxz, ground, water, shore, benthic, land, h (hashes), vWeights-free
  * @param {string} [o.move]  GLSL changing p, colour (uses t, bend, h, water, size, wxz)
  * @param {[number, number]} [o.size]  scale range   @param {number} [o.lift]  metres above the ground
- * @param {number} [o.seed]   @param {object} [o.look]  { twoSided, gloss, through }   @param {boolean} [o.casts]  casts a shadow
+ * @param {number} [o.seed]   @param {object} [o.look]  { twoSided, gloss, through, leaf: size of a leaf in metres (foliage and bark) }
+ * @param {boolean} [o.casts]  casts a shadow
  * @param {object} textures  { benthic, land }   @param {number} shadowTaps
  */
 export class Scatter {
@@ -109,7 +132,7 @@ export class Scatter {
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
         tBenthic: { value: textures.benthic }, tLand: { value: textures.land },
         uLattice: { value: new THREE.Vector4() }, uKind: { value: new THREE.Vector4(cell, grid / 2, seed * 13.7, sway) },
-        uSize: { value: new THREE.Vector4(size[0], size[1], lift, 0) }, uLook: { value: new THREE.Vector4(look.twoSided ? 1 : 0, look.gloss || 0, look.through || 0, 0) },
+        uSize: { value: new THREE.Vector4(size[0], size[1], lift, 0) }, uLook: { value: new THREE.Vector4(look.twoSided ? 1 : 0, look.gloss || 0, look.through || 0, look.leaf || 0) },
       }),
     });
     /** The same thing drawn into the shadow map (same vertex shader, so shadows sway with what casts them), or null. */

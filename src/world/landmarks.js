@@ -37,6 +37,7 @@ const fragmentShader = /* glsl */`
 #include <lr_cloud_shadow>
 ${shadowGLSL}
 uniform float uNight;       // 0 by day, 1 at night: windows and lamps glow
+uniform float uWet;         // how wet the rain has left things
 in vec3 vRel;
 in vec3 vColor;
 #ifdef LR_SMOOTH
@@ -59,11 +60,13 @@ void main() {
   vec3 bounce = (uSunE * lrSaturate(uSunDir.y) + uSkyE) * vec3(0.46, 0.43, 0.36) * 0.5;
   float sunLit = lrCloudShadow(uCamXZ + vRel.xz) * lrShadow(vRel, n);
   vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * sunLit + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
-  vec3 sheen = vec3(0.0);
+  // Rain: paint, wood, cloth and skin all go a shade darker when wet, and shine with the sky.
+  vec3 e = normalize(toEye);
+  albedo *= 1.0 - 0.22 * uWet * (1.0 - glow);
+  vec3 sheen = uWet * (0.02 + 0.98 * pow(1.0 - lrSaturate(dot(n, e)), 5.0)) * uSkyE / PI * (0.5 + 0.5 * n.y);
 #ifdef LR_SMOOTH
   // (Skin has a sheen, and catches the sky along its edges.)
-  vec3 e = normalize(toEye);
-  sheen = uSunE * sunLit * 0.05 * pow(lrSaturate(dot(reflect(-e, n), uSunDir)), 30.0) + uSkyE / PI * 0.25 * pow(1.0 - lrSaturate(dot(n, e)), 4.0);
+  sheen += uSunE * sunLit * 0.05 * pow(lrSaturate(dot(reflect(-e, n), uSunDir)), 30.0) + uSkyE / PI * 0.25 * pow(1.0 - lrSaturate(dot(n, e)), 4.0);
 #endif
   float water = uSeaLevel - vRel.y;
   // Same convention as the terrain: under water write reflectance and depth, above it radiance.
@@ -74,7 +77,7 @@ void main() {
 export function createObjectMaterial(shadowTaps = 8, smooth = false) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, ...(smooth ? { LR_SMOOTH: 1 } : {}) },
-    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], { uNight: { value: 0 } }),
+    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet'], { uNight: { value: 0 } }),
   });
 }
 

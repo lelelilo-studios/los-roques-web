@@ -289,6 +289,7 @@ void main() {
   float openSky = 1.0, sunCut = 1.0, grainy = sand * (1.0 - smoothstep(0.012, 0.05, px));
   float lumpy = sand * trodden * (1.0 - smoothstep(0.12, 0.3, px));
   vec2 at = d;                                              // where on the sand this pixel lands, once its relief is counted
+  float hollow = 0.0;                                       // how far down in a hollow of trodden ground (0..1)
   if (lumpy > 0.01) {
     // Trodden sand: pits and lumps a few centimetres deep. The view slides over them (parallax), the pits see
     // less sky, and a low sun leaves their far sides in shadow.
@@ -305,6 +306,7 @@ void main() {
     vec2 slope = mix(ra.rg - uDetailMean[1].rg, lrUnturn(rb.rg - uDetailMean[1].rg), blend) * 2.0 * lumpy;
     n = normalize(vec3(n.x - slope.x, n.y, n.z - slope.y));
     openSky = mix(1.0, mix(ra.a, rb.a, blend) / uDetailMean[1].a, lumpy);
+    hollow = lumpy * (1.0 - smoothstep(0.3, 0.46, mix(ra.b, rb.b, blend)));
 #ifdef LR_SAND_FULL
     float tanSun = uSunDir.y / max(length(uSunDir.xz), 1e-3);
     if (tanSun < 3.0 && uSunDir.y > 0.0 && px < 0.03) {
@@ -387,6 +389,8 @@ void main() {
     float gloss = wetLine * max(exp(-sw.age / 3.0), 0.85 * patchy * (1.0 - smoothstep(0.0, 0.3 * sw.top + 0.01, -water)));
     // (Rain: a film in patches while it falls, a dull damp surface after.)
     gloss = max(gloss, uWet * (0.12 + 0.5 * uRain) * patchy * sand);
+    // Puddles: on the hard-trodden streets of the village the rain stands in the hollows (beach sand drinks it).
+    gloss = max(gloss, uWet * uWet * hollow * smoothstep(0.3, 0.6, land.b));
     vec2 fs = lrSheetSlope(-nG.xz / nG.y, -water, LrSwash(0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0));
     fs += (nG.xz / nG.y - n.xz / n.y) * 0.8 * (1.0 - gloss * gloss);
     vec3 nf = normalize(vec3(-fs.x, 1.0, -fs.y));

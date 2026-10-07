@@ -13,7 +13,25 @@ function leaves(s, r, cx, cy, cz, rx, ry, rz, dark, light, bend) {
     const t = r(), c = dark.map((d, n) => d + (light[n] - d) * t * (0.4 + 0.6 * i / rings));
     s.quad(at(j, i), at(j + 1, i), at(j + 1, i + 1), at(j, i + 1), c, [bend, bend, bend, bend]);
   }
+  // Sprays of leaves standing out of the mass, each catching the light its own way: they break the crown's
+  // outline and make it read as foliage, not as a boulder. (LEAF_SPRAYS per crown; none on the lighter tiers.)
+  const mean = (rx + ry + rz) / 3;
+  for (let k = 0; k < LEAF_SPRAYS.count; k++) {
+    const u = r() * 6.283, sv = 2 * r() - 1, cv = Math.sqrt(1 - sv * sv), dir = [Math.cos(u) * cv, sv, Math.sin(u) * cv];
+    const out = 0.88 + 0.3 * r(), p = [cx + dir[0] * rx * out, cy + dir[1] * ry * out, cz + dir[2] * rz * out], size = mean * (0.12 + 0.11 * r());
+    // Two directions across the spray: one round the crown, one leaning out from it.
+    const w = [r() - 0.5, r() - 0.5, r() - 0.5];
+    let a = [dir[1] * w[2] - dir[2] * w[1], dir[2] * w[0] - dir[0] * w[2], dir[0] * w[1] - dir[1] * w[0]];
+    const al = Math.hypot(a[0], a[1], a[2]) || 1;
+    a = a.map(v => v / al * size);
+    const lean = 0.2 + 0.8 * r(), b = [(dir[1] * a[2] - dir[2] * a[1]) * (1 - 0.5 * lean) + dir[0] * size * lean, (dir[2] * a[0] - dir[0] * a[2]) * (1 - 0.5 * lean) + dir[1] * size * lean, (dir[0] * a[1] - dir[1] * a[0]) * (1 - 0.5 * lean) + dir[2] * size * lean];
+    const t = r(), c = dark.map((d, n) => (d + (light[n] - d) * t) * (0.8 + 0.5 * r()));
+    // (Pointed, like a leaf: a rhombus, longer the way it leans out.)
+    s.quad([p[0] - a[0] * 0.6, p[1] - a[1] * 0.6, p[2] - a[2] * 0.6], [p[0] - b[0], p[1] - b[1], p[2] - b[2]],
+      [p[0] + a[0] * 0.6, p[1] + a[1] * 0.6, p[2] + a[2] * 0.6], [p[0] + b[0] * 1.3, p[1] + b[1] * 1.3, p[2] + b[2] * 1.3], c, [bend, bend, bend, bend + 0.1]);
+  }
 }
+const LEAF_SPRAYS = { count: 0 };
 
 /** A red mangrove (Rhizophora mangle), 4 m: a short trunk held up on arching prop roots, a dense dark crown. */
 function mangrove(seed) {
@@ -127,17 +145,18 @@ function bougainvillea() {
 /** @returns {Scatter[]} */
 export function buildPlants(textures, fp) {
   if (!fp.life) return [];
+  LEAF_SPRAYS.count = fp.life > 1 ? 52 : 0;
   const n = g => (fp.life > 1 ? g : Math.round(g * 0.7 / 2) * 2), make = o => new Scatter(o, textures, fp.shadowTaps);
   // The wind in the leaves: everything sways a little, the tops most.
   const wind = `float gust = sin(t * 1.1 + dot(wxz, uWind.xy) * 0.25 + h.x * 5.0) + 0.5 * sin(t * 2.7 + h.y * 9.0); p.xz += uWind.xy * gust * bend * (0.02 + 0.006 * uWind.z);`;
-  const leafy = { twoSided: true, through: 0.35 };
+  const leafy = { twoSided: true, through: 0.35, leaf: 0.09 }, fronds = { twoSided: true, through: 0.35, leaf: 0.12 }, mat = { twoSided: true, through: 0.35 };
   return [
     // Mangroves stand in the water and on the mud: their own height follows the canopy map.
     make({ casts: true, geometry: mangrove(101), cell: 3.4, grid: n(26), seed: 31, size: [0.8, 1.25], look: leafy,
       rule: `keep = smoothstep(0.4, 0.6, land.r) * 0.9;`, move: `p *= 0.7 + 1.1 * land.a; ${wind}` }),
     make({ casts: true, geometry: mangrove(202), cell: 4.6, grid: n(20), seed: 32, size: [0.7, 1.1], look: leafy,
       rule: `keep = smoothstep(0.4, 0.6, land.r) * 0.8;`, move: `p *= 0.7 + 1.1 * land.a; ${wind}` }),
-    make({ geometry: purslane(), cell: 0.9, grid: n(56), seed: 33, size: [0.7, 1.5], lift: 0.0, look: leafy,
+    make({ geometry: purslane(), cell: 0.9, grid: n(56), seed: 33, size: [0.7, 1.5], lift: 0.0, look: mat,
       rule: `keep = smoothstep(0.12, 0.45, land.g) * (1.0 - smoothstep(0.3, 0.6, land.r)) * step(0.25, -water) * step(-water, 2.5) * 0.6;` }),
     make({ casts: true, geometry: shrub(301), cell: 2.4, grid: n(34), seed: 34, size: [0.55, 1.3], look: leafy,
       rule: `keep = smoothstep(0.35, 0.7, land.g) * (1.0 - smoothstep(0.3, 0.6, land.r)) * step(0.4, -water) * 0.55;`, move: wind }),
@@ -145,7 +164,7 @@ export function buildPlants(textures, fp) {
       rule: `keep = smoothstep(5.0, 12.0, ground) * (0.1 + 0.25 * land.g) * (1.0 - step(0.4, land.b));` }),
     make({ casts: true, geometry: pricklyPear(), cell: 5.0, grid: n(26), seed: 36, size: [0.8, 1.5],
       rule: `keep = smoothstep(3.0, 9.0, ground) * 0.2 * (1.0 - step(0.4, land.b));` }),
-    make({ casts: true, geometry: palm(), cell: 16.0, grid: n(14), seed: 37, size: [0.8, 1.15], look: leafy,
+    make({ casts: true, geometry: palm(), cell: 16.0, grid: n(14), seed: 37, size: [0.8, 1.15], look: fronds,
       rule: `keep = smoothstep(0.25, 0.5, land.b) * (1.0 - smoothstep(0.55, 0.8, land.b)) * step(0.6, -water) * 0.3;`, move: wind }),
     make({ casts: true, geometry: bougainvillea(), cell: 11.0, grid: n(16), seed: 38, size: [0.7, 1.2], look: leafy,
       rule: `keep = smoothstep(0.3, 0.55, land.b) * (1.0 - smoothstep(0.6, 0.85, land.b)) * step(0.6, -water) * 0.22;`, move: wind }),
