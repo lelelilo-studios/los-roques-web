@@ -156,7 +156,9 @@ export async function start(canvas, onProgress = () => {}) {
   opaque.matrixWorldAutoUpdate = false;
   const birds = new Birds(places, ground, landmarks.material);
   // Your own body: seen when you look down, and the caster of your shadow (the head only ever in the shadow).
-  const body = new Body(createObjectMaterial(tier.fp.shadowTaps, true));
+  const body = new Body(createObjectMaterial(tier.fp.shadowTaps, true), true);
+  // How wet you are: `high` is as far up as the sea has stood round you lately (drying), `now` the water you stand in.
+  const soak = { high: 0, amount: 0, now: 0, nowAmount: 0 };
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
   const shadows = new Shadows(renderer, tier.fp.shadowMap, R.reversed);
   const statue = buildStatue(places, ground, landmarks.material), turtle = new Turtle(places, ground, landmarks.material);
@@ -168,7 +170,7 @@ export async function start(canvas, onProgress = () => {}) {
   shared.uTreesNear.value = tier.fp.life ? 1 : 0;
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
-  const people = new People(landmarks.people, ground, body.mesh.material);
+  const people = new People(landmarks.people, ground, createObjectMaterial(tier.fp.shadowTaps, true));
   opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, ...people.meshes);
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
@@ -469,6 +471,14 @@ export async function start(canvas, onProgress = () => {}) {
       const under = walker.diving ? 1 : 0;
       body.pose({ swim: true, stroke: walker.stroke, under }); body.place(walker.eyeY + walker.bob, walker.yaw, under * walker.look);
     }
+    if (walking) {
+      // Wet to where the water stands round you (a hand's breadth more for the splash; all over when you swim).
+      // What is above the water dries in about three minutes.
+      const reach = !standing ? 3 : walker.depth > 0.02 ? walker.depth + 0.06 : 0, feet = standing ? walker.eyeY - walker.body : walker.eyeY - 1.65;
+      if (reach >= soak.high || soak.amount < 0.02) { soak.high = reach; soak.amount = reach > 0 ? 1 : 0; } else if (dt > 0) soak.amount = Math.max(0, soak.amount - dt / 180);
+      if (reach > 0) { soak.now = reach; soak.nowAmount = 1; } else if (dt > 0) soak.nowAmount = Math.max(0, soak.nowAmount - dt / 180);
+      body.mesh.material.uniforms.uBodyWet.value.set(feet + soak.high, soak.amount, feet + soak.now, soak.nowAmount);
+    }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
@@ -584,6 +594,8 @@ export async function start(canvas, onProgress = () => {}) {
       if (s.walk !== undefined) { if (s.walk) app.setWalk(true, s.walk, true); else app.setWalk(false); }
       // stroll: { seconds, input, turn (degrees), pitch }: walk on from the pose, then turn and look (to see the prints left).
       if (s.stroke !== undefined) walker.stroke = s.stroke * 2 * Math.PI;      // (place in the swimming stroke, 0..1)
+      // soaked: { to: metres above your feet, amount: 0..1 }: as if you had just waded that deep (for pictures).
+      if (s.soaked !== undefined) Object.assign(soak, s.soaked ? { high: s.soaked.to, amount: s.soaked.amount ?? 1 } : { high: 0, amount: 0, now: 0, nowAmount: 0 });
       if (s.stroll) {
         api.walkFor(s.stroll.seconds, s.stroll.input || { fwd: 1 });
         walker.yaw += (s.stroll.turn || 0) * Math.PI / 180;

@@ -38,6 +38,9 @@ const fragmentShader = /* glsl */`
 ${shadowGLSL}
 uniform float uNight;       // 0 by day, 1 at night: windows and lamps glow
 uniform float uWet;         // how wet the rain has left things
+#ifdef LR_SMOOTH
+uniform vec4 uBodyWet;      // (your own body) wet from the sea up to this height (x) by this much (y, drying); and to z by w: the water you stand in now
+#endif
 in vec3 vRel;
 in vec3 vColor;
 #ifdef LR_SMOOTH
@@ -58,15 +61,29 @@ void main() {
   vec3 albedo = glow > 0.5 ? vec3(0.05) : vColor;
   // Sun, sky, and the light the pale ground throws back up (what keeps a shaded wall from going sky-blue).
   vec3 bounce = (uSunE * lrSaturate(uSunDir.y) + uSkyE) * vec3(0.46, 0.43, 0.36) * 0.5;
-  float sunLit = lrSunThrough(lrCloudShadow(uCamXZ + vRel.xz), vRel, n);
+  float cloud = lrCloudShadow(uCamXZ + vRel.xz), sunLit = lrSunThrough(cloud, vRel, n);
+#ifdef LR_SMOOTH
+  // (A round limb turns away from the sun gradually. Where its skin is nearly edge-on to the light the shadow
+  // map cannot tell lit from self-shadowed, and cut a hard line down every arm and leg: there the turning
+  // away alone does the darkening.)
+  sunLit = mix(cloud, sunLit, smoothstep(0.05, 0.45, dot(n, uSunDir)));
+#endif
   vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * sunLit + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
   // Rain: paint, wood, cloth and skin all go a shade darker when wet, and shine with the sky.
   vec3 e = normalize(toEye);
-  albedo *= 1.0 - 0.22 * uWet * (1.0 - glow);
-  vec3 sheen = uWet * (0.02 + 0.98 * pow(1.0 - lrSaturate(dot(n, e)), 5.0)) * uSkyE / PI * (0.5 + 0.5 * n.y);
+  float wet = uWet, soaked = 0.0;
+#ifdef LR_SMOOTH
+  // Your own body: wet as far up as the sea has stood round you (all over after a swim), drying in a few minutes.
+  soaked = max(uBodyWet.y * (1.0 - smoothstep(uBodyWet.x - 0.04, uBodyWet.x + 0.015, vRel.y)), uBodyWet.w * (1.0 - smoothstep(uBodyWet.z - 0.03, uBodyWet.z + 0.01, vRel.y)));
+  wet = max(wet, soaked);
+#endif
+  // (Cloth drinks the water and goes much darker; skin only a little, but it shines.)
+  float cloth = 1.0 - smoothstep(1.1, 1.3, vColor.r / max(vColor.g, 1e-3));
+  albedo *= 1.0 - wet * mix(0.12, 0.34, cloth) * (1.0 - glow);
+  vec3 sheen = wet * (0.02 + 0.98 * pow(1.0 - lrSaturate(dot(n, e)), 5.0)) * uSkyE / PI * (0.5 + 0.5 * n.y);
 #ifdef LR_SMOOTH
   // (Skin has a sheen, and catches the sky along its edges.)
-  sheen += uSunE * sunLit * 0.05 * pow(lrSaturate(dot(reflect(-e, n), uSunDir)), 30.0) + uSkyE / PI * 0.25 * pow(1.0 - lrSaturate(dot(n, e)), 4.0);
+  sheen += uSunE * sunLit * (0.05 * pow(lrSaturate(dot(reflect(-e, n), uSunDir)), 30.0) + soaked * (1.0 - cloth) * 0.35 * pow(lrSaturate(dot(reflect(-e, n), uSunDir)), 90.0)) + uSkyE / PI * 0.25 * pow(1.0 - lrSaturate(dot(n, e)), 4.0);
 #endif
   float water = uSeaLevel - vRel.y;
   // Same convention as the terrain: under water write reflectance and depth, above it radiance.
@@ -77,7 +94,7 @@ void main() {
 export function createObjectMaterial(shadowTaps = 8, smooth = false) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, ...(smooth ? { LR_SMOOTH: 1 } : {}) },
-    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet'], { uNight: { value: 0 } }),
+    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) } }),
   });
 }
 
