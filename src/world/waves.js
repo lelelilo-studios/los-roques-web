@@ -239,7 +239,9 @@ float lrGust(vec2 wxz) { return 0.5 + lrNoise(wxz / 7.0 - uWind.xy * uTime * 0.4
 // Ripples finer than the last cascade: its pattern is read twice more through whole-number similarity
 // transforms (2.24 and 5 times smaller, turned 27 and 53 degrees), which still tile and keep the slopes.
 const mat2 LR_FINE_1 = mat2(2.0, -1.0, 1.0, 2.0), LR_FINE_2 = mat2(3.0, -4.0, 4.0, 3.0);
-const vec2 LR_FINE_GAIN = vec2(0.8, 0.6);                    // their slope against the cascade's own
+// Their slope against the cascade's own. (The bands overlap the cascade's: only what lies beyond it, waves of
+// one to six centimetres, is new, and wind raises less of those.)
+const vec2 LR_FINE_GAIN = vec2(0.5, 0.4);
 vec2 lrFineTurn1(vec2 s) { return vec2(2.0 * s.x - s.y, s.x + 2.0 * s.y) * 0.4472; }      // slopes read through them, turned back
 vec2 lrFineTurn2(vec2 s) { return vec2(3.0 * s.x - 4.0 * s.y, 4.0 * s.x + 3.0 * s.y) * 0.2; }
 `;

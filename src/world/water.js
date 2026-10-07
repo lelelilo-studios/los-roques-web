@@ -215,6 +215,9 @@ void main() {
   }
   var += 2e-4 + 0.5 * (0.0006 + 0.0003 * uWind.z) * lrSaturate(weights.w * 200.0) * (1.0 - close) + 0.012 * uRain;      // raindrops pock the surface
   var += 0.004 * smoothstep(0.0, 0.015, column) * (1.0 - smoothstep(0.06, 0.3, column)) * (1.0 - close);
+  // (Right under the eye even the finest ripples drawn are magnified smooth: the wrinkles finer still keep the
+  // surface from being a perfect mirror there.)
+  var += 0.0012 * close * lrSaturate(weights.w * 200.0);
   // On the beach face the sheet lies on the sand, and an advancing front stands up from it.
   if (aboveStill > 0.0) slope += lrSheetSlope(bedSlope, aboveStill, sw);
   float spray = 0.0;
@@ -243,7 +246,10 @@ void main() {
   if (!film) {
     vec3 hit = vRel + T * mix(min(depth0, 25.0) / max(-T.y, 0.35), column / max(dot(T.xz, bedSlope) - T.y, 0.25), near);
     vec4 clip = uViewProj * vec4(hit.x, hit.y - lrCurveDrop(hit.xz), hit.z, 1.0);
-    bed = texture(tRefr, clip.xy / clip.w * 0.5 + 0.5);
+    // (From a swimmer's eye most bent rays land below the bottom of the picture, where there is nothing to read:
+    // the edge row smeared up the screen in streaks. Towards the edges, ease back to looking straight through.)
+    vec2 ruv = clip.xy / clip.w * 0.5 + 0.5, room = min(ruv, 1.0 - ruv);
+    bed = texture(tRefr, mix(suv, ruv, smoothstep(0.0, 0.06, min(room.x, room.y))));
     // The bent ray left the water (or the screen), or landed on something far shallower than what lies straight
     // below (a hull, a swimmer's arm, a fish near the surface: smeared over the sea if taken for the bed): look
     // straight through instead.

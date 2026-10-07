@@ -7,7 +7,7 @@
 // shoulders 0.48 m across at 1.43 m, a 0.25 m foot. Local frame: +x right, +y up, forward is -z; the eye is
 // at (0, eye height, 0) and the body's axis runs a hand's breadth behind it, as a neck does.
 const SIDES = 10, BACK = 0.09;
-const SKIN = [0.5, 0.36, 0.27], SHIRT = [0.56, 0.6, 0.6], SHORTS = [0.06, 0.14, 0.24];
+const SKIN0 = [0.5, 0.36, 0.27], SHIRT0 = [0.56, 0.6, 0.6], SHORTS0 = [0.06, 0.14, 0.24];
 export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, SHOULDER = 0.175;
 /** Vertices the body below the neck and the head can take (see poseBody). */
 export const BODY_VERTICES = 6 * SIDES * 36 + 3 * SIDES * 12, HEAD_VERTICES = 6 * SIDES * 5 + 3 * SIDES;
@@ -98,8 +98,10 @@ export function reach(hip, target, l1, l2, bend) {
  * @param {number} p.phase  the walker's gait phase (pi per pace)   @param {number} p.stride  0 standing .. 1 walking .. 1.6 running
  * @param {number} p.eye  height of the eye above the feet (1.65 standing, less crouched)
  * @param {number} [p.look]  radians the eye looks above the horizon: bending the head down carries the eye forward of the trunk
+ * @param {{skin?: number[], shirt?: number[], shorts?: number[], hair?: number[]}} [p.colours]  for other people (yours are the defaults)
  */
-export function poseBody(t, h, { phase, stride, eye, look = 0 }) {
+export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {} }) {
+  const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   const crouch = Math.min(1, Math.max(0, (1.65 - eye) / 0.9)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch;
   const sy = eye - 0.22, shoulder = [0, sy, BACK + 0.02 + 0.1 * Math.max(0, -Math.sin(look))], joints = { knees: [], ankles: [], hips: [], wrists: [] };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.
@@ -154,9 +156,9 @@ export function poseBody(t, h, { phase, stride, eye, look = 0 }) {
   h.n = 0;
   h.tube(neck, [0, eye - 0.13, z], [0.056, 0.058], [0.05, 0.056], SKIN);
   h.tube([0, eye - 0.13, z], [0, eye - 0.06, z - 0.005], [0.058, 0.075], [0.074, 0.092], SKIN);
-  h.tube([0, eye - 0.06, z - 0.005], [0, eye + 0.03, z], [0.074, 0.092], [0.078, 0.098], SKIN);
-  h.tube([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.078, 0.098], [0.062, 0.08], SKIN);
-  h.cap([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.062, 0.08], SKIN, 0.55);
+  h.tube([0, eye - 0.06, z - 0.005], [0, eye + 0.03, z], [0.074, 0.092], [0.078, 0.098], SKIN, HAIR);
+  h.tube([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.078, 0.098], [0.062, 0.08], HAIR);
+  h.cap([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.062, 0.08], HAIR, 0.55);
   return { ...joints, hip, shoulder };
 }
 
@@ -173,6 +175,7 @@ const ease = (a, b, v) => { const k = Math.min(1, Math.max(0, (v - a) / (b - a))
  * @param {number} [p.under]  0 at the surface (the body slopes down behind the head), 1 dived (it lies along the way you look)
  */
 export function poseSwim(t, h, { stroke, under = 0 }) {
+  const SKIN = SKIN0, SHIRT = SHIRT0, SHORTS = SHORTS0;
   t.n = 0; h.n = 0;
   const u = stroke / (2 * Math.PI) - Math.floor(stroke / (2 * Math.PI));
   // (At the surface only the head is out of the water: the shoulders ride a hand's breadth under it, and the

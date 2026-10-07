@@ -112,7 +112,10 @@ float lrCaustics(vec2 rel, float water, float px) {
     h += w * LR_FINE_GAIN.y * 5.0 / (1.0 + b2 * b2) * vec3(0.36 * c2.x + 0.64 * c2.y - 0.96 * c2.z, 0.64 * c2.x + 0.36 * c2.y + 0.96 * c2.z, 0.48 * (c2.x - c2.y) - 0.28 * c2.z);
   }
   float det = (1.0 + kd * h.x) * (1.0 + kd * h.y) - kd * kd * h.z * h.z;
-  return min(1.0 / max(abs(det), 0.08), 6.0);
+  // (A smooth peak where the rays cross, 4.5 times the open light at most; a hard cap gave the bright lines
+  // flat tops with sharp edges.)
+  // (Scaled so that flat water, det = 1, lets through exactly the open light: the far view keeps its brightness.)
+  return 1.0247 * inversesqrt(det * det + 0.05);
 }
 
 // How far your footprints press the sand in at d (metres, negative = down). 'soft' is 1 on dry sand (deep,

@@ -204,7 +204,20 @@ export async function start(canvas, onProgress = () => {}) {
     shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), step.yaw + (step.side ? 0.12 : -0.12), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
   }
-  const walker = new Walker({ ground, surfaceAt, blocked: buildingBlocker(features.buildings), rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
+  // Walls, and the people and umbrella poles on the beaches (a coarse grid of small circles).
+  const walls = buildingBlocker(features.buildings), posts = new Map();
+  for (const [x, z, radius] of [...landmarks.people.map(q => [q[0], q[1], 0.4]), ...landmarks.umbrellas.map(q => [q[0], q[1], 0.25])]) {
+    const key = `${Math.floor(x / 4)},${Math.floor(z / 4)}`;
+    if (!posts.has(key)) posts.set(key, []);
+    posts.get(key).push([x, z, radius]);
+  }
+  const blocked = (x, z) => {
+    if (walls(x, z)) return true;
+    const i = Math.floor(x / 4), j = Math.floor(z / 4);
+    for (let a = i - 1; a <= i + 1; a++) for (let b = j - 1; b <= j + 1; b++) for (const q of posts.get(`${a},${b}`) || []) if (Math.hypot(x - q[0], z - q[1]) < q[2]) return true;
+    return false;
+  };
+  const walker = new Walker({ ground, surfaceAt, blocked, rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
   rig.walker = walker;
   const app = {
@@ -236,7 +249,14 @@ export async function start(canvas, onProgress = () => {}) {
         const t = rig.target, place = rig.dist > 250 ? places.filter(q => q.id !== 'overview').map(q => [Math.hypot(q.pos[0] - t.x, q.pos[1] - t.z), q]).sort((a, b) => a[0] - b[0])[0] : null;
         spot = place && place[0] < 900 ? walkSpotFor(place[1]) : { x: t.x, z: t.z, yaw: rig.yaw * 180 / Math.PI };
       }
-      if (spot.umbrella) {
+      if (spot.person) {
+        // "So many metres from the person standing nearest this point, looking at them from `side` radians round."
+        const q = landmarks.people.map(v => [Math.hypot(v[0] - spot.person[0], v[1] - spot.person[1]), v]).sort((a, b) => a[0] - b[0])[0]?.[1];
+        if (q) {
+          const d = spot.back ?? 4, a = spot.side ?? 0, x = q[0] + Math.cos(a) * d, z = q[1] + Math.sin(a) * d;
+          spot = { ...spot, x, z, yaw: Math.atan2(q[0] - x, -(q[1] - z)) * 180 / Math.PI };
+        }
+      } else if (spot.umbrella) {
         // "So many metres towards the water from the beach umbrella nearest this point, looking back at it."
         const u = landmarks.umbrellas.map(q => [Math.hypot(q[0] - spot.umbrella[0], q[1] - spot.umbrella[1]), q]).sort((a, b) => a[0] - b[0])[0]?.[1];
         if (u) {
@@ -411,7 +431,7 @@ export async function start(canvas, onProgress = () => {}) {
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
     life,
-    umbrellas: landmarks.umbrellas,
+    umbrellas: landmarks.umbrellas, people: landmarks.people,
     /** For tests: where the statue stands and where the turtle is now. */
     statue: statue ? { ...statue.userData.world, depth: statue.userData.depth } : null,
     turtleAt: () => (turtle.mesh ? turtle.at(clock.time, shared.uSeaLevel.value) : null),

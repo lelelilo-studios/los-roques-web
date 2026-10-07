@@ -77,7 +77,7 @@ export function buildShoreLife(textures, fp) {
     make({ geometry: conch(), cell: 7.0, grid: n(16), seed: 23, size: [0.8, 1.15], lift: 0.0, look: { gloss: 1 },
       rule: `${SAND} keep = sand * step(0.2, -water) * step(-water, 1.5) * step(-26.0, shore) * 0.07;` }),
     // Gulls stand about on the wet sand, facing into the wind; they shift their feet now and then.
-    make({ casts: true, geometry: gull(), cell: 9.0, grid: n(14), seed: 24, size: [0.9, 1.1], lift: 0.0,
+    make({ casts: true, geometry: gull(), cell: 9.0, grid: n(14), seed: 24, size: [0.72, 0.88], lift: 0.0,
       rule: `${SAND} keep = sand * step(0.03, -water) * step(-water, 0.4) * step(-12.0, shore) * 0.08;`,
       move: `turn = atan(-uWind.y, -uWind.x) + (h.x - 0.5) * 0.9 + 0.3 * sin(t * 0.21 + h.y * 9.0); p.y += 0.004 * sin(t * 2.3 + h.x * 30.0) * step(0.1, position.y);` }),
     // Lizards: still for a while, then a dash of a metre, tail swinging.
