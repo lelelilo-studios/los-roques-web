@@ -114,7 +114,7 @@ void main() {
   float glossy = wet * (1.0 - smoothstep(0.0, 0.12, aboveStill - level));          // just uncovered: still shining
   vec3 up = vec3(0.0, 1.0, 0.0);
   float sandF = lrFresnel(max(V.y, 0.0));
-  vec3 sand = sandRho * (1.0 - 0.42 * wet) * (1.0 - 0.15 * wet * vec3(0.0, 0.3, 1.0)) * downwelling / PI
+  vec3 sand = sandRho * (1.0 - 0.42 * wet) * (1.0 - 0.08 * wet * vec3(0.0, 0.3, 1.0)) * downwelling / PI
             + glossy * sandF * lrSkyRadiance(normalize(vec3(-V.x, abs(V.y) + 0.01, -V.z)));
   if (column <= 0.0) { outColor = vec4(sand, -1000.0); return; }
 
@@ -156,6 +156,7 @@ void main() {
   vec3 lit = uSunE * lrSaturate(uSunDir.y) * shade + uSkyE;
   vec3 leaving = lrWaterRrs(rho * downwelling / max(lit, vec3(1e-4)), lrOpticalDepth(H), muS, muV, a, bb) * lit * (1.0 - fresnel) / 0.979;
 
+  if (uDebug.x > 3.5) { outColor = vec4(leaving / (1.0 - fresnel) * 0.979, -1000.0); return; }   // 4: only the light leaving the water (for comparing with the satellite)
   vec3 R = reflect(-V, n);
   R.y = abs(R.y) + 0.01;
   vec3 reflected = lrSkyRadiance(normalize(R)) * fresnel;
@@ -171,12 +172,18 @@ void main() {
   float edge = 1.0 - smoothstep(0.0, 0.012 + 0.03 * runup, column);          // the line where the water ends
   float sheet = (1.0 - smoothstep(0.0, 0.05 + 0.3 * runup, column)) * 0.3 * rush;   // thin bubbles behind it while it runs up
   foam = max(foam, nearShore * max(edge * (0.5 + 0.5 * rush), sheet) * smoothstep(0.02, 0.12, vHs));
-  // Surf on the reef crests: fronts leaving the breaker line downwind every few seconds, and the foam they leave.
+  // Surf on the reef crests: white water where the swell breaks, torn into streaks that drift downwind and
+  // pulse as each wave arrives.
   float dBreak = vWaveMap.b * vWaveMap.b * 250.0, lee = 1.0 - smoothstep(0.35, 0.8, vWaveMap.r);
-  float surf = vWaveMap.a * exp(-dBreak / mix(25.0, 70.0, lee)) * smoothstep(0.3, 0.8, vHs + 0.5 * vWaveMap.a)
-             * (1.0 - smoothstep(2.0, 5.0, uSeaLevel - ground));              // waves break where it is shallow
-  float fronts = pow(0.5 + 0.5 * cos(6.2832 * (dBreak / 22.0 - uTime / 6.0 + lrNoise(wxz / 60.0) * 2.0)), 2.0);
-  foam = max(foam, surf * (0.45 + 0.55 * fronts));
+  float surf = vWaveMap.a * exp(-dBreak / mix(20.0, 55.0, lee)) * smoothstep(0.3, 0.8, vHs + 0.5 * vWaveMap.a)
+             * (1.0 - smoothstep(1.5, 4.0, uSeaLevel - ground));              // waves break where it is shallow
+  if (surf > 0.01) {
+    vec2 along = uWind.xy, across = vec2(-uWind.y, uWind.x);
+    vec2 sp = vec2(dot(wxz, along) / 26.0 - uTime * 0.11, dot(wxz, across) / 7.0);     // long downwind, narrow across
+    float streaks = 0.6 * lrNoise(sp) + 0.4 * lrNoise(sp * 2.7 + 5.0);
+    float pulse = 0.75 + 0.25 * sin(6.2832 * (uTime / 6.5 + lrNoise(wxz / 45.0) * 3.0));
+    foam = max(foam, surf * pulse * smoothstep(0.25, 0.7, streaks + 0.45 * surf));
+  }
   if (foam > 0.003) {
     float cover = lrFoamPattern(vGrid, lrSaturate(foam), px);
     col = mix(col, 0.82 * lit / PI, cover);

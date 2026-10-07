@@ -51,7 +51,8 @@ float lrCloudDensity(vec3 p, bool detail, float size) {
   float cov = lrSaturate(lrRemap(w.r * 0.55 + w.g * 0.15 + w2.r * 0.3, 1.0 - uCloudLayer.z * 1.1, 1.0, 0.0, 1.0));
   if (cov <= 0.0) return 0.0;
   vec3 q = vec3(wxz.x + uCloudWind.x, alt, wxz.y + uCloudWind.y);
-  vec4 s = textureLod(tCloudShape, q / uCloudWind.z, log2(max(size * 128.0 / uCloudWind.z, 1.0)));
+  // (Not past mip 2: coarser than that the cumulus shapes themselves blur into a sheet.)
+  vec4 s = textureLod(tCloudShape, q / uCloudWind.z, min(log2(max(size * 128.0 / uCloudWind.z, 1.0)), 2.0));
   float fbm = s.g * 0.625 + s.b * 0.25 + s.a * 0.125;
   // Cumulus profile: a flat rounded base, a towering but tapering top.
   float base = lrRemap(s.r, fbm - 1.0, 1.0, 0.0, 1.0) * smoothstep(0.0, 0.08, hf) * smoothstep(1.0, 0.35, hf);
@@ -95,7 +96,9 @@ vec4 lrCloudMarch(vec3 o, vec3 d, float jitter, int steps, int lightSteps, float
   float trans = 1.0, weight = 0.0, t = t0 + dt * jitter;
   for (int i = 0; i < steps; i++) {
     vec3 p = o + d * t;
-    float size = max(t * pixel, dt * 0.5), dens = lrCloudDensity(p, true, size);
+    // Far-off cumulus cannot be resolved by a march this coarse (they smear into grey sheets): let them thin out
+    // into the haze between 22 and 45 km.
+    float size = max(t * pixel, dt * 0.5), dens = lrCloudDensity(p, true, size) * (1.0 - smoothstep(22000.0, 45000.0, t));
     if (dens > 0.0) {
       float sigma = dens * uCloudLayer.w, tauSun = lrCloudSunDepth(p, lightSteps, size);
       // Multiple scattering as octaves: each order sees less extinction and a flatter phase function.

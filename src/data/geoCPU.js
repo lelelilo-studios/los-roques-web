@@ -4,8 +4,10 @@
 const smoothstep = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /** Height of a sand shore at signed distance s from the waterline (s > 0 seaward). Same as lrShoreProfile. */
-export function shoreProfile(s) {
-  return s < 0 ? 1 - Math.exp(s * 0.11) : -0.11 * s / (1 + 0.22 * s) - Math.max(s - 4, 0) * 0.02;
+export function shoreProfile(s, mapHeight) {
+  if (s >= 0) return -0.11 * s / (1 + 0.22 * s) - Math.max(s - 4, 0) * 0.02;
+  const berm = Math.min(1, Math.max(0.08, mapHeight * 1.2 + 0.05));
+  return berm * (1 - Math.exp(s * 0.11 / berm));
 }
 
 export class Ground {
@@ -37,6 +39,6 @@ export class Ground {
     const e = Math.max(Math.abs(u - 0.5), Math.abs(v - 0.5)) * 2, inside = 1 - smoothstep(0.985, 1, e);
     const h = -64 + (this.sample(this.height, u, v) + 64) * inside, s = 300 + (this.sample(this.shore, u, v) - 300) * inside;
     const w = 1 - smoothstep(25, 60, Math.abs(s));
-    return h + (shoreProfile(s) - h) * w;
+    return h + (shoreProfile(s, h) - h) * w;
   }
 }

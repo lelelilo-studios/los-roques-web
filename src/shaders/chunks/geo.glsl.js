@@ -23,11 +23,14 @@ float lrBicubic(sampler2D tex, vec2 uv, vec2 size) {
        + g1.y * (g0.x * textureLod(tex, vec2(p0.x, p1.y), 0.0).r + g1.x * textureLod(tex, vec2(p1.x, p1.y), 0.0).r);
 }
 
-// Height of a sand shore at signed distance s from the waterline (s > 0 is seaward), relative to mean sea level:
-// berm +1 m about 9 m inland, foreshore slope 0.11, a step to -0.5 m a few metres out, then a 1:50 terrace.
-float lrShoreProfile(float s) {
-  float up = 1.0 - exp(min(s, 0.0) * 0.11);                      // land side: rises 0.11 m/m, levels off at +1 m
-  float dn = -0.11 * s / (1.0 + 0.22 * max(s, 0.0)) - max(s - 4.0, 0.0) * 0.02;   // sea side: eases to -0.5 m, then 1:50
+// Height of a sand shore at signed distance s from the waterline (s > 0 is seaward), relative to mean sea level.
+// Land side: rises at 0.11 m/m and levels off at a berm whose height follows the mapped ground there (up to
+// +1 m), so a low sand spit like the Cayo de Agua isthmus stays low enough for a high tide to cover.
+// Sea side: a step to -0.5 m a few metres out, then a 1:50 terrace.
+float lrShoreProfile(float s, float mapHeight) {
+  float berm = clamp(mapHeight * 1.2 + 0.05, 0.08, 1.0);
+  float up = berm * (1.0 - exp(min(s, 0.0) * 0.11 / berm));
+  float dn = -0.11 * s / (1.0 + 0.22 * max(s, 0.0)) - max(s - 4.0, 0.0) * 0.02;
   return s < 0.0 ? up : dn;
 }
 
@@ -44,7 +47,7 @@ float lrGround(vec2 wxz, float cell, out float shore) {
   h = mix(-64.0, h, inside);
   shore = mix(300.0, shore, inside);
   float w = 1.0 - smoothstep(25.0, 60.0, abs(shore));
-  return mix(h, lrShoreProfile(shore), w);
+  return mix(h, lrShoreProfile(shore, h), w);
 }
 
 // Surface normal of the ground from central differences over 'd' metres.

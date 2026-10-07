@@ -31,7 +31,7 @@ export function buildPanel(root, app) {
 
   // ---- time of day
   const timeOut = el('output', { text: clock(env.hours) }), sunOut = el('small', { class: 'hint' });
-  const time = el('input', { type: 'range', min: '4', max: '21', step: '0.05', value: String(env.hours), 'aria-label': 'Time of day', oninput: () => app.setEnv({ hours: Number(time.value), playing: false }) });
+  const time = el('input', { type: 'range', min: '0', max: '24', step: '0.05', value: String(env.hours), 'aria-label': 'Time of day', oninput: () => app.setEnv({ hours: Number(time.value), playing: false }) });
   const play = el('button', { class: 'icon', 'aria-label': 'Play a day', title: 'Play a day', text: '▶', onclick: () => app.setEnv({ playing: !env.playing }) });
   const month = el('select', { 'aria-label': 'Month', onchange: () => app.setEnv({ month: Number(month.value) }) },
     ...MONTHS.map((m, i) => el('option', { value: String(i), text: m })));
@@ -75,9 +75,9 @@ export function buildPanel(root, app) {
     el('h2', { text: 'Los Roques, from satellite data' }),
     el('p', { text: 'An archipelago of some 350 islands, cays and sandbanks 130 km off the Venezuelan coast: a 44 by 27 km coral platform around a shallow lagoon, a national park since 1972. Only Gran Roque is rock; everything else is white carbonate sand, mangrove and reef.' }),
     el('p', { text: 'The islands, shorelines, water depths and seabed in this simulation are derived from Sentinel-2 imagery (10 m), the Copernicus elevation model, the Allen Coral Atlas reef maps and OpenStreetMap. Depths inside the lagoon are estimated from the colour of the water, so they are plausible rather than surveyed. Detail finer than about 11 m (beach profiles, ripples, waves, foam) is generated.' }),
-    el('p', { text: 'The sun follows the real date and time for 11.85° N. Wind, waves, cloud and sea temperature follow monthly climate normals.' }),
+    el('p', { text: 'The sun follows the real date and time for 11.85° N. Wind, waves, cloud and sea temperature follow monthly climate normals, or, with “Live”, the current conditions from Open-Meteo. The small tide and the seasonal sea level decide whether the Cayo de Agua sand isthmus is dry or awash.' }),
     el('h3', { text: 'Data' }),
-    el('ul', {}, ...app.attribution.map(a => el('li', { text: a }))),
+    el('ul', {}, ...app.attribution.map(a => el('li', { text: a })), el('li', { text: 'Live weather: Open-Meteo.com (CC BY 4.0). Climate normals: NASA POWER, Open-Meteo.' })),
     el('form', { method: 'dialog' }, el('button', { text: 'Close' })));
 
   root.append(panel, divider, dialog);
@@ -95,7 +95,10 @@ export function buildPanel(root, app) {
     windOut.textContent = `${Math.round(knots(status.wind))} kn ${compass(status.windFrom)}`;
     sunOut.textContent = status.sunElevation > 0 ? `Sun ${status.sunElevation.toFixed(0)}° above the horizon · rises ${clock(status.sunrise)}, sets ${clock(status.sunset)}`
       : `Sun below the horizon · rises ${clock(status.sunrise)}`;
-    facts.textContent = `Typical ${MONTHS[env.month]}: sea ${status.sea.toFixed(1)} °C, air up to ${status.airMax} °C`;
+    const level = `sea level ${status.seaLevel >= 0 ? '+' : '−'}${Math.abs(status.seaLevel * 100).toFixed(0)} cm`;
+    facts.textContent = status.liveNote ? status.liveNote
+      : status.live ? `Now at Los Roques: ${status.air != null ? `${status.air.toFixed(0)} °C, ` : ''}sea ${status.sea.toFixed(1)} °C${status.waveHeight != null ? `, waves ${status.waveHeight.toFixed(1)} m outside the reef` : ''}. Weather data by Open-Meteo.com`
+        : `Typical ${MONTHS[env.month]}: sea ${status.sea.toFixed(1)} °C, air up to ${status.airMax} °C, ${level}`;
     const comparing = status.compare >= 0;
     divider.hidden = !comparing; compare.checked = comparing;
     if (comparing && !dragging) divider.style.left = `${status.compare * 100}%`;

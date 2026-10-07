@@ -20,6 +20,7 @@ import { Landmarks } from './world/landmarks.js';
 import { Boats } from './world/boats.js';
 import { localDate, sunDirection, sunPosition, sunTimes } from './world/sun.js';
 import { conditions } from './world/weather.js';
+import { fetchLiveWeather } from './world/liveWeather.js';
 import { buildPanel } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
 
@@ -66,19 +67,32 @@ export async function start(canvas, onProgress = () => {}) {
   let satellite = null;
 
   // ---- environment: local time (UTC-4), month, weather
-  const env = { hours: 10.5, month: 0, weather: 'trade', windOverride: null, playing: false, sunOverride: null, exposure: 1 };
+  const env = { hours: 10.5, month: new Date().getUTCMonth(), weather: 'trade', windOverride: null, playing: false, sunOverride: null, exposure: 1, seaLevelOverride: null, live: null };
   const status = { wind: 7, windFrom: 78, sunElevation: 0, sunrise: 6, sunset: 18, sea: 27, airMax: 30, compare: -1 };
   const convergence = manifest.grid.convergenceDeg || 0;
   const dayOf = month => `2026-${String(month + 1).padStart(2, '0')}-15`;
+  let liveAsked = false;
   function applyEnv() {
+    if (env.weather === 'live' && !liveAsked) {
+      // First use of "Live" (from the panel or a link): ask the weather service once; until it answers, and if it
+      // does not, the climate normals stand in.
+      liveAsked = true;
+      status.liveNote = 'Asking the weather service…';
+      fetchLiveWeather().then(data => {
+        env.live = data;
+        status.liveNote = data ? '' : 'The weather service did not answer: showing typical conditions.';
+        applyEnv(); syncPanel?.(status);
+      });
+    }
     const date = localDate(dayOf(env.month), env.hours);
-    const sun = env.sunOverride || sunPosition(date), times = sunTimes(date), c = conditions(env.weather, env.month);
+    const sun = env.sunOverride || sunPosition(date), times = sunTimes(date), c = conditions(env.weather, env.month, env.hours, env.live);
     shared.uSunDir.value.fromArray(sunDirection(sun.azimuth, sun.elevation, env.sunOverride ? 0 : convergence));
     const wind = env.windOverride ?? c.wind;
     if (wind !== waves.wind.speed || c.windFrom !== waves.wind.from) waves.setWind(wind, c.windFrom);
     shared.uMieScale.value = c.haze;
     env.cloud = env.cloudOverride ?? c.cloud;
-    Object.assign(status, { wind, windFrom: c.windFrom, sunElevation: sun.elevation, sunrise: times.sunrise, sunset: times.sunset, sea: c.sea, airMax: c.airMax });
+    shared.uSeaLevel.value = env.seaLevelOverride ?? c.seaLevel;
+    Object.assign(status, { live: c.live, air: c.air, waveHeight: c.waveHeight, seaLevel: shared.uSeaLevel.value, wind, windFrom: c.windFrom, sunElevation: sun.elevation, sunrise: times.sunrise, sunset: times.sunset, sea: c.sea, airMax: c.airMax });
   }
 
   // ---- places, labels, controls
@@ -96,7 +110,15 @@ export async function start(canvas, onProgress = () => {}) {
   let syncPanel = null, labels = null;
   const app = {
     env, places, attribution: manifest.attribution || [],
-    setEnv(patch) { Object.assign(env, patch); applyEnv(); syncPanel?.(status); saveHash(); },
+    setEnv(patch) {
+      Object.assign(env, patch);
+      if (patch.weather === 'live') {
+        // Now, there: the local clock time and month at Los Roques (UTC-4), and the weather service's numbers.
+        const now = new Date(Date.now() - 4 * 3600000);
+        Object.assign(env, { hours: now.getUTCHours() + now.getUTCMinutes() / 60, month: now.getUTCMonth(), playing: false });
+      }
+      applyEnv(); syncPanel?.(status); saveHash();
+    },
     flyToPlace(p) { rig.flyTo(shotFor(p), 4.5); },
     async setCompare(x) {
       if (x >= 0 && !satellite) { satellite = await data.loadSatellite(); shared.tSatellite.value = satellite; }
@@ -141,7 +163,7 @@ export async function start(canvas, onProgress = () => {}) {
   function frame(dt = 0) {
     if (env.playing && dt > 0) {
       env.hours += dt * 17 / DAY_SECONDS;
-      if (env.hours > 21) env.hours = 4;
+      if (env.hours > 21) env.hours = 4;                 // a played day runs from before dawn to after dusk
       applyEnv(); syncPanel?.(status);
     }
     if (rig.step(dt)) saveHash();
@@ -203,7 +225,7 @@ export async function start(canvas, onProgress = () => {}) {
     async setState(s = {}) {
       if (s.cam) { rig.cancelFlight(); rig.set(s.cam); }
       if (s.time !== undefined) clock.time = s.time;
-      if (s.seaLevel !== undefined) shared.uSeaLevel.value = s.seaLevel;
+      if (s.seaLevel !== undefined) env.seaLevelOverride = s.seaLevel;
       if (s.show) { if (s.show.water !== undefined) water.mesh.visible = s.show.water; if (s.show.terrain !== undefined) terrain.mesh.visible = s.show.terrain; }
       if (s.exposure !== undefined) env.exposure = s.exposure;
       if (s.debug !== undefined) shared.uDebug.value.set(s.debug, 0, 0, 0);
