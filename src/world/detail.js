@@ -121,9 +121,18 @@ vec4 relief(vec2 uv) {
 // ---- 2: the shore. Foam is a raft of bubbles; as it dies, holes open in the middle of the big ones and the
 // walls between them are the last to go.
 vec4 shore(vec2 uv) {
-  vec4 big = worley(uv, 12.0), mid = worley(uv + 0.23, 40.0), small = worley(uv + 0.61, 150.0);
-  float wallBig = smoothstep(0.0, 0.2, big.y - big.x), wallMid = smoothstep(0.0, 0.25, mid.y - mid.x), wallSmall = smoothstep(0.0, 0.3, small.y - small.x);
-  float order = 0.6 * wallBig * (0.55 + 0.45 * h1(big.zw)) + 0.26 * wallMid * (0.5 + 0.5 * h1(mid.zw)) + 0.08 * wallSmall + 0.06 * vn(uv, 64.0);
+  // (The films are not straight-sided cells of one size, which read as cracked mud: they are bent, of every
+  // size from a finger's width to a hand's, thick with bubbles here and a thread there, and broken in places,
+  // so that dying foam is a torn lace and not a net.)
+  vec2 bent = uv + 0.034 * vec2(vn(uv + 0.11, 9.0) - 0.5, vn(uv + 0.57, 9.0) - 0.5) + 0.016 * vec2(vn(uv + 0.31, 31.0) - 0.5, vn(uv + 0.77, 31.0) - 0.5) + 0.005 * vec2(vn(uv + 0.19, 90.0) - 0.5, vn(uv + 0.63, 90.0) - 0.5);
+  vec4 huge = worley(bent + 0.41, 5.0), big = worley(bent, 12.0), mid = worley(uv + 0.23, 40.0), small = worley(uv + 0.61, 150.0);
+  float width = 0.05 + 0.32 * vn(uv + 0.3, 21.0) * vn(uv + 0.8, 6.0);
+  float cellHuge = smoothstep(0.0, width * 0.7, huge.y - huge.x), cellBig = smoothstep(0.0, width, big.y - big.x);
+  // (Here the wide cells make the lace, there the narrow ones.)
+  float wide = smoothstep(0.38, 0.62, vn(uv + 0.9, 4.0)), wallBig = mix(cellBig, cellHuge * (0.55 + 0.45 * cellBig), wide), id = mix(h1(big.zw), h1(huge.zw + 7.0), wide);
+  float wallMid = smoothstep(0.0, 0.25, mid.y - mid.x), wallSmall = smoothstep(0.0, 0.3, small.y - small.x);
+  float torn = smoothstep(0.45, 0.8, vn(uv + 0.37, 17.0)) * (1.0 - wallBig);
+  float order = 0.56 * wallBig * (0.55 + 0.45 * id) + 0.24 * wallMid * (0.5 + 0.5 * h1(mid.zw)) + 0.08 * wallSmall + 0.06 * vn(uv, 64.0) + 0.3 * torn;
   // Light on the bubbles: each small one a bright dome with a darker rim.
   float shade = 0.55 + 0.45 * (1.0 - smoothstep(0.0, 0.55, small.x)) - 0.25 * (1.0 - wallSmall) + 0.15 * (vn(uv, 24.0) - 0.5);
   // Holes in wet sand: air escaping leaves pin holes 1-3 mm across, in loose groups; now and then a crab's burrow.

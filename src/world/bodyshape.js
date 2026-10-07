@@ -17,7 +17,7 @@ export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, S
 export const BODY_VERTICES = 6 * SIDES * 36 + 3 * SIDES * 12, HEAD_VERTICES = 6 * SIDES * 5 + 3 * SIDES;
 /** The same with `detail` (your own body: hands with fingers and thumbs, feet with toes). */
 export const BODY_VERTICES_DETAIL = BODY_VERTICES + 108 * SIDES + 6800;
-const LIMB = new Float64Array(11 * 12), SKIN_RINGS = new Float64Array(8 * (SIDES + 1) * 6);
+const LIMB = new Float64Array(11 * 12), SKIN_RINGS = new Float64Array(11 * (SIDES + 1) * 6);
 const add = (p, a, ka, b = null, kb = 0, c = null, kc = 0) => [p[0] + a[0] * ka + (b ? b[0] * kb : 0) + (c ? c[0] * kc : 0), p[1] + a[1] * ka + (b ? b[1] * kb : 0) + (c ? c[1] * kc : 0), p[2] + a[2] * ka + (b ? b[2] * kb : 0) + (c ? c[2] * kc : 0)];
 const unit = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -181,9 +181,11 @@ export class Tubes {
    * them). Returns the tip of the middle finger; this.palm then holds the hand's frame: { wrist, knuckles, f (the way
    * it points), N (the way the palm faces), A (across it, towards the thumb) }. With `elbow`, the forearm is drawn
    * too, in one skin with the palm: round at the elbow, flattening to the wrist (which is wider across the hand
-   * than it is thick), and on into the heel of the hand, with no joint showing however the hand is bent.
+   * than it is thick), and on into the heel of the hand, with no joint showing however the hand is bent. With
+   * `sleeve` (where the bare arm comes out of the shirt) the upper arm is in the same skin, and the elbow is a
+   * rounded bend in it.
    */
-  hand(wrist, f, palm, side, curl, colour, spread = 0, elbow = null) {
+  hand(wrist, f, palm, side, curl, colour, spread = 0, elbow = null, sleeve = null) {
     const k = palm[0] * f[0] + palm[1] * f[1] + palm[2] * f[2], N = unit([palm[0] - f[0] * k, palm[1] - f[1] * k, palm[2] - f[2] * k]);
     const fxN = cross(f, N), A = [fxN[0] * side, fxN[1] * side, fxN[2] * side];        // across the palm, towards the thumb
     const K = add(wrist, f, 0.096);
@@ -192,8 +194,16 @@ export class Tubes {
     const pale = { dir: N, colour: [colour[0] * 1.22, colour[1] * 1.2, colour[2] * 1.24] }, back = [-N[0], -N[1], -N[2]];
     if (elbow) {
       const w = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), len = Math.hypot(wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]);
-      this.skin([elbow, add(elbow, w, 0.55 * len), add(wrist, w, -0.03), wrist, add(wrist, f, 0.034), add(wrist, f, 0.068), K],
-        [[0.037, 0.039], [0.031, 0.032], [0.0255, 0.0215], [0.0265, 0.0178], [0.0355, 0.0165], [0.0395, 0.013], [0.04, 0.0115]], colour, A, 10, 0, pale);
+      const pts = [add(elbow, w, 0.55 * len), add(wrist, w, -0.03), wrist, add(wrist, f, 0.034), add(wrist, f, 0.068), K];
+      const radii = [[0.031, 0.032], [0.0255, 0.0215], [0.0265, 0.0178], [0.0355, 0.0165], [0.0395, 0.013], [0.04, 0.0115]];
+      if (sleeve) {
+        // (The bend is taken in two steps, a few centimetres either side of the joint: a rounded elbow, with
+        // the point of it standing out a little behind.)
+        const u = unit([elbow[0] - sleeve[0], elbow[1] - sleeve[1], elbow[2] - sleeve[2]]), out = unit([u[0] - w[0], u[1] - w[1], u[2] - w[2]]), bent = Math.min(1, Math.hypot(u[0] - w[0], u[1] - w[1], u[2] - w[2]));
+        pts.unshift(sleeve, add(elbow, u, -0.035), add(elbow, out, 0.007 * bent), add(elbow, w, 0.04));
+        radii.unshift([0.042, 0.045], [0.037, 0.039], [0.0375, 0.039], [0.036, 0.0375]);
+      } else { pts.unshift(elbow); radii.unshift([0.037, 0.039]); }
+      this.skin(pts, radii, colour, A, 10, 0, pale);
     } else {
       // (One skin from inside the wrist to the knuckles: closed at the wrist, however the hand is bent.)
       this.skin([add(wrist, f, -0.016), add(wrist, f, -0.004), wrist, add(wrist, f, 0.034), add(wrist, f, 0.068), K], [[0.006, 0.005], [0.022, 0.015], [0.0265, 0.0178], [0.0355, 0.0165], [0.0395, 0.013], [0.04, 0.0115]], colour, A, 8, 0, pale);
@@ -419,13 +429,12 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     const sleeve = [sh[0] + (elbow[0] - sh[0]) * 0.5, sh[1] + (elbow[1] - sh[1]) * 0.5, sh[2] + (elbow[2] - sh[2]) * 0.5];
     t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
     if (detail) t.tube([sh[0] + (sleeve[0] - sh[0]) * 0.86, sh[1] + (sleeve[1] - sh[1]) * 0.86, sh[2] + (sleeve[2] - sh[2]) * 0.86], sleeve, [0.0485, 0.0518], [0.0478, 0.0508], shade(SHIRT, 0.8));
-    t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
-    if (detail) { t.cap(sleeve, elbow, [0.036, 0.038], SKIN, 0.85); t.cap(wrist, elbow, [0.036, 0.04], SKIN, 0.85); }      // the elbow, likewise
+    if (!detail) t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);        // (in detail, the whole bare arm is one skin with the hand: see Tubes.hand)
     if (detail) {
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
       const rest = [-side, -0.6 * wade, 0.35 * (1 - wade)], loose = 0.55 - 0.3 * wade;
-      const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow);
+      const tip = t.hand(wrist, point ? mix(fore, point) : fore, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow, sleeve);
       joints.fingertips.push(tip);
       if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching, palm: t.palm };
     } else {
@@ -494,10 +503,10 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
     const tip = [target[0] + dir[0] / dl * HAND, target[1] + dir[1] / dl * HAND, target[2] + dir[2] / dl * HAND];
     const sleeve = lerp3(sh, elbow, 0.3);                               // (short sleeves, pushed up by the water)
     t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
-    t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
+    if (!detail) t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
     if (detail) {
       // The hand: flat, fingers together, palm down and a little outwards for the pull.
-      t.hand(target, [dir[0] / dl, dir[1] / dl, dir[2] / dl], [side * 0.35 * pull, -1, 0], side, 0.08, SKIN, 0, elbow);
+      t.hand(target, [dir[0] / dl, dir[1] / dl, dir[2] / dl], [side * 0.35 * pull, -1, 0], side, 0.08, SKIN, 0, elbow, sleeve);
     } else {
       t.tube(elbow, target, [0.036, 0.04], [0.026, 0.03], SKIN);
       t.tube(target, tip, [0.04, 0.016], [0.034, 0.011], SKIN);            // the hand, flat like a paddle
