@@ -6,6 +6,7 @@
 // like the terrain, so nothing jitters far from the origin.
 import * as THREE from 'three';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
+import { shadowGLSL } from './shadow.js';
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -27,6 +28,7 @@ void main() {
 const fragmentShader = /* glsl */`
 #include <lr_common>
 #include <lr_cloud_shadow>
+${shadowGLSL}
 uniform float uNight;       // 0 by day, 1 at night: windows and lamps glow
 in vec3 vRel;
 in vec3 vColor;
@@ -41,17 +43,17 @@ void main() {
   vec3 albedo = glow > 0.5 ? vec3(0.05) : vColor;
   // Sun, sky, and the light the pale ground throws back up (what keeps a shaded wall from going sky-blue).
   vec3 bounce = (uSunE * lrSaturate(uSunDir.y) + uSkyE) * vec3(0.46, 0.43, 0.36) * 0.5;
-  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * lrCloudShadow(uCamXZ + vRel.xz) + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
+  vec3 light = uSunE * lrSaturate(dot(n, uSunDir)) * lrCloudShadow(uCamXZ + vRel.xz) * lrShadow(vRel, n) + uSkyE * (0.55 + 0.45 * n.y) + bounce * (0.5 - 0.5 * n.y);
   float water = uSeaLevel - vRel.y;
   // Same convention as the terrain: under water write reflectance and depth, above it radiance.
   if (water > 0.0) outColor = vec4(albedo * light / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), water);
   else outColor = vec4(albedo * light / PI + glow * (vColor - 1.0) * uNight * 0.02, -1000.0);
 }`;
 
-export function createObjectMaterial() {
+export function createObjectMaterial(shadowTaps = 8) {
   return new THREE.ShaderMaterial({
-    glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide,
-    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow], { uNight: { value: 0 } }),
+    glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps },
+    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], { uNight: { value: 0 } }),
   });
 }
 
@@ -216,7 +218,9 @@ export class Landmarks {
     this.material = createObjectMaterial();
     this.group = new THREE.Group();
     const add = m => { if (m) this.group.add(m); };
-    const extra = extraBuilder ? [...extraBuilder(this.material).children] : [];
+    const built = extraBuilder ? extraBuilder(this.material) : null, extra = built ? [...built.children] : [];
+    /** Where the beach umbrellas stand: [x, z, bearing to the water]. */
+    this.umbrellas = built?.userData.spots || [];
     for (const m of buildVillage(features.buildings || [], ground, this.material)) add(m);
     for (const l of features.lighthouses || []) if (l.pos) add(buildLighthouse(l, ground, this.material));
     for (const r of features.runways || []) if (r.a && r.b) add(buildRunway(r, ground, this.material));

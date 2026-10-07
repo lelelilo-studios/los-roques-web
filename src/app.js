@@ -17,6 +17,8 @@ import { Sky } from './world/sky.js';
 import { Waves } from './world/waves.js';
 import { Detail } from './world/detail.js';
 import { EnvMap } from './world/env.js';
+import { Shadows } from './world/shadow.js';
+import { MeshBuilder } from './world/landmarks.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
@@ -60,6 +62,7 @@ export async function start(canvas, onProgress = () => {}) {
   if (o.lagoon?.a) { shared.uAbsLagoon.value.fromArray(o.lagoon.a); shared.uBbLagoon.value.fromArray(o.lagoon.bb); }
 
   const ground = new Ground(data.cpu.height, data.cpu.shore, rect);
+  ground.cover = { land: data.cpu.land, benthic: data.cpu.benthic };
   const rig = new CameraRig();
   rig.ground = ground;
   const terrain = new Terrain(tier), water = new Water(tier);
@@ -118,7 +121,22 @@ export async function start(canvas, onProgress = () => {}) {
   const opaque = new THREE.Scene();
   opaque.matrixWorldAutoUpdate = false;
   const birds = new Birds(places, ground, landmarks.material);
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group);
+  // Your own figure: never drawn, it only casts your shadow.
+  const figure = (() => {
+    const mb = new MeshBuilder(), c = [0.5, 0.5, 0.5];
+    for (const side of [-0.095, 0.095]) mb.tube(side, 0, 0, 0.86, 0.045, 0.075, 6, c);    // legs
+    mb.tube(0, 0, 0.84, 1.18, 0.15, 0.13, 8, c);                                           // hips and waist
+    mb.tube(0, 0, 1.18, 1.44, 0.13, 0.18, 8, c, true);                                     // chest and shoulders
+    for (const side of [-0.235, 0.235]) mb.tube(side, 0, 0.78, 1.42, 0.042, 0.055, 6, c); // arms, hanging a little clear
+    mb.tube(0, 0, 1.44, 1.5, 0.05, 0.05, 5, c);                                            // neck
+    mb.tube(0, 0, 1.5, 1.62, 0.085, 0.1, 8, c); mb.tube(0, 0, 1.62, 1.72, 0.1, 0.06, 8, c, true);   // head
+    const m = new THREE.Mesh(mb.geometry(), landmarks.material);
+    m.frustumCulled = false; m.visible = false; m.matrixAutoUpdate = false;
+    return m;
+  })();
+  landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
+  const shadows = new Shadows(renderer, tier.fp.shadowMap, R.reversed);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, figure);
   const ui = document.getElementById('ui');
   let syncPanel = null, labels = null, hud = null, walkInput = null;
 
@@ -172,7 +190,14 @@ export async function start(canvas, onProgress = () => {}) {
         const t = rig.target, place = rig.dist > 250 ? places.filter(q => q.id !== 'overview').map(q => [Math.hypot(q.pos[0] - t.x, q.pos[1] - t.z), q]).sort((a, b) => a[0] - b[0])[0] : null;
         spot = place && place[0] < 900 ? walkSpotFor(place[1]) : { x: t.x, z: t.z, yaw: rig.yaw * 180 / Math.PI };
       }
-      if (spot.near) {
+      if (spot.umbrella) {
+        // "So many metres towards the water from the beach umbrella nearest this point, looking back at it."
+        const u = landmarks.umbrellas.map(q => [Math.hypot(q[0] - spot.umbrella[0], q[1] - spot.umbrella[1]), q]).sort((a, b) => a[0] - b[0])[0]?.[1];
+        if (u) {
+          const d = spot.back ?? 5, a = u[2] + (spot.side ?? 0.5), x = u[0] + Math.cos(a) * d, z = u[1] + Math.sin(a) * d;
+          spot = { ...spot, x, z, yaw: Math.atan2(u[0] - x, -(u[1] - z)) * 180 / Math.PI + (spot.face ?? 0) };
+        }
+      } else if (spot.near) {
         // "So many metres up the beach from the waterline nearest this point, facing so many degrees off the sea."
         const found = ground.findShore(spot.near[0], spot.near[1], spot.shore ?? -2) || { x: spot.near[0], z: spot.near[1], yaw: 0 };
         spot = { ...spot, x: found.x, z: found.z, yaw: found.yaw + (spot.face ?? 0) };
@@ -270,6 +295,18 @@ export async function start(canvas, onProgress = () => {}) {
     graph.starTurn = env.hours / 24 * 2 * Math.PI;
     boats.update(rig.eye, clock.time, shared.uSeaLevel.value);
     birds.update(rig.eye, clock.time);
+    // Shadows of things: round the walker (and of the walker), or round what the orbit camera looks at.
+    const walking = rig.mode === 'walk';
+    if (shadows.enabled && (walking || rig.dist < 1500)) {
+      const standing = walking && !walker.afloat && !walker.diving;
+      if (standing) {
+        figure.position.set(0, walker.eyeY - walker.body, 0); figure.rotation.set(0, -walker.yaw, 0); figure.scale.set(1, walker.body / 1.65, 1);
+        figure.updateMatrix(); figure.matrixWorld.copy(figure.matrix);
+      }
+      const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: ground.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
+        : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group], standing ? [figure] : []);
+    } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
   }
@@ -309,6 +346,9 @@ export async function start(canvas, onProgress = () => {}) {
 
   const api = {
     errors,
+    /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
+    umbrellas: landmarks.umbrellas,
+    groundAt: (x, z) => ({ height: ground.heightAt(x, z), shore: ground.shoreAt(x, z) }),
     /**
      * For tests and screenshots. { cam: {x, z, dist, yaw, pitch, fov}, time (wave clock, s), hours (local), month (0-11),
      * weather, wind (m/s), sun: {azimuth, elevation}|null, seaLevel, exposure, compare (0..1 or -1), show: {water, terrain} }

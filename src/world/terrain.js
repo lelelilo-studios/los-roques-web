@@ -12,6 +12,7 @@ import { Clipmap, clipmapFragment, clipmapVertex } from '../core/clipmap.js';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
 import { detailGLSL } from './detail.js';
+import { shadowGLSL } from './shadow.js';
 
 // Lumpy tops of tree crowns: 1 = average height. Used for the canopy's shape (vertices) and its shading (pixels).
 const crownsGLSL = /* glsl */`
@@ -62,6 +63,7 @@ const fragmentShader = /* glsl */`
 ${wavesGLSL}
 ${clipmapFragment}
 ${detailGLSL}
+${shadowGLSL}
 uniform float uRain;
 uniform vec4 uFoot[24];       // your footprints: x, z (detail coordinates, wrapped to 64 m), heading, time made
 uniform int uFootCount;
@@ -313,6 +315,10 @@ void main() {
     }
   }
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);
+  // Shadows of things. On the seabed the light came in through the surface up-sun of here: look there.
+  vec3 sunIn = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
+  shade *= water > 0.0 ? lrShadow(vec3(vRel.x, uSeaLevel, vRel.z) - vec3(sunIn.x, 0.0, sunIn.z) * (water / max(-sunIn.y, 0.3)), vec3(0.0, 1.0, 0.0))
+                       : lrShadow(vec3(vRel.x, ground, vRel.z), nG);
   // Dry sand is rough: it sends light back towards the sun and less of it on, away from the sun (the
   // Oren-Nayar lobe, scaled so that seen from above at noon it is as before).
   float nl = lrSaturate(dot(n, uSunDir)), nv = lrSaturate(dot(n, V)), back = dot(uSunDir, V) - nl * nv;
@@ -371,8 +377,8 @@ export class Terrain {
   constructor(tier) {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-70, 140] });
     this.material = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {},
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
+      glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
         'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain']),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);

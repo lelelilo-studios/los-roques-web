@@ -94,7 +94,11 @@ export async function loadData(set, anisotropy, onProgress = () => {}) {
           : dataTexture(new Uint8Array([0, 0, 0, 255]), { width: 1, height: 1 }, THREE.RGBAFormat, THREE.UnsignedByteType),
         albedo,
       },
-      cpu: { height: cpu(height), shore: cpu(shore), waveMap: { rgba: waveMap.rgba, width: waveMap.entry.width, height: waveMap.entry.height } },
+      cpu: {
+        height: cpu(height), shore: cpu(shore), waveMap: { rgba: waveMap.rgba, width: waveMap.entry.width, height: waveMap.entry.height },
+        // (The arrays the textures were made from: nothing extra is kept.)
+        land: { rgba: land.rgba, width: land.entry.width, height: land.entry.height }, benthic: { rgba: benthic.rgba, width: benthic.entry.width, height: benthic.entry.height },
+      },
       /** The satellite picture is only fetched when the compare view is first opened. */
       loadSatellite: () => imageTexture(manifest.maps.satellite.hi, anisotropy),
     };

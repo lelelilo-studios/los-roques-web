@@ -9,18 +9,25 @@ const SPOTS = [[/francisqu/, 14], [/madrisqu|pirata/, 12], [/crasqu/, 10], [/agu
 
 export function buildBeachSets(places, ground, material) {
   const group = new THREE.Group();
+  group.userData.spots = [];                                // where the umbrellas stand: [x, z, bearing to the water (radians, from +x towards +z)]
   for (const place of places) {
     const label = `${place.id || ''} ${place.name || ''}`.toLowerCase(), spot = SPOTS.find(s => s[0].test(label));
     if (!spot) continue;
     const r = rand(Math.round(place.pos[0] * 11 + place.pos[1] * 3) + 1), mb = new MeshBuilder(), taken = [];
-    for (let tries = 0; tries < spot[1] * 120 && taken.length < spot[1]; tries++) {
+    for (let tries = 0; tries < spot[1] * 400 && taken.length < spot[1]; tries++) {
       const a = r() * 2 * Math.PI, d = r() * 420, x = place.pos[0] + Math.cos(a) * d, z = place.pos[1] + Math.sin(a) * d;
       const s = ground.shoreAt(x, z), h = ground.heightAt(x, z);
-      if (s > -5 || s < -16 || h < 0.3 || h > 1.6 || taken.some(t => Math.hypot(t[0] - x, t[1] - z) < 7)) continue;
+      if (s > -5 || s < -26 || h < 0.45 || h > 1.6 || taken.some(t => Math.hypot(t[0] - x, t[1] - z) < 7)) continue;
       // Face the water: down the gradient of the shore distance.
       const gx = ground.shoreAt(x + 2, z) - ground.shoreAt(x - 2, z), gz = ground.shoreAt(x, z + 2) - ground.shoreAt(x, z - 2);
-      if (Math.hypot(gx, gz) < 0.2) continue;
+      const gl = Math.hypot(gx, gz);
+      if (gl < 0.2) continue;
+      // On open sand by open water: not among the mangroves or the scrub, not on the shore of a pond inside the cay.
+      const cover = [0, 1, 2, 3].map(k => ground.coverAt('land', x + Math.cos(k * 1.57) * 4, z + Math.sin(k * 1.57) * 4)), way = [gx / gl, gz / gl];
+      if (cover.some(c => c[0] + c[1] > 0.2) || [0, 6].some(d => { const c = ground.coverAt('land', x + way[0] * (-s + d), z + way[1] * (-s + d)); return c[0] > 0.2; })) continue;
+      if (ground.shoreAt(x + way[0] * (-s + 50), z + way[1] * (-s + 50)) < 20) continue;
       taken.push([x, z]);
+      group.userData.spots.push([x, z, Math.atan2(gz, gx)]);
       const lx = x - place.pos[0], lz = z - place.pos[1], rot = Math.atan2(gz, gx), cloth = CLOTH[Math.floor(r() * CLOTH.length)], white = [0.85, 0.85, 0.82];
       mb.tube(lx, lz, h - 0.3, h + 2.15, 0.025, 0.025, 5, [0.75, 0.75, 0.75]);                      // pole
       for (let k = 0; k < 8; k++) {                                                                  // canopy in two colours
@@ -31,6 +38,9 @@ export function buildBeachSets(places, ground, material) {
         const cx = lx + Math.cos(rot) * 0.5 - Math.sin(rot) * side, cz = lz + Math.sin(rot) * 0.5 + Math.cos(rot) * side;
         mb.box(cx, h + 0.28, cz, 0.95, 0.04, 0.3, white, rot);
         mb.box(cx - Math.cos(rot) * 0.75, h + 0.45, cz - Math.sin(rot) * 0.75, 0.25, 0.04, 0.3, white, rot);
+        for (const [along, across] of [[-0.85, -0.26], [-0.85, 0.26], [0.85, -0.26], [0.85, 0.26]]) {       // its legs
+          mb.box(cx + Math.cos(rot) * along - Math.sin(rot) * across, h + 0.1, cz + Math.sin(rot) * along + Math.cos(rot) * across, 0.02, 0.16, 0.02, white, rot);
+        }
       }
       mb.box(lx - Math.cos(rot) * 0.9, h + 0.2, lz - Math.sin(rot) * 0.9, 0.3, 0.2, 0.2, [0.1, 0.3, 0.7], rot, white);   // cool box
     }

@@ -16,6 +16,8 @@ export const shared = {
   uFoot: { value: Array.from({ length: 24 }, () => new THREE.Vector4(0, 0, 0, -1e9)) },   // your footprints: x, z (wrapped to 64 m), heading, time made
   uFootCount: { value: 0 },
   uRing: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -1e9, 0)) },     // rings you send out wading: x, z (wrapped to 64 m), time, strength
+  tShadow: { value: null }, uShadowC: { value: new THREE.Vector3() }, uShadowR: { value: new THREE.Vector3(1, 0, 0) }, uShadowU: { value: new THREE.Vector3(0, 0, 1) },
+  uShadowP: { value: new THREE.Vector4(1, 1, 0, 0) },
   uCamTexel: { value: new THREE.Vector4() },
   uCamTexelShore: { value: new THREE.Vector4() },
   uLift: { value: new THREE.Vector2(2e-4, 0) },   // how far the sea's mesh rides above the beach face: per metre, per metre squared
@@ -76,6 +78,7 @@ export const CHUNK_UNIFORMS = {
   shore: ['uLift'],
   detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
   rings: ['uRing'],
+  shadow: ['tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
   atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa', 'tEnv'],
   clouds: ['tCloudShape', 'tCloudDetail', 'uCloudLayer', 'uCloudWind'],

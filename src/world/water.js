@@ -8,6 +8,7 @@ import { Clipmap, clipmapFragment, clipmapVertex } from '../core/clipmap.js';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
 import { detailGLSL } from './detail.js';
+import { shadowGLSL } from './shadow.js';
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -52,6 +53,7 @@ const fragmentShader = /* glsl */`
 ${wavesGLSL}
 ${clipmapFragment}
 ${detailGLSL}
+${shadowGLSL}
 uniform vec4 uRing[6];        // rings you send out wading: x, z (detail coordinates), time, strength
 uniform sampler2D tRefr;      // copy of the opaque scene: rgb = lit bottom reflectance, a = water depth
 uniform sampler2D tWaterType; // 1 = lagoon water, 0 = clear ocean water
@@ -217,7 +219,7 @@ void main() {
   vec3 a = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon);
   // Light on the water here (a cloud may shade it). The bottom reflectance was scaled by the light the bed gets
   // relative to open ground, so rescale it to this light.
-  float shade = lrCloudShadow(wxz);
+  float shade = lrCloudShadow(wxz) * lrShadow(vRel, vec3(0.0, 1.0, 0.0));        // (a cloud, a hull or a pier may shade it)
   vec3 lit = uSunE * lrSaturate(uSunDir.y) * shade + uSkyE;
   vec3 leaving = lrWaterRrs(rho * downwelling / max(lit, vec3(1e-4)), lrOpticalDepth(H), muS, muV, a, bb) * lit * (1.0 - fresnel) / 0.979;
 
@@ -284,8 +286,8 @@ export class Water {
   constructor(tier) {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-4, 4] });
     this.material = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide,
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
+      glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4 },
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
         'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);

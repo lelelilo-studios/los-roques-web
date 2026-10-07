@@ -24,7 +24,19 @@ export class Ground {
    * @param {{raw: Uint16Array, width: number, height: number, scale: number, offset: number}} shore
    * @param {{x: number, z: number, w: number, h: number}} rect  world rectangle of the maps
    */
-  constructor(height, shore, rect) { Object.assign(this, { height, shore, rect }); }
+  constructor(height, shore, rect) { Object.assign(this, { height, shore, rect }); this.cover = {}; }
+
+  /**
+   * One texel (0..1 per channel) of an 8-bit RGBA map given to `this.cover` (`land`: mangrove, scrub, built-up,
+   * canopy height; `benthic`: seagrass, coral, rubble, confidence), or zeros where there is no such map.
+   */
+  coverAt(name, x, z, out = [0, 0, 0, 0]) {
+    const m = this.cover[name];
+    if (!m) return out.fill(0);
+    const i = Math.min(m.width - 1, Math.max(0, Math.floor((x - this.rect.x) / this.rect.w * m.width))), j = Math.min(m.height - 1, Math.max(0, Math.floor((z - this.rect.z) / this.rect.h * m.height)));
+    for (let c = 0; c < 4; c++) out[c] = m.rgba[(j * m.width + i) * 4 + c] / 255;
+    return out;
+  }
 
   /**
    * Bicubic B-spline sample of a raster at map coordinates u, v in 0..1: the same filter as lrBicubic in the
