@@ -105,6 +105,8 @@ dialog.about button { font: inherit; padding: 0.4rem 1rem; border-radius: 999px;
 .chip.walk { border-color: var(--accent); }
 
 @media (max-width: 640px) {
+  .walk-hint { bottom: 5.4rem; white-space: normal; text-align: center; width: max-content; max-width: 86vw; }
+  .walk-pad { bottom: 9rem; }
   .panel { top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 55%; border-radius: 0.9rem 0.9rem 0 0; border-bottom: 0; }
   .panel-toggle { padding: 0.6rem 1rem 0.5rem; font-size: 1.05rem; }
   .compare-tag { bottom: auto; top: 0.8rem; }

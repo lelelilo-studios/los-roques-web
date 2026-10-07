@@ -115,7 +115,7 @@ export function buildPanel(root, app) {
 
 /** The few controls shown in first person: how to move, a way back, and buttons for touch screens. */
 export function buildWalkHud(root, onLeave, onSound, soundOn) {
-  const touch = matchMedia('(pointer: coarse)').matches;
+  const touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || matchMedia('(max-width: 640px)').matches;
   const hud = el('div', { class: 'walk-hud' },
     el('p', { class: 'walk-hint', text: touch ? 'Left thumb walks · right thumb looks' : 'Click to look around · W A S D walk · Shift run · C crouch or dive · Space come up · Tab leaves' }),
     el('button', { class: 'chip walk-leave', text: 'Back to the air', onclick: onLeave }),
