@@ -39,7 +39,9 @@ void main() {
   float keep = 0.0;
   ${rule}
   float edge = length(aCell) / uKind.y;
-  vFade = (1.0 - smoothstep(0.7, 1.0, edge)) * step(h.z, keep);
+  // (Strictly more than the cell's draw: the hash comes out as exactly 0 for one cell in some hundreds, and
+  // a rule that says "none here" must mean none.)
+  vFade = keep > max(h.z, 1e-4) ? 1.0 - smoothstep(0.7, 1.0, edge) : 0.0;
   float size = mix(uSize.x, uSize.y, h.w) * smoothstep(0.0, 0.25, vFade);
   float turn = 6.2832 * h.x * 7.0;                          // which way it faces (radians from +x towards +z)
   vec3 p = position * size, colour = color, shift = vec3(0.0);

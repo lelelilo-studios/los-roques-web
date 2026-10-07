@@ -397,6 +397,8 @@ export async function start(canvas, onProgress = () => {}) {
   const api = {
     errors,
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
+    /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
+    life,
     umbrellas: landmarks.umbrellas,
     /** For tests: where the statue stands and where the turtle is now. */
     statue: statue ? { ...statue.userData.world, depth: statue.userData.depth } : null,

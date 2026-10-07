@@ -61,11 +61,20 @@ vec4 grain(vec2 uv) {
   float bright = 0.92 + 0.16 * h1(g.zw) + 0.1 * (h1(floor(uv * ${SIZE}.0)) - 0.5), tint = 0.5;
   bright *= 1.0 - 0.5 * step(0.975, h1(g.zw + 5.0));
   tint += 0.5 * step(0.993, h1(g.zw + 7.0));                                     // pink specks (shells of forams)
-  vec4 f = worley(uv + 0.11, 44.0);                                              // a flake every centimetre or so
-  float pick = h1(f.zw + 1.0), radius = (0.1 + 0.3 * h1(f.zw + 2.0)) * (0.8 + 0.5 * vn(uv + 0.5, 300.0));
-  // (They gather in drifts: thick here, almost none there.)
-  float flake = step(0.3 + 0.6 * vn(uv + 0.9, 5.0), pick) * (1.0 - smoothstep(radius - 0.04, radius, f.x));
-  bright = mix(bright, 1.42 + 0.25 * h1(f.zw + 4.0), flake);
+  // Flakes: angular plates a few millimetres across (most small, a few large), each lying its own way round,
+  // cream rather than white. They gather in drifts: thick here, almost none there.
+  vec2 fp = (uv + 0.11) * 44.0, fi = floor(fp), ff = fp - fi, off = vec2(9.0);
+  float fd = 9.0;
+  vec2 fid = vec2(0.0);
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+    vec2 c = mod(fi + vec2(x, y), 44.0), rr = vec2(x, y) + h2(c) - ff;
+    if (dot(rr, rr) < fd) { fd = dot(rr, rr); off = rr; fid = c; }
+  }
+  float pick = h1(fid + 1.0), big = h1(fid + 2.0), radius = 0.07 + 0.3 * big * big, turn = 6.2832 * h1(fid + 5.0);
+  vec2 lie = vec2(off.x * cos(turn) + off.y * sin(turn), off.y * cos(turn) - off.x * sin(turn)) * vec2(1.0, 1.0 + 0.8 * h1(fid + 6.0));
+  float plate = mix(length(lie), max(abs(lie.x), abs(lie.y)) * 1.12, 0.65) + 0.04 * (vn(uv + 0.5, 300.0) - 0.5);
+  float flake = step(0.42 + 0.5 * vn(uv + 0.9, 5.0), pick) * (1.0 - smoothstep(radius - 0.035, radius, plate));
+  bright = mix(bright, 1.2 + 0.2 * h1(fid + 4.0), flake);
   slope *= 1.0 - 0.8 * flake;
   // Bits of shell: fewer, larger, curved, tan or pinkish.
   vec4 s = worley(uv + 0.71, 9.0);

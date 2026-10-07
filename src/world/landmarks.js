@@ -113,7 +113,15 @@ function mesh(builder, material, x, z) {
   return m;
 }
 
-/** Houses from footprints: walls in paint colours, flat roofs, a darker band of doors and windows. */
+// Door and shutter paint, and bare wood.
+const JOINERY = [[0.1, 0.22, 0.42], [0.08, 0.3, 0.3], [0.45, 0.1, 0.1], [0.32, 0.2, 0.1], [0.2, 0.34, 0.14], [0.6, 0.6, 0.56], [0.5, 0.36, 0.08]];
+const WHITE = [0.84, 0.83, 0.79];
+
+/**
+ * Houses from footprints, at the size people build them: a floor 2.9 m high, doors 0.9 x 2.05 m with a frame
+ * and a step, shuttered windows a metre wide with their sills at 0.95 m, a painted band along the foot of the
+ * wall, and a roof slab with eaves or a parapet. Colours vary house by house.
+ */
 function buildVillage(buildings, ground, material) {
   if (!buildings.length) return [];
   // One mesh per cluster of ~1 km, with coordinates relative to the cluster's centre.
@@ -124,6 +132,11 @@ function buildVillage(buildings, ground, material) {
     if (!clusters.has(key)) clusters.set(key, []);
     clusters.get(key).push(b);
   }
+  const inside = (pts, x, z) => {
+    let hit = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) if ((pts[i][1] > z) !== (pts[j][1] > z) && x < (pts[j][0] - pts[i][0]) * (z - pts[i][1]) / (pts[j][1] - pts[i][1]) + pts[i][0]) hit = !hit;
+    return hit;
+  };
   const out = [];
   for (const list of clusters.values()) {
     const ox = list.reduce((s, b) => s + b.poly[0][0], 0) / list.length, oz = list.reduce((s, b) => s + b.poly[0][1], 0) / list.length;
@@ -133,29 +146,89 @@ function buildVillage(buildings, ground, material) {
       let poly = b.poly.slice();
       if (poly.length > 3 && poly[0][0] === poly[poly.length - 1][0] && poly[0][1] === poly[poly.length - 1][1]) poly.pop();
       const cx = poly.reduce((s, p) => s + p[0], 0) / poly.length, cz = poly.reduce((s, p) => s + p[1], 0) / poly.length;
-      const base = Math.max(ground.heightAt(cx, cz), 0.3), height = (b.levels || 1) * 2.9 + 0.3 + r() * 0.5, top = base + height;
-      const wall = PAINT[Math.floor(r() * PAINT.length)], roof = ROOFS[Math.floor(r() * ROOFS.length)], trim = wall.map(v => v * 0.35);
-      const pts = poly.map(p => [p[0] - ox, p[1] - oz]);
-      for (let i = 0; i < pts.length; i++) {
-        const a = pts[i], c = pts[(i + 1) % pts.length];
-        mb.quad([a[0], base - 1.5, a[1]], [c[0], base - 1.5, c[1]], [c[0], top, c[1]], [a[0], top, a[1]], wall);
-        // Doors and shuttered windows as a dark strip set a hair outside the wall, broken into bays.
-        const len = Math.hypot(c[0] - a[0], c[1] - a[1]), bays = Math.floor(len / 2.6);
-        const nx = (c[1] - a[1]) / (len || 1) * 0.03, nz = -(c[0] - a[0]) / (len || 1) * 0.03;
+      // The floor stands a step above the highest ground the house touches.
+      const base = Math.max(0.3, ground.heightAt(cx, cz), ...poly.map(q => ground.heightAt(q[0], q[1]))) + 0.12;
+      const levels = b.levels || 1, parapet = r() < 0.4, height = levels * 2.9 + (parapet ? 0.45 : 0.12) + r() * 0.2, top = base + height;
+      const wall = PAINT[Math.floor(r() * PAINT.length)], roof = ROOFS[Math.floor(r() * ROOFS.length)];
+      const joinery = JOINERY[Math.floor(r() * JOINERY.length)], white = wall[0] > 0.8 && wall[2] > 0.7;
+      // The band along the foot of the wall: a deeper shade of the wall, or a colour of its own on a white house.
+      const band = white ? JOINERY[Math.floor(r() * JOINERY.length)].map(v => v * 0.9 + 0.05) : wall.map(v => v * 0.62), frame = white ? joinery.map(v => v * 0.5 + 0.35) : WHITE;
+      const pts = poly.map(q => [q[0] - ox, q[1] - oz]);
+      // Walls, and which one is longest (the front door goes there).
+      const walls = pts.map((a, i) => {
+        const c = pts[(i + 1) % pts.length], len = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1e-6, d = [(c[0] - a[0]) / len, (c[1] - a[1]) / len];
+        let n = [d[1], -d[0]];
+        if (inside(pts, (a[0] + c[0]) / 2 + n[0] * 0.15, (a[1] + c[1]) / 2 + n[1] * 0.15)) n = [-n[0], -n[1]];
+        return { a, c, len, d, n };
+      });
+      const front = walls.reduce((best, w) => (w.len > best.len ? w : best), walls[0]);
+      let awning = r() < 0.35;
+      for (const w of walls) {
+        const { a, c, len, d, n } = w;
+        mb.quad([a[0], base - 1.6, a[1]], [c[0], base - 1.6, c[1]], [c[0], top, c[1]], [a[0], top, a[1]], wall);
+        // A rectangle on this wall: from s0 to s1 metres along it, y0 to y1 above the floor, `off` metres out from it.
+        const panel = (s0, s1, y0, y1, off, colour) => {
+          const p0 = [a[0] + d[0] * s0 + n[0] * off, a[1] + d[1] * s0 + n[1] * off], p1 = [a[0] + d[0] * s1 + n[0] * off, a[1] + d[1] * s1 + n[1] * off];
+          mb.quad([p0[0], base + y0, p0[1]], [p1[0], base + y0, p1[1]], [p1[0], base + y1, p1[1]], [p0[0], base + y1, p0[1]], colour);
+        };
+        const block = (s0, s1, y0, y1, depth, colour) => {
+          const m = (s0 + s1) / 2;
+          mb.box(a[0] + d[0] * m + n[0] * depth / 2, base + (y0 + y1) / 2, a[1] + d[1] * m + n[1] * depth / 2, (s1 - s0) / 2, (y1 - y0) / 2, depth / 2, colour, Math.atan2(d[1], d[0]));
+        };
+        if (len > 1.2) panel(0, len, -1.6, 0.8, 0.02, band);
+        const bays = Math.max(0, Math.floor((len - 0.5) / 2.3));
         for (let k = 0; k < bays; k++) {
-          if (r() < 0.25) continue;
-          const t0 = (k + 0.28) / bays, t1 = (k + 0.72) / bays, door = r() < 0.2;
-          const p0 = [a[0] + (c[0] - a[0]) * t0, a[1] + (c[1] - a[1]) * t0], p1 = [a[0] + (c[0] - a[0]) * t1, a[1] + (c[1] - a[1]) * t1];
-          const y0 = base + (door ? 0 : 0.95), y1 = base + 2.05;
-          for (const sgn of [1, -1]) {
-            // A lit window by night (colour above 1 = gives off light) on some of them.
-            const colour = !door && r() < 0.35 ? [1.9, 1.55, 1.0] : trim;
-            mb.quad([p0[0] + nx * sgn, y0, p0[1] + nz * sgn], [p1[0] + nx * sgn, y0, p1[1] + nz * sgn], [p1[0] + nx * sgn, y1, p1[1] + nz * sgn], [p0[0] + nx * sgn, y1, p0[1] + nz * sgn], colour);
+          const mid = (k + 0.5) / bays * len, isFront = w === front && k === Math.floor(bays / 2);
+          const blank = r() < 0.22, door = isFront || r() < 0.12, open = r() < 0.4;
+          if (blank && !isFront) continue;
+          if (door) {
+            // Door: frame, leaf (two boards' worth of shade), a step down to the ground outside.
+            panel(mid - 0.53, mid + 0.53, 0, 2.13, 0.035, frame);
+            panel(mid - 0.45, mid + 0.45, 0, 2.05, 0.05, joinery);
+            panel(mid - 0.02, mid + 0.02, 0.05, 2.0, 0.055, joinery.map(v => v * 0.55));
+            const outside = ground.heightAt(ox + a[0] + d[0] * mid + n[0] * 0.6, oz + a[1] + d[1] * mid + n[1] * 0.6);
+            block(mid - 0.65, mid + 0.65, Math.min(outside - base - 0.05, -0.2), 0, 0.38, [0.6, 0.59, 0.55]);
+            if (isFront && awning && levels === 1) {
+              // A porch roof on two posts over the front door.
+              awning = false;
+              const e0 = [a[0] + d[0] * (mid - 1.3), a[1] + d[1] * (mid - 1.3)], e1 = [a[0] + d[0] * (mid + 1.3), a[1] + d[1] * (mid + 1.3)], deep = 1.5;
+              mb.quad([e0[0], base + 2.75, e0[1]], [e1[0], base + 2.75, e1[1]], [e1[0] + n[0] * deep, base + 2.4, e1[1] + n[1] * deep], [e0[0] + n[0] * deep, base + 2.4, e0[1] + n[1] * deep], roof);
+              for (const e of [e0, e1]) mb.tube(e[0] + n[0] * (deep - 0.08), e[1] + n[1] * (deep - 0.08), outside - 0.3, base + 2.4, 0.045, 0.045, 5, WHITE);
+            }
+          }
+          for (let level = door ? 1 : 0; level < levels; level++) {
+            const y = level * 2.9 + 0.95;
+            // Window: frame, sill, and two shutters, closed or folded back against the wall beside a dark opening
+            // (which glows at night: colours above 1 give off light).
+            panel(mid - 0.58, mid + 0.58, y - 0.06, y + 1.23, 0.035, frame);
+            block(mid - 0.62, mid + 0.62, y - 0.1, y - 0.04, 0.09, frame);
+            if (open) {
+              panel(mid - 0.5, mid + 0.5, y, y + 1.15, 0.045, r() < 0.5 ? [1.9, 1.55, 1.0] : [0.03, 0.03, 0.035]);
+              panel(mid - 1.02, mid - 0.54, y, y + 1.15, 0.05, joinery); panel(mid + 0.54, mid + 1.02, y, y + 1.15, 0.05, joinery);
+            } else {
+              panel(mid - 0.5, mid - 0.01, y, y + 1.15, 0.05, joinery); panel(mid + 0.01, mid + 0.5, y, y + 1.15, 0.05, joinery);
+              for (const q of [-0.25, 0.25]) panel(mid + q - 0.17, mid + q + 0.17, y + 0.12, y + 1.03, 0.055, joinery.map(v => v * 0.7));     // louvred panels
+            }
           }
         }
       }
-      for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(pts.map(p => new THREE.Vector2(p[0], p[1])), [])) {
-        mb.tri([pts[i][0], top, pts[i][1]], [pts[j][0], top, pts[j][1]], [pts[k][0], top, pts[k][1]], roof);
+      // The roof: a slab with eaves all round, or one set down inside a parapet.
+      const tris = THREE.ShapeUtils.triangulateShape(pts.map(q => new THREE.Vector2(q[0], q[1])), []);
+      if (parapet) {
+        for (const [i, j, k] of tris) mb.tri([pts[i][0], top - 0.4, pts[i][1]], [pts[j][0], top - 0.4, pts[j][1]], [pts[k][0], top - 0.4, pts[k][1]], roof);
+        for (const w of walls) mb.quad([w.a[0] + w.n[0] * 0.03, top, w.a[1] + w.n[1] * 0.03], [w.c[0] + w.n[0] * 0.03, top, w.c[1] + w.n[1] * 0.03], [w.c[0] - w.n[0] * 0.17, top, w.c[1] - w.n[1] * 0.17], [w.a[0] - w.n[0] * 0.17, top, w.a[1] - w.n[1] * 0.17], WHITE);
+      } else {
+        // Each corner pushed out along both walls that meet there.
+        const eave = 0.32, outer = pts.map((q, i) => {
+          const w0 = walls[(i + walls.length - 1) % walls.length], w1 = walls[i], dot = w0.n[0] * w1.n[0] + w0.n[1] * w1.n[1], k = eave / Math.max(1 + dot, 0.35);
+          return [q[0] + (w0.n[0] + w1.n[0]) * k, q[1] + (w0.n[1] + w1.n[1]) * k];
+        });
+        for (const [i, j, k] of tris) mb.tri([outer[i][0], top + 0.14, outer[i][1]], [outer[j][0], top + 0.14, outer[j][1]], [outer[k][0], top + 0.14, outer[k][1]], roof);
+        for (let i = 0; i < outer.length; i++) {
+          const o0 = outer[i], o1 = outer[(i + 1) % outer.length], q0 = pts[i], q1 = pts[(i + 1) % pts.length];
+          mb.quad([o0[0], top, o0[1]], [o1[0], top, o1[1]], [o1[0], top + 0.14, o1[1]], [o0[0], top + 0.14, o0[1]], roof.map(v => v * 0.8));     // the slab's edge
+          mb.quad([q0[0], top, q0[1]], [q1[0], top, q1[1]], [o1[0], top, o1[1]], [o0[0], top, o0[1]], WHITE.map(v => v * 0.85));                 // under the eaves
+        }
       }
     });
     out.push(mesh(mb, material, ox, oz));

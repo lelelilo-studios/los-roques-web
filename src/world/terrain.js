@@ -243,7 +243,8 @@ void main() {
   // Sand ripples, seen only from close by: wave ripples half a metre apart under shallow water, finer wind
   // ripples on the dry beach, both lying across the wind.
   bool wetBed = water > 0.03;
-  float sand = (1.0 - lrSaturate(benthic.r + benthic.g + land.r + land.g)) * (1.0 - rocky) * step(ground, uSeaLevel + 3.0);
+  // (Sand detail fades out up the hillsides: no line across them where it stops.)
+  float sand = (1.0 - lrSaturate(benthic.r + benthic.g + land.r + land.g)) * (1.0 - rocky) * (1.0 - smoothstep(2.5, 7.0, ground - uSeaLevel));
   float sandy = sand * (1.0 - smoothstep(wetBed ? 0.03 : 0.004, wetBed ? 0.2 : 0.03, px));
   float dryLand = covered ? 0.0 : 1.0 - wetness;          // dry sand, above the reach of the sea
   // Where the dry sand has been walked on (near the water, in the village, in patches elsewhere) it is lumpy
@@ -259,6 +260,18 @@ void main() {
     float phase = dot(d, wd) * 6.2832 / spacing + 3.0 * lrNoiseTile(d * 0.875, 56.0) + 1.2 * lrNoiseTile(d * 2.875, 184.0);
     n = normalize(n + vec3(wd.x, 0.0, wd.y) * tall * 6.2832 / spacing * sin(phase) * sandy * patches);
     albedo *= 1.0 + 0.035 * sin(phase + 1.2) * sandy * patches * step(1e-5, tall);      // (darker, heavier grains gather in the troughs)
+  }
+  // Up the beach, out of reach of the sea and of feet, the wind builds low ridges a step apart: a gentle
+  // windward slope, a short steep lee side. Seen from a few metres to a few tens of metres.
+  float ridged = sand * dryLand * (1.0 - trodden) * step(water, -0.25) * (1.0 - smoothstep(0.03, 0.12, px)) * smoothstep(6.0, 14.0, -shore);
+  if (ridged > 0.01) {
+    float swing = (lrNoiseTile(d * 0.0625 + 4.0, 4.0) - 0.5) * 1.1, cs = cos(swing), sn = sin(swing);
+    vec2 w0 = normalize(uWind.xy + 1e-4), wd = vec2(w0.x * cs - w0.y * sn, w0.x * sn + w0.y * cs);
+    float spacing = 0.44, ph = dot(d, wd) / spacing + 1.4 * lrNoiseTile(d * 0.4375, 28.0) + 0.5 * lrNoiseTile(d * 1.3125 + 7.0, 84.0), f = fract(ph);
+    // (Height over one ridge: rising over 80 % of it, falling over 20 %; its slope along the wind.)
+    float rise = f < 0.8 ? 1.0 / 0.8 : -1.0 / 0.2, there = smoothstep(0.3, 0.6, lrNoiseTile(d * 0.15625 + 13.0, 10.0));
+    n = normalize(n - vec3(wd.x, 0.0, wd.y) * 0.016 / spacing * rise * ridged * there * smoothstep(0.0, 0.06, min(f, abs(f - 0.8))));
+    albedo *= 1.0 - 0.05 * ridged * there * smoothstep(0.75, 0.8, f) * (1.0 - smoothstep(0.92, 1.0, f));      // coarse grains on the lee side
   }
 
   // ---- Close up: the sand itself.

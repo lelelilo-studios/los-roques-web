@@ -159,14 +159,10 @@ export class Sky {
       shared.tSkyView.value = this.skyView.texture;
       last.sun.copy(sun); last.camY = camY;
     }
-    // Direct sun at sea level (exact, on the CPU) and the sky's contribution (integrated on the GPU, read back).
-    const toa = shared.uSunToa.value, t = sunTransmittance(sun.y, mie);
-    shared.uSunE.value.set(toa.x * t[0], toa.y * t[1], toa.z * t[2]);
-    // Sky light: the clear sky's (blue) under few clouds; under an overcast it is the sun's own light, spread out
-    // and grey. After dark the moon and stars keep a little light in the scene (a fixed dim blue floor).
-    const c = this.clearSky, ov = this.overcast, e = shared.uSunE.value, mu = Math.max(sun.y, 0);
-    const grey = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] + 0.3 * mu * (0.2126 * e.x + 0.7152 * e.y + 0.0722 * e.z);
-    shared.uSkyE.value.set(c[0] + (grey - c[0]) * ov + 0.004, c[1] + (grey - c[1]) * ov + 0.006, c[2] + (grey - c[2]) * ov + 0.011);
+    // The sky's light on the ground: integrated on the GPU and read back (before it is used below, so a frame
+    // drawn right after the sun moved is lit by this sky, not the last one; when the read-back is asynchronous
+    // it arrives a few frames later).
+    const toa = shared.uSunToa.value;
     if (this.canReadFloat && !this.pending && (mediumChanged || last.irrSun.distanceToSquared(sun) > 2e-6)) {
       last.irrSun.copy(sun);
       this.passes.irradiance.render(renderer, this.irradiance);
@@ -177,5 +173,13 @@ export class Sky {
         renderer.readRenderTargetPixelsAsync(this.irradiance, 0, 0, 1, 1, this.readBuffer).then(apply).catch(() => {}).finally(() => { this.pending = false; });
       }
     }
+    // Direct sun at sea level (exact, on the CPU) and the sky's contribution (integrated on the GPU, read back).
+    const t = sunTransmittance(sun.y, mie);
+    shared.uSunE.value.set(toa.x * t[0], toa.y * t[1], toa.z * t[2]);
+    // Sky light: the clear sky's (blue) under few clouds; under an overcast it is the sun's own light, spread out
+    // and grey. After dark the moon and stars keep a little light in the scene (a fixed dim blue floor).
+    const c = this.clearSky, ov = this.overcast, e = shared.uSunE.value, mu = Math.max(sun.y, 0);
+    const grey = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] + 0.3 * mu * (0.2126 * e.x + 0.7152 * e.y + 0.0722 * e.z);
+    shared.uSkyE.value.set(c[0] + (grey - c[0]) * ov + 0.004, c[1] + (grey - c[1]) * ov + 0.006, c[2] + (grey - c[2]) * ov + 0.011);
   }
 }
