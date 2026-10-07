@@ -15,6 +15,15 @@ export function wadeSpeed(depth, run = false) {
   return (run ? 3.0 : 1.4) / (1 + 2.2 * Math.max(depth, 0) ** 1.5);
 }
 
+/**
+ * Length of a pace in metres at a given speed: 0.72 m walking (two paces a second at 1.4 m/s), lengthening to
+ * 1.05 m at a run (not quite three a second at 3 m/s), and shorter crouched (`crouch` 0..1).
+ */
+export function paceLength(speed, crouch = 0) {
+  const k = Math.min(1, Math.max(0, (speed - 1.6) / 1.2));
+  return (0.72 + 0.33 * k * k * (3 - 2 * k)) * (1 - 0.45 * crouch);
+}
+
 const smooth = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 export class Walker {
@@ -134,7 +143,7 @@ export class Walker {
     // Steps: the head bobs once per pace of 0.72 m (shorter crouched), and each pace is reported.
     if (onGround && travelled > 0) {
       const before = Math.floor(this.phase / Math.PI);
-      this.phase += travelled / (0.72 * (1 - 0.45 * crouch)) * Math.PI;
+      this.phase += travelled / paceLength(travelled / dt, crouch) * Math.PI;
       const after = Math.floor(this.phase / Math.PI);
       if (after !== before) steps.push({ x: this.x, z: this.z, yaw: this.yaw, side: after & 1, depth: Math.max(this.surf - g2, 0), stride: this.stride });
     }

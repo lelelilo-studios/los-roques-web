@@ -406,7 +406,14 @@ export async function start(canvas, onProgress = () => {}) {
     const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
     // Your body: walking on the bottom, or swimming where the water carries you (tipped along your look when dived).
     body.mesh.visible = walking;
-    if (standing) { body.pose({ phase: walker.phase, stride: walker.stride, eye: walker.body, look: walker.look }); body.place(walker.eyeY - walker.body, walker.yaw); }
+    if (standing) {
+      // (The ground's rise under your feet, forward and to the right, so each foot is set down on it; and in
+      // water to the chest, arms up and out.)
+      const fx = Math.sin(walker.yaw), fz = -Math.cos(walker.yaw), g = (dx, dz) => footing.heightAt(walker.x + dx, walker.z + dz);
+      const slope = [(g(fx * 0.3, fz * 0.3) - g(-fx * 0.3, -fz * 0.3)) / 0.6, (g(-fz * 0.2, fx * 0.2) - g(fz * 0.2, -fx * 0.2)) / 0.4];
+      const wade = Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4));
+      body.pose({ phase: walker.phase, stride: walker.stride, eye: walker.body, look: walker.look, slope, wade }); body.place(walker.eyeY - walker.body, walker.yaw);
+    }
     else if (walking) {
       const under = walker.diving ? 1 : 0;
       body.pose({ swim: true, stroke: walker.stroke, under }); body.place(walker.eyeY + walker.bob, walker.yaw, under * walker.look);

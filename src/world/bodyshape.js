@@ -112,21 +112,39 @@ export function reach(hip, target, l1, l2, bend) {
  * @param {number} p.eye  height of the eye above the feet (1.65 standing, less crouched)
  * @param {number} [p.look]  radians the eye looks above the horizon: bending the head down carries the eye forward of the trunk
  * @param {{skin?: number[], shirt?: number[], shorts?: number[], hair?: number[]}} [p.colours]  for other people (yours are the defaults)
+ * @param {[number, number]} [p.slope]  rise of the ground per metre forward and to the right: each foot is set down on it
+ * @param {number} [p.wade]  0..1: in water to the chest the arms are held up and out, hands at the surface
  */
-export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {} }) {
+export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0 }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
-  const crouch = Math.min(1, Math.max(0, (1.65 - eye) / 0.9)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch;
+  // (You lean into a hill, and back coming down one.)
+  const crouch = Math.min(1, Math.max(0, (1.65 - eye) / 0.9)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
   const sy = eye - 0.22, shoulder = [0, sy, BACK + 0.02 + 0.1 * Math.max(0, -Math.sin(look))], joints = { knees: [], ankles: [], hips: [], wrists: [] };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.
   const hip = [0, Math.max(sy - TORSO * Math.cos(lean), 0.2), shoulder[2] + TORSO * Math.sin(lean) * 0.75];
   t.n = 0;
   // (Crouched you shuffle: short paces, the feet kept ahead of the hips, the knees up in front.)
   const s = Math.min(stride, 1.6), swing = 0.34 * s * (1 - 0.75 * crouch), lift = (0.1 * s + 0.02 * Math.max(s - 1, 0)) * (1 - 0.6 * crouch);
+  // Where each foot is: planted and passing back under the body, then lifted and carried forward; set down on
+  // the ground under it, which on a slope is higher or lower than the ground under you.
+  const balance = shoulder[2] + (hip[2] - shoulder[2]) * (0.45 - 0.2 * crouch);
+  const feet = [-1, 1].map(side => {
+    const ph = phase + (side < 0 ? 0 : Math.PI), ankle = [side * (HIP + 0.01 + 0.05 * crouch), ANKLE + lift * Math.max(0, -Math.sin(ph)), balance - swing * Math.cos(ph) - 0.03];
+    ankle[1] += Math.max(-0.35, Math.min(0.45, slope[0] * -ankle[2] + slope[1] * ankle[0]));
+    return ankle;
+  });
+  // The hips ride just low enough for the more stretched leg to reach its foot: they dip at each pace when both
+  // feet are down and far apart, and on a slope (without this the feet hung in the air at full stride).
+  // (By a hand's breadth at most, more on a slope: at a run the feet are further apart than the legs can
+  // span, and the trailing one is simply off the ground.)
+  const standing = hip[1];
+  feet.forEach((ankle, i) => {
+    const dx = ankle[0] - (i ? HIP : -HIP), dz = ankle[2] - hip[2], most = (THIGH + SHIN) * 0.995;
+    hip[1] = Math.max(standing - 0.11 - 0.45 * Math.min(Math.abs(slope[0]), 0.7) - 0.2 * Math.min(Math.abs(slope[1]), 0.7), Math.min(hip[1], ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04))));
+  });
   for (const side of [-1, 1]) {
-    // This leg's place in the pace: planted and passing back under the body, then lifted and carried forward.
-    const ph = phase + (side < 0 ? 0 : Math.PI), c = Math.cos(ph), up = Math.max(0, -Math.sin(ph));
-    const hipJ = [side * HIP, hip[1], hip[2]], balance = shoulder[2] + (hip[2] - shoulder[2]) * (0.45 - 0.2 * crouch);
-    const ankle = [side * (HIP + 0.01 + 0.05 * crouch), ANKLE + lift * up, balance - swing * c - 0.03];
+    const ph = phase + (side < 0 ? 0 : Math.PI), c = Math.cos(ph);
+    const hipJ = [side * HIP, hip[1], hip[2]], ankle = feet[side < 0 ? 0 : 1];
     const knee = reach(hipJ, ankle, THIGH, SHIN, [side * 0.12 * (1 + crouch), 0, -1]);
     const hem = [hipJ[0] + (knee[0] - hipJ[0]) * 0.55, hipJ[1] + (knee[1] - hipJ[1]) * 0.55, hipJ[2] + (knee[2] - hipJ[2]) * 0.55];
     t.tube(hipJ, hem, [0.088, 0.092], [0.074, 0.076], SHORTS);
@@ -137,8 +155,8 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {} }) {
     t.foot(ankle, [side * 0.12, -0.993], SKIN);
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
-    const sh = [side * SHOULDER, sy - 0.01, shoulder[2]], a = 0.55 * swing * c * 1.6 + 0.25 * crouch, bend = 0.18 + 0.3 * Math.min(s, 1) + 0.5 * crouch;
-    const elbow = [sh[0] + side * 0.025, sh[1] - 0.29 * Math.cos(a), sh[2] - 0.29 * Math.sin(a)];
+    const sh = [side * SHOULDER, sy - 0.01, shoulder[2]], a = (0.55 * swing * c * 1.6) * (1 - 0.7 * wade) + 0.25 * crouch + 0.75 * wade, bend = 0.18 + 0.3 * Math.min(s, 1) + 0.5 * crouch + 0.75 * wade;
+    const elbow = [sh[0] + side * (0.025 + 0.14 * wade), sh[1] - 0.29 * Math.cos(a), sh[2] - 0.29 * Math.sin(a)];
     const wrist = [elbow[0] - side * 0.015, elbow[1] - 0.25 * Math.cos(a + bend), elbow[2] - 0.25 * Math.sin(a + bend)];
     const tip = [wrist[0] - side * 0.01, wrist[1] - 0.17 * Math.cos(a + bend + 0.15), wrist[2] - 0.17 * Math.sin(a + bend + 0.15)];
     const sleeve = [sh[0] + (elbow[0] - sh[0]) * 0.5, sh[1] + (elbow[1] - sh[1]) * 0.5, sh[2] + (elbow[2] - sh[2]) * 0.5];
