@@ -314,7 +314,7 @@ void main() {
       // air: at arm's length it was smooth white blobs a foot across).
       float near = 1.0 - smoothstep(0.03, 0.1, px);
       vec2 f = lrFoam(spot + uCamMod.xy, cover, px, gx, gy);
-      cover = mix(cover, f.x, near); tone = mix(1.0, f.y, near);
+      cover = mix(cover, f.x * (0.55 + 0.4 * f.y), near); tone = mix(1.0, f.y, near);       // (thin foam: the water shows between the bubbles)
     }
     col = mix(col, 0.82 * tone * lit / PI, cover);
   }

@@ -2,6 +2,7 @@
 // colours and height. They stand at ease, shifting their weight and looking about, or stroll a few metres up
 // and down the water's edge. Only those near you are re-posed (thirty times a second); the rest hold still.
 import { Body } from './body.js';
+import { strollAt } from './bodyshape.js';
 
 const NEAR = 45;      // metres within which people move
 
@@ -27,15 +28,9 @@ export class People {
   pose(p, t) {
     const s = p.spec;
     if (s.stroll) {
-      // Up and down the shore: a triangle wave of position, turning round at each end over a second.
-      const w = s.stroll, lap = 2 * w.reach / w.speed, u = ((t + s.beat) / lap) % 2, back = u > 1, along = (back ? 2 - u : u) * 2 * w.reach - w.reach;
-      const toEnd = Math.min(back ? u - 1 : u, back ? 2 - u : 1 - u) * lap, turn = Math.min(1, toEnd / 1.0);     // seconds from the nearer end
-      p.x = s.x + w.dir[0] * along; p.z = s.z + w.dir[1] * along;
-      const ahead = Math.atan2(w.dir[0], -w.dir[1]) + (back ? Math.PI : 0);
-      // (Coming up to an end they slow and swing round the seaward way.)
-      const near = (back ? u - 1 : u) < 0.5 ? -1 : 1;
-      p.yaw = ahead + (1 - turn) * near * Math.PI / 2 * (back ? 1 : -1);
-      p.body.pose({ phase: (t + s.beat) * w.speed / 0.72 * Math.PI, stride: 0.2 + 0.6 * turn * w.speed / 1.4, eye: 1.65, colours: s.colours });
+      const g = strollAt(s.stroll, s.x, s.z, t + s.beat);
+      p.x = g.x; p.z = g.z; p.yaw = g.yaw;
+      p.body.pose({ phase: g.phase, stride: g.stride, eye: 1.65, colours: s.colours });
     } else {
       // Standing: weight shifting from one leg to the other, the body turning a little to look about.
       p.yaw = s.yaw + 0.3 * Math.sin(t * 0.11 + s.beat) + 0.1 * Math.sin(t * 0.37 + 2 * s.beat);
@@ -43,8 +38,8 @@ export class People {
     }
   }
 
-  /** @param {{x: number, y: number, z: number}} eye  @param {number} t seconds */
-  update(eye, t) {
+  /** @param {{x: number, y: number, z: number}} eye  @param {number} t seconds  @param {boolean} still  a frozen clock (test pictures): everyone near is posed */
+  update(eye, t, still = false) {
     this.frame++;
     this.list.forEach((p, i) => {
       const d = Math.hypot(p.x - eye.x, p.z - eye.z), seen = d < 700;      // (beyond that a person is a couple of pixels)
@@ -52,7 +47,7 @@ export class People {
       if (!seen) return;
       // Those within a few steps move every frame, those further off every third; the far ones once in a
       // while, so that a stroller is not left frozen mid-stride for good.
-      const due = !p.posed || (d < 10 ? true : d < NEAR ? (i + this.frame) % 3 === 0 : (i + this.frame) % 240 === 0);
+      const due = !p.posed || (d < 10 || (still && d < NEAR) ? true : d < NEAR ? (i + this.frame) % 3 === 0 : (i + this.frame) % 240 === 0);
       if (due) { this.pose(p, t); p.posed = true; p.feet = this.ground.heightAt(p.x, p.z); }
       for (const m of [p.body.mesh, p.body.headMesh]) {
         m.position.set(p.x - eye.x, p.feet, p.z - eye.z); m.rotation.set(0, -p.yaw, 0); m.scale.setScalar(p.spec.scale);

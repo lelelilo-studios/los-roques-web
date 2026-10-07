@@ -248,3 +248,23 @@ export function poseSwim(t, h, { stroke, under = 0 }) {
   h.cap([0, 0.03, 0.03], [0, 0.085, 0.035], [0.062, 0.08], SKIN, 0.55);
   return joints;
 }
+
+/**
+ * Someone strolling up and down a stretch of shore: where they are, which way they face and how they step at
+ * time t (seconds). `stroll` = { dir: unit [east, south] along the shore, reach: metres each way, speed: m/s on
+ * average }, from (x0, z0). They slow to a stop at each end, turn round over a second or so, and set off again.
+ * Returns { x, z, yaw (radians, as the walker's), phase, stride } for poseBody.
+ */
+export function strollAt(stroll, x0, z0, t) {
+  const leg = 2 * stroll.reach / stroll.speed, q = t / leg, n = Math.floor(q), v = q - n, back = ((n % 2) + 2) % 2 === 1;
+  const eased = 0.5 - 0.5 * Math.cos(Math.PI * v), along = ((back ? 1 - eased : eased) * 2 - 1) * stroll.reach;
+  // Turning: a quarter turn out of the last leg, a quarter turn into the next, always the same way round.
+  const k = Math.min(1, Math.min(v, 1 - v) * leg / 1.2), turned = 1 - k * k * (3 - 2 * k);
+  const ahead = Math.atan2(stroll.dir[0], -stroll.dir[1]) + (back ? Math.PI : 0);
+  return {
+    x: x0 + stroll.dir[0] * along, z: z0 + stroll.dir[1] * along, yaw: ahead - turned * (v < 0.5 ? -1 : 1) * Math.PI / 2,
+    // (The paces follow the ground actually covered, and shorten as they slow.)
+    phase: (n + eased) * 2 * stroll.reach / 0.72 * Math.PI, stride: 0.12 + 0.8 * Math.sin(Math.PI * v) * Math.min(1.3, stroll.speed * 1.5708 / 1.4),
+  };
+}
+

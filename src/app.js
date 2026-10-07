@@ -400,7 +400,7 @@ export async function start(canvas, onProgress = () => {}) {
     birds.update(rig.eye, clock.time);
     for (const kind of life) kind.update(rig.eye);
     turtle.update(rig.eye, clock.time, shared.uSeaLevel.value);
-    people.update(rig.eye, clock.time);
+    people.update(rig.eye, clock.time, dt === 0);
     shared.uWaveHere.value.fromArray(boats.weightsAt(rig.eye.x, rig.eye.z, 3));
     // Shadows of things: round the walker (and of the walker), or round what the orbit camera looks at.
     const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
