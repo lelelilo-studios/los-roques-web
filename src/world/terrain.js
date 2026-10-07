@@ -68,6 +68,7 @@ ${clipmapFragment}
 ${detailGLSL}
 ${shadowGLSL}
 uniform float uRain;
+uniform vec4 uLeg[2];        // your shins where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
 uniform vec4 uFoot[24];       // your footprints: x, z (detail coordinates, wrapped to 64 m), heading, time made
 uniform int uFootCount;
@@ -110,6 +111,19 @@ float lrCaustics(vec2 rel, float water, float px) {
     // Hessians turned back: R^T H R with R = S / s.
     h += w * LR_FINE_GAIN.x * 2.236 / (1.0 + b1 * b1) * vec3(0.8 * c1.x + 0.2 * c1.y - 0.8 * c1.z, 0.2 * c1.x + 0.8 * c1.y + 0.8 * c1.z, 0.4 * (c1.x - c1.y) + 0.6 * c1.z);
     h += w * LR_FINE_GAIN.y * 5.0 / (1.0 + b2 * b2) * vec3(0.36 * c2.x + 0.64 * c2.y - 0.96 * c2.z, 0.64 * c2.x + 0.36 * c2.y + 0.96 * c2.z, 0.48 * (c2.x - c2.y) - 0.28 * c2.z);
+    // The ripples round your own legs (the same rings as in the water pass). Through a hand's depth of clear
+    // water, seen from above, a ripple hardly shows on the surface: what you see is the rings of light it
+    // throws on the sand about your ankles. Curvature of a ring: along the radius, and round it.
+    for (int i = 0; i < 2; i++) {
+      if (uLeg[i].z < 0.5) continue;
+      vec2 q = mod(entry + uCamMod.xy - uLeg[i].xy + 32.0, 64.0) - 32.0;
+      float r = length(q);
+      if (r > 0.7 || r < 1e-3) continue;
+      float lively = 0.35 + 0.65 * lrSaturate(uLeg[i].w / 0.6), amp = 0.5 * lively * exp(-r / (0.07 + 0.08 * lively)) * smoothstep(0.035, 0.06, r);
+      float ph = r * 85.0 - uTime * 8.0, round_ = amp * cos(ph) / r, along = -amp * 85.0 * sin(ph), bend = kd * amp * 85.0;
+      vec2 u = q / r;
+      h += (1.0 - smoothstep(0.02, 0.05, px)) / (1.0 + bend * bend) * vec3(along * u.x * u.x + round_ * u.y * u.y, along * u.y * u.y + round_ * u.x * u.x, (along - round_) * u.x * u.y);
+    }
   }
   float det = (1.0 + kd * h.x) * (1.0 + kd * h.y) - kd * kd * h.z * h.z;
   // (A smooth peak where the rays cross, 4.5 times the open light at most; a hard cap gave the bright lines
@@ -466,7 +480,7 @@ export class Terrain {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear']),
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg']),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

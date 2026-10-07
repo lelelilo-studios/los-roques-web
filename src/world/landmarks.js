@@ -381,8 +381,6 @@ export class Landmarks {
     const built = extraBuilder ? extraBuilder(this.material) : null, extra = built ? [...built.children] : [];
     /** Where the beach umbrellas stand: [x, z, bearing to the water]. */
     this.umbrellas = built?.userData.spots || [];
-    /** Where people stand on the beaches: [x, z]. */
-    this.people = built?.userData.people || [];
     for (const m of buildVillage(features.buildings || [], ground, this.material)) add(m);
     for (const l of features.lighthouses || []) if (l.pos) add(buildLighthouse(l, ground, this.material));
     for (const r of features.runways || []) if (r.a && r.b) add(buildRunway(r, ground, this.material));

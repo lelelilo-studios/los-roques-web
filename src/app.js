@@ -1,6 +1,6 @@
 // The application: loads the data, owns the frame loop and the environment state (time, month, weather),
 // wires up the controls, and exposes the test API (window.__LR).
-import { TIERS, params, pickTier } from './config.js';
+import { TIERS, isSoftware, params, pickTier } from './config.js';
 import { registerChunks } from './core/chunks.js';
 import { createRenderer } from './core/renderer.js';
 import { FrameGraph } from './core/framegraph.js';
@@ -28,7 +28,6 @@ import { shoreCrest } from './data/shoreCPU.js';
 import { createObjectMaterial } from './world/landmarks.js';
 import { pierWalk } from './world/piers.js';
 import { Body } from './world/body.js';
-import { People } from './world/people.js';
 import * as THREE from 'three';
 import { Clouds } from './world/clouds.js';
 import { Landmarks } from './world/landmarks.js';
@@ -46,16 +45,57 @@ const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false };
 
 export async function start(canvas, onProgress = () => {}) {
   const errors = [];
-  addEventListener('error', e => errors.push(String(e.message || e.error)));
-  addEventListener('unhandledrejection', e => errors.push(String(e.reason?.message || e.reason)));
+  // (A fault that repeats every frame must not fill the memory with its own report.)
+  const note = text => { if (errors.length < 40) errors.push(text); };
+  addEventListener('error', e => note(String(e.message || e.error)));
+  addEventListener('unhandledrejection', e => note(String(e.reason?.message || e.reason)));
 
   registerChunks();
-  const tierName = pickTier(), tier = TIERS[tierName];
   const R = createRenderer(canvas);
   const { renderer } = R;
+  // The graphics driver's name tells a browser that is drawing on the processor, with no graphics card behind
+  // it (hardware acceleration off or failed). There every frame of the full scene takes seconds: it gets the
+  // simplest tier at a quarter of the picture, and is told so.
+  const gpuName = (() => { try { const gl = renderer.getContext(), dbg = gl.getExtension('WEBGL_debug_renderer_info'); return String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || ''); } catch { return ''; } })();
+  const software = isSoftware(gpuName) && !params.tier;
+  const tierName = pickTier(gpuName), tier = software ? { ...TIERS[tierName], maxPixels: 2.4e5, dprCap: 1 } : TIERS[tierName];
+
+  // ---- when something goes wrong: say so on the page, and carry on or start again
+  let noticeBox = null;
+  /** Shows a line of text at the foot of the page, with an optional button ([label, action]); no text hides it. */
+  function notice(text, button = null) {
+    if (!params.ui) return;
+    if (!text) { noticeBox?.remove(); noticeBox = null; return; }
+    noticeBox ??= document.body.appendChild(Object.assign(document.createElement('div'), { className: 'notice' }));
+    noticeBox.replaceChildren(Object.assign(document.createElement('span'), { textContent: text }));
+    if (button) noticeBox.append(Object.assign(document.createElement('button'), { textContent: button[0], onclick: button[1] }));
+  }
+  /**
+   * Starts the page again where you are (the address keeps your place, hour and weather). Twice in two minutes
+   * at most: after that the trouble is not one that starting again cures, and the page says so instead.
+   */
+  function restart(why) {
+    let recent = [];
+    try { recent = JSON.parse(sessionStorage.getItem('lr-restarts') || '[]').filter(t => Date.now() - t < 120000); } catch { /* no storage */ }
+    if (recent.length >= 2) { notice(`${why} Starting again did not cure it.`, ['Try once more', () => { try { sessionStorage.removeItem('lr-restarts'); } catch { /* no storage */ } location.reload(); }]); return; }
+    try { sessionStorage.setItem('lr-restarts', JSON.stringify([...recent, Date.now()])); } catch { /* no storage */ }
+    writeHash?.();
+    location.reload();
+  }
+  let writeHash = null;
+  // The browser can take the graphics away from a page (its graphics process restarted, the driver reset, too
+  // many pages drawing at once). The picture then stays as it was, for good. What was drawn into textures at
+  // the start (sand grain, cloud shapes) is gone with it, so the page starts again, where you were.
+  let lost = false;
+  canvas.addEventListener('webglcontextlost', e => {
+    e.preventDefault(); lost = true; note('graphics context lost');
+    notice('The browser stopped the graphics of this page. Starting again…');
+    setTimeout(() => { if (lost) restart('The browser stopped the graphics of this page.'); }, 3000);     // (if it does not hand them back by itself)
+  });
+  canvas.addEventListener('webglcontextrestored', () => restart('The browser stopped the graphics of this page.'));
   renderer.debug.onShaderError = (gl, program, vs, fs) => {
     const log = s => (gl.getShaderInfoLog(s) || '').trim();
-    errors.push(`shader: ${gl.getProgramInfoLog(program)} | vs: ${log(vs)} | fs: ${log(fs)}`);
+    note(`shader: ${gl.getProgramInfoLog(program)} | vs: ${log(vs)} | fs: ${log(fs)}`);
     console.error('shader error', gl.getProgramInfoLog(program), log(vs), log(fs));
   };
 
@@ -150,7 +190,7 @@ export async function start(canvas, onProgress = () => {}) {
   if (!places.some(p => p.id === 'overview')) places.unshift(OVERVIEW);
 
   // ---- the opaque scene: terrain, buildings and lighthouses, boats
-  const landmarks = new Landmarks(features, ground, material => buildBeachSets(places, ground, material, features.tombolo));
+  const landmarks = new Landmarks(features, ground, material => buildBeachSets(places, ground, material));
   const boats = new Boats(places, ground, waves, data.cpu.waveMap, rect, landmarks.material);
   const opaque = new THREE.Scene();
   opaque.matrixWorldAutoUpdate = false;
@@ -170,8 +210,7 @@ export async function start(canvas, onProgress = () => {}) {
   shared.uTreesNear.value = tier.fp.life ? 1 : 0;
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
-  const people = new People(landmarks.people, ground, createObjectMaterial(tier.fp.shadowTaps, true));
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, ...people.meshes);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup);
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
@@ -245,9 +284,9 @@ export async function start(canvas, onProgress = () => {}) {
     shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), Math.atan2(Math.sin(step.yaw), Math.cos(step.yaw)) + (step.side ? 0.12 : -0.12) + (feetWet() ? 64 : 0), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
   }
-  // Walls, and the people and umbrella poles on the beaches (a coarse grid of small circles).
+  // Walls, and the umbrella poles on the beaches (a coarse grid of small circles).
   const walls = buildingBlocker(features.buildings), posts = new Map();
-  for (const [x, z, radius] of [...landmarks.people.filter(q => !q.stroll).map(q => [q.x, q.z, 0.4]), ...landmarks.umbrellas.map(q => [q[0], q[1], 0.25])]) {
+  for (const [x, z, radius] of landmarks.umbrellas.map(q => [q[0], q[1], 0.25])) {
     const key = `${Math.floor(x / 4)},${Math.floor(z / 4)}`;
     if (!posts.has(key)) posts.set(key, []);
     posts.get(key).push([x, z, radius]);
@@ -279,7 +318,7 @@ export async function start(canvas, onProgress = () => {}) {
   /**
    * Where you are put down at a place: its walking spot (camera/bookmarks.js), or, on the cays where the boatmen
    * set up umbrellas, a few steps up the beach from the nearest of them, looking out to sea past it: you arrive
-   * among things whose size you know (an umbrella, loungers, people, the boats beyond).
+   * among things whose size you know (an umbrella, loungers, the boats beyond).
    */
   function arrivalSpot(place) {
     if (place.id === 'cayo-de-agua-isthmus' && sandbarSpot()) return sandbarSpot();
@@ -323,13 +362,6 @@ export async function start(canvas, onProgress = () => {}) {
         // "So many metres out along the pier whose landward end is nearest this point, facing out to sea."
         const q = pierAt.spot(spot.pier, spot.along ?? 8);
         if (q) { spot = { ...spot, x: q.x, z: q.z, yaw: q.yaw + (spot.face ?? 0) }; walker.eyeY = 50; }        // (feet above the deck: you are put down on it)
-      } else if (spot.person) {
-        // "So many metres from the person standing nearest this point, looking at them from `side` radians round."
-        const q = landmarks.people.filter(v => !!v.stroll === !!spot.stroller).map(v => [Math.hypot(v.x - spot.person[0], v.z - spot.person[1]), v]).sort((a, b) => a[0] - b[0])[0]?.[1];
-        if (q) {
-          const d = spot.back ?? 4, a = spot.side ?? 0, x = q.x + Math.cos(a) * d, z = q.z + Math.sin(a) * d;
-          spot = { ...spot, x, z, yaw: Math.atan2(q.x - x, -(q.z - z)) * 180 / Math.PI };
-        }
       } else if (spot.umbrella) {
         // "So many metres towards the water from the beach umbrella nearest this point, looking back at it."
         const u = landmarks.umbrellas.map(q => [Math.hypot(q[0] - spot.umbrella[0], q[1] - spot.umbrella[1]), q]).sort((a, b) => a[0] - b[0])[0]?.[1];
@@ -376,14 +408,16 @@ export async function start(canvas, onProgress = () => {}) {
   function saveHash() {
     if (params.freeze) return;
     clearTimeout(hashTimer);
-    hashTimer = setTimeout(() => {
-      const c = rig.get(), h = new URLSearchParams();
-      if (rig.mode === 'walk') h.set('p', [walker.x.toFixed(1), walker.z.toFixed(1), (walker.yaw * 180 / Math.PI).toFixed(0), (walker.look * 180 / Math.PI).toFixed(0)].join(','));
-      else h.set('c', [c.x.toFixed(0), c.z.toFixed(0), c.dist.toFixed(0), c.yaw.toFixed(1), c.pitch.toFixed(1)].join(','));
-      h.set('t', env.hours.toFixed(2)); h.set('m', String(env.month)); h.set('w', env.weather);
-      history.replaceState(null, '', `#${h}`);
-    }, 400);
+    hashTimer = setTimeout(writeHash, 400);
   }
+  writeHash = () => {
+    if (params.freeze) return;
+    const c = rig.get(), h = new URLSearchParams();
+    if (rig.mode === 'walk') h.set('p', [walker.x.toFixed(1), walker.z.toFixed(1), (walker.yaw * 180 / Math.PI).toFixed(0), (walker.look * 180 / Math.PI).toFixed(0)].join(','));
+    else h.set('c', [c.x.toFixed(0), c.z.toFixed(0), c.dist.toFixed(0), c.yaw.toFixed(1), c.pitch.toFixed(1)].join(','));
+    h.set('t', env.hours.toFixed(2)); h.set('m', String(env.month)); h.set('w', env.weather);
+    history.replaceState(null, '', `#${h}`);
+  };
   function loadHash() {
     const h = new URLSearchParams(location.hash.slice(1)), c = (h.get('c') || '').split(',').map(Number);
     if (c.length === 5 && c.every(Number.isFinite)) rig.set({ x: c[0], z: c[1], dist: c[2], yaw: c[3], pitch: c[4] });
@@ -409,7 +443,9 @@ export async function start(canvas, onProgress = () => {}) {
   resize();
 
   let adapt = 1;                                            // how far the eye has opened up for a cloud's shade (1 in the sun)
+  let frames = 0, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
   function frame(dt = 0) {
+    frames++;
     if (env.playing && dt > 0) {
       env.hours += dt * 17 / DAY_SECONDS;
       if (env.hours > 21) env.hours = 4;                 // a played day runs from before dawn to after dusk
@@ -450,6 +486,7 @@ export async function start(canvas, onProgress = () => {}) {
       want = Math.min(3, Math.pow(Math.max(left, 0.05), -0.75));
     }
     adapt = dt === 0 ? want : adapt + (want - adapt) * (1 - Math.exp(-dt / 1.5));
+    if (!Number.isFinite(adapt)) adapt = 1;              // (a value that is not a number would stay one, and the picture black)
     shared.uExposure.value = env.exposure * (1 + 44 * night * night) * adapt;
     landmarks.update(rig.eye, night);
     graph.starTurn = env.hours / 24 * 2 * Math.PI;
@@ -457,7 +494,6 @@ export async function start(canvas, onProgress = () => {}) {
     birds.update(rig.eye, clock.time);
     for (const kind of life) kind.update(rig.eye);
     turtle.update(rig.eye, clock.time, shared.uSeaLevel.value);
-    people.update(rig.eye, clock.time, dt === 0);
     shared.uWaveHere.value.fromArray(boats.weightsAt(rig.eye.x, rig.eye.z, 3));
     // Shadows of things: round the walker (and of the walker), or round what the orbit camera looks at.
     const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
@@ -484,6 +520,11 @@ export async function start(canvas, onProgress = () => {}) {
       body.mesh.material.uniforms.uBodyWet.value.set(feet + soak.high, soak.amount, feet + soak.now, soak.nowAmount);
       if (dt > 0) soak.sand = Math.max(0, soak.sand - dt * (walker.depth > 0.03 || !standing ? 2.5 : 1 / 300));       // washed off in the sea; otherwise it dries and drops off in minutes
       body.mesh.material.uniforms.uBodySand.value = standing ? soak.sand : 0;
+      // Where your shins stand in the water (for the ripples round them): the body's ankles, turned to your heading.
+      const inWater = standing && walker.depth > 0.012 ? 1 : 0, cy = Math.cos(walker.yaw), sy = Math.sin(walker.yaw), speed = Math.hypot(walker.vx, walker.vz);
+      (body.joints?.ankles || []).forEach((a, i) => shared.uLeg.value[i].set(wrap64(rig.eye.x + a[0] * cy - a[2] * sy), wrap64(rig.eye.z + a[0] * sy + a[2] * cy), inWater, speed));
+    } else {
+      shared.uLeg.value[0].z = shared.uLeg.value[1].z = 0;
     }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
@@ -529,14 +570,31 @@ export async function start(canvas, onProgress = () => {}) {
       }
       env.hours = hour; applyEnv(); app.setWalk(true, bar, true);
     }
-    let lastFrame = performance.now();
+    if (software) notice('This browser is drawing without the graphics card (software rendering), so you get the simplest, slow form of the simulation. In Chrome or Chromium the page chrome://gpu says why.', ['OK', () => notice('')]);
+    let lastFrame = performance.now(), failures = 0;
     const loop = now => {
+      requestAnimationFrame(loop);                         // (first: nothing that goes wrong below may end the animation)
       const dt = Math.min(0.1, (now - clock.last) / 1000);
       clock.last = now; clock.time += dt;
+      if (document.hidden || lost || paceHold) { lastFrame = now; paceHold = false; if (document.hidden || lost) return; }
       if (params.scale == null && clouds.ready !== false && dynamic.frame((now - lastFrame) / 1000) !== null) resize();
       lastFrame = now;
-      if (!document.hidden) frame(dt);
-      requestAnimationFrame(loop);
+      // Still crawling with the picture at its smallest: this device cannot draw the tier it was given. Start
+      // again in the simplest one (once: pickTier reads the note left here).
+      if (dynamic.crawling >= 2 && tierName !== 'low' && !params.tier) {
+        dynamic.crawling = 0;
+        try { sessionStorage.setItem('lr-tier', 'low'); } catch { /* no storage */ }
+        notice('Too slow at this quality on this device: starting again with simpler graphics…');
+        restart('This device is too slow for the simulation.');
+        return;
+      }
+      // A fault in one frame costs that frame. The same fault frame after frame is told on the page, with what
+      // it was (to pass on), and the page keeps trying.
+      try { frame(dt); if (failures >= 30) notice(''); failures = 0; }
+      catch (e) {
+        note(String(e?.stack || e?.message || e).split('\n').slice(0, 3).join(' '));
+        if (++failures === 30) notice(`The picture has stopped: ${String(e?.message || e).slice(0, 160)}`, ['Reload', () => location.reload()]);
+      }
     };
     requestAnimationFrame(loop);
   }
@@ -546,12 +604,12 @@ export async function start(canvas, onProgress = () => {}) {
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
     /** For tests: the height of the waves arriving at a place, and how loud the reef is there. */
     seaAt: (x, z) => ({ ...seaAt(x, z) }),
-    /** For tests: your own body (world/body.js) and the other people (world/people.js). */
-    body, crowd: people,
+    /** For tests: your own body (world/body.js), and where its shins stand in the water ([x, z (wrapped to 64 m), in water, speed]). */
+    body, legs: () => shared.uLeg.value.map(v => v.toArray()),
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
     life,
-    umbrellas: landmarks.umbrellas, people: landmarks.people,
+    umbrellas: landmarks.umbrellas,
     /** For tests: where the surf you hear is coming from ([{ x, z, hs, dist, bearing }]). */
     shoresHeard: () => soundScene(1).shores.map(q => ({ ...q })),
     /** For tests: where the statue stands and where the turtle is now. */
@@ -604,6 +662,7 @@ export async function start(canvas, onProgress = () => {}) {
       if (s.soaked !== undefined) Object.assign(soak, s.soaked ? { high: s.soaked.to, amount: s.soaked.amount ?? 1, sand: s.soaked.sand ?? 0 } : { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 });
       if (s.stroll) {
         api.walkFor(s.stroll.seconds, s.stroll.input || { fwd: 1 });
+        if (s.stroll.wait) clock.time += s.stroll.wait;       // (then stand a while: prints dry, waves come and go)
         walker.yaw += (s.stroll.turn || 0) * Math.PI / 180;
         if (s.stroll.pitch !== undefined) walker.look = s.stroll.pitch * Math.PI / 180;
       }
@@ -611,6 +670,23 @@ export async function start(canvas, onProgress = () => {}) {
       syncPanel?.(status);
     },
     getState: () => ({ cam: rig.get(), mode: rig.mode, walk: { x: walker.x, z: walker.z, yaw: walker.yaw * 180 / Math.PI, look: walker.look * 180 / Math.PI, eye: walker.eyeY - shared.uSeaLevel.value, depth: walker.depth, diving: walker.diving, afloat: walker.afloat }, time: clock.time, env: { ...env }, status: { ...status } }),
+    /**
+     * Runs the whole simulation (walking, sound scene, drawing) for `seconds` of its own time, as fast as the
+     * machine goes: the long-run test (tools/soak.mjs). `turn` (degrees a second) swings your heading as you go.
+     */
+    run(seconds, input = {}, turn = 0) {
+      const gl = renderer.getContext(), px = new Uint8Array(4), held = walkInput;
+      walkInput = { read: () => ({ ...NO_INPUT, ...input }) }; paceHold = true;
+      try {
+        for (let i = 0, n = Math.round(seconds * 60); i < n; i++) {
+          clock.time += 1 / 60; walker.yaw += turn * Math.PI / 180 / 60;
+          frame(1 / 60);
+          // (Reading a pixel back makes the GPU catch up, so that the queue of work does not grow without limit.)
+          if (i % 20 === 19) { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+        }
+      } finally { walkInput = held; }
+      return frames;
+    },
     /** Advances first person by `seconds` with a fixed input ({ fwd, right, run, down, up }), in 1/60 s steps: for tests. */
     walkFor(seconds, input = {}) { for (let t = 0; t < seconds; t += 1 / 60) { clock.time += 1 / 60; for (const step of walker.step(1 / 60, { ...NO_INPUT, ...input })) stamp(step); } },
     flyTo: id => { const p = places.find(q => q.id === id); if (p) app.flyToPlace(p); return !!p; },
@@ -635,6 +711,7 @@ export async function start(canvas, onProgress = () => {}) {
         tier: tierName, data: manifest.version, reversedDepth: R.reversed,
         gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
         size: { ...R.size }, dynamicScale: dynamic.scale, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
+        frames, time: clock.time, memory: { ...renderer.info.memory }, contextLost: gl.isContextLost(), mode: rig.mode, sound: !!sound.on, soundState: sound.ctx?.state || 'none', soundError: sound.error || null, software, pace: dynamic.pace,
         terrain: terrain.clipmap.stats, water: water.clipmap.stats, programs: renderer.info.programs?.length,
         places: places.map(p => p.id), labels: (features.labels || []).length, boats: boats.count, birds: birds.count, landmarks: landmarks.group.children.length,
       };

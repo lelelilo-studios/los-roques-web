@@ -1,29 +1,15 @@
 // Day-trip beaches: the sun umbrellas, loungers and cool boxes the boatmen set up on the sand at the cays
-// people are taken to. Placed on dry sand a few metres above the swash, facing the water.
+// visitors are taken to. Placed on dry sand a few metres above the swash, facing the water. Nobody is on them:
+// the only person in the simulation is you.
 import { MeshBuilder } from './landmarks.js';
 import * as THREE from 'three';
-
-// People on the beaches are only chosen here (who, where, standing or strolling): world/people.js draws and
-// moves them.
-const SKINS = [[0.5, 0.36, 0.27], [0.42, 0.27, 0.18], [0.3, 0.19, 0.12], [0.56, 0.4, 0.3], [0.36, 0.23, 0.15]];
-const SHIRTS = [[0.78, 0.78, 0.75], [0.1, 0.3, 0.55], [0.7, 0.12, 0.1], [0.85, 0.65, 0.1], [0.1, 0.45, 0.35], [0.8, 0.4, 0.5], null, null];       // null: no shirt
-const SHORTS_ = [[0.06, 0.14, 0.24], [0.5, 0.08, 0.08], [0.05, 0.05, 0.06], [0.1, 0.4, 0.45], [0.7, 0.5, 0.1], [0.35, 0.36, 0.38]];
-const HAIRS = [[0.03, 0.025, 0.02], [0.08, 0.05, 0.03], [0.02, 0.02, 0.02], [0.2, 0.14, 0.08], [0.45, 0.43, 0.4]];
-
-/** Someone at (x, z) facing along `dir` (unit, east/south): colours, height and temperament from the random source `r`. */
-function person(x, z, dir, r, stroll = null) {
-  const pick = list => list[Math.floor(r() * list.length)], skin = pick(SKINS);
-  return { x, z, yaw: Math.atan2(dir[0], -dir[1]), scale: 0.9 + 0.16 * r(), beat: r() * 100, stroll,
-    colours: { skin, shirt: pick(SHIRTS) || skin, shorts: pick(SHORTS_), hair: pick(HAIRS) } };
-}
 
 const rand = seed => { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; };
 const CLOTH = [[0.1, 0.35, 0.75], [0.8, 0.15, 0.12], [0.9, 0.7, 0.1], [0.1, 0.55, 0.45], [0.85, 0.4, 0.1], [0.82, 0.82, 0.8]];
 const SPOTS = [[/francisqu/, 14], [/madrisqu|pirata/, 12], [/crasqu/, 10], [/agua isthmus|agua-isthmus/, 8], [/noronqu/, 6], [/cay$/, 6]];
 
-export function buildBeachSets(places, ground, material, tombolo = null) {
+export function buildBeachSets(places, ground, material) {
   const group = new THREE.Group();
-  group.userData.people = [];                               // who is on the beaches (see person())
   group.userData.spots = [];                                // where the umbrellas stand: [x, z, bearing to the water (radians, from +x towards +z)]
   for (const place of places) {
     const label = `${place.id || ''} ${place.name || ''}`.toLowerCase(), spot = SPOTS.find(s => s[0].test(label));
@@ -58,38 +44,12 @@ export function buildBeachSets(places, ground, material, tombolo = null) {
         }
       }
       mb.box(lx - Math.cos(rot) * 0.9, h + 0.2, lz - Math.sin(rot) * 0.9, 0.3, 0.2, 0.2, [0.1, 0.3, 0.7], rot, white);   // cool box
-      // People: someone standing by the umbrella looking out to sea, and now and then someone strolling along
-      // the water's edge, ankle deep, a few metres each way.
-      if (r() < 0.7) {
-        const a = rot + (r() - 0.5) * 2.4, d = 1.7 + 1.2 * r(), turn = rot + (r() - 0.5) * 1.2;
-        group.userData.people.push(person(x + Math.cos(a) * d, z + Math.sin(a) * d, [Math.cos(turn), Math.sin(turn)], r));
-      }
-      if (r() < 0.45) {
-        const out = -s + 0.3 + 1.2 * r(), along = (r() - 0.5) * 8, px = x + way[0] * out - way[1] * along, pz = z + way[1] * out + way[0] * along;
-        const bed = ground.heightAt(px, pz);
-        if (bed > -0.4 && bed < 0.25) group.userData.people.push(person(px, pz, [-way[1], way[0]], r, { dir: [-way[1], way[0]], reach: 5 + 6 * r(), speed: 0.9 + 0.35 * r() }));
-      }
     }
     if (!taken.length) continue;
     const m = new THREE.Mesh(mb.geometry(), material);
     m.userData.world = { x: place.pos[0], z: place.pos[1] };
     m.frustumCulled = false;
     group.add(m);
-  }
-  // The sandbar of Cayo de Agua, the most photographed spot of the archipelago: people walking its length
-  // between the two seas, and a few standing about on it.
-  const crest = tombolo?.crest || [];
-  if (crest.length > 6) {
-    const r = rand(4711), mid = k => ground.ridge(crest[k][0], crest[k][1]), n = crest.length;
-    for (const [k, reach, speed] of [[Math.round(n * 0.45), 34, 1.0], [Math.round(n * 0.7), 22, 1.15]]) {
-      const p = mid(k), q = mid(Math.min(n - 1, k + 2)), l = Math.hypot(q.x - p.x, q.z - p.z) || 1, dir = [(q.x - p.x) / l, (q.z - p.z) / l];
-      group.userData.people.push(person(p.x - dir[1] * (r() - 0.5) * 3, p.z + dir[0] * (r() - 0.5) * 3, dir, r, { dir, reach, speed }));
-    }
-    for (const frac of [0.3, 0.55, 0.58, 0.85]) {
-      const k = Math.round(n * frac), p = mid(k), a = r() * 6.283, off = 1 + 3 * r();
-      const turn = r() * 6.283;
-      group.userData.people.push(person(p.x + Math.cos(a) * off, p.z + Math.sin(a) * off, [Math.cos(turn), Math.sin(turn)], r));
-    }
   }
   return group;
 }

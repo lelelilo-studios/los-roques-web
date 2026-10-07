@@ -22,13 +22,14 @@ export class Body {
     this.mesh = this.body.m;
     /** The head: only ever drawn into the shadow map (the eye is inside it). */
     this.headMesh = this.head.m;
-    this.pose({ phase: 0, stride: 0, eye: 1.65 });        // (people.js poses its own at once)
+    this.pose({ phase: 0, stride: 0, eye: 1.65 });
   }
 
   /** Walking: see poseBody ({ phase, stride, eye, look }). Swimming: { swim: true, stroke, under } (see poseSwim). */
   pose(p) {
     const q = this.detail ? { ...p, detail: true } : p;
-    if (p.swim) poseSwim(this.body.t, this.head.t, q); else poseBody(this.body.t, this.head.t, q);
+    /** Where the joints are in the body's own frame (see poseBody / poseSwim). */
+    this.joints = p.swim ? poseSwim(this.body.t, this.head.t, q) : poseBody(this.body.t, this.head.t, q);
     for (const { t, m } of [this.body, this.head]) {
       const a = m.geometry.attributes;
       a.position.needsUpdate = true; a.normal.needsUpdate = true; a.color.needsUpdate = true;

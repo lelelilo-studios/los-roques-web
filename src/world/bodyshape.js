@@ -171,7 +171,7 @@ export class Tubes {
   /**
    * A foot: a rounded heel behind the ankle, widest at the ball, low at the toes. `fwd` is the unit direction the
    * toes point (x, z). With `side` (-1 left, +1 right) it has its five toes, the big one on the inside; without,
-   * a rounded front (for figures seen from afar).
+   * a rounded front.
    */
   foot(ankle, fwd, colour, side = 0) {
     const y0 = ankle[1] - ANKLE, P = (along, up) => [ankle[0] + fwd[0] * along, y0 + up, ankle[2] + fwd[1] * along];
@@ -222,7 +222,7 @@ export function reach(hip, target, l1, l2, bend) {
  * @param {number} p.phase  the walker's gait phase (pi per pace)   @param {number} p.stride  0 standing .. 1 walking .. 1.6 running
  * @param {number} p.eye  height of the eye above the feet (1.65 standing, less crouched)
  * @param {number} [p.look]  radians the eye looks above the horizon: bending the head down carries the eye forward of the trunk
- * @param {{skin?: number[], shirt?: number[], shorts?: number[], hair?: number[]}} [p.colours]  for other people (yours are the defaults)
+ * @param {{skin?: number[], shirt?: number[], shorts?: number[], hair?: number[]}} [p.colours]  (the defaults are yours)
  * @param {[number, number]} [p.slope]  rise of the ground per metre forward and to the right: each foot is set down on it
  * @param {number} [p.wade]  0..1: in water to the chest the arms are held up and out, hands at the surface
  * @param {boolean} [p.detail]  hands with fingers, thumbs and nails, feet with toes, hems on the clothes (your own body; needs BODY_VERTICES_DETAIL)
@@ -390,24 +390,5 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
   h.tube([0, 0.03, 0.03], [0, 0.085, 0.035], [0.078, 0.098], [0.062, 0.08], SKIN);
   h.cap([0, 0.03, 0.03], [0, 0.085, 0.035], [0.062, 0.08], SKIN, 0.55);
   return joints;
-}
-
-/**
- * Someone strolling up and down a stretch of shore: where they are, which way they face and how they step at
- * time t (seconds). `stroll` = { dir: unit [east, south] along the shore, reach: metres each way, speed: m/s on
- * average }, from (x0, z0). They slow to a stop at each end, turn round over a second or so, and set off again.
- * Returns { x, z, yaw (radians, as the walker's), phase, stride } for poseBody.
- */
-export function strollAt(stroll, x0, z0, t) {
-  const leg = 2 * stroll.reach / stroll.speed, q = t / leg, n = Math.floor(q), v = q - n, back = ((n % 2) + 2) % 2 === 1;
-  const eased = 0.5 - 0.5 * Math.cos(Math.PI * v), along = ((back ? 1 - eased : eased) * 2 - 1) * stroll.reach;
-  // Turning: a quarter turn out of the last leg, a quarter turn into the next, always the same way round.
-  const k = Math.min(1, Math.min(v, 1 - v) * leg / 1.2), turned = 1 - k * k * (3 - 2 * k);
-  const ahead = Math.atan2(stroll.dir[0], -stroll.dir[1]) + (back ? Math.PI : 0);
-  return {
-    x: x0 + stroll.dir[0] * along, z: z0 + stroll.dir[1] * along, yaw: ahead - turned * (v < 0.5 ? -1 : 1) * Math.PI / 2,
-    // (The paces follow the ground actually covered, and shorten as they slow.)
-    phase: (n + eased) * 2 * stroll.reach / 0.72 * Math.PI, stride: 0.12 + 0.8 * Math.sin(Math.PI * v) * Math.min(1.3, stroll.speed * 1.5708 / 1.4),
-  };
 }
 

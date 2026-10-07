@@ -173,8 +173,9 @@ export class Sound {
     try { localStorage.setItem('lr-sound', muted ? 'off' : 'on'); } catch { /* not remembered */ }
     if (muted) this.ctx?.suspend?.(); else if (this.wanted) this.start();
   }
-  update(dt, scene) { if (this.on && this.ctx.state === 'running') this.ambience.update(dt, scene); }
-  step(info) { if (this.on && this.ctx.state === 'running') this.ambience.step(info); }
+  // (A fault in the sound must never stop the picture: it is noted, once, and that moment of sound is skipped.)
+  update(dt, scene) { if (this.on && this.ctx.state === 'running') try { this.ambience.update(dt, scene); } catch (e) { this.error ??= String(e?.message || e); } }
+  step(info) { if (this.on && this.ctx.state === 'running') try { this.ambience.step(info); } catch (e) { this.error ??= String(e?.message || e); } }
 }
 
 /**

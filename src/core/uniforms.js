@@ -15,6 +15,7 @@ export const shared = {
   uDetailMean: { value: [new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5)] },
   uFoot: { value: Array.from({ length: 24 }, () => new THREE.Vector4(0, 0, 0, -1e9)) },   // your footprints: x, z (wrapped to 64 m), heading, time made
   uFootCount: { value: 0 },
+  uLeg: { value: [new THREE.Vector4(), new THREE.Vector4()] },                        // your two shins where they stand in the water: x, z (wrapped to 64 m), 1 if in water, how fast you move (m/s)
   uRing: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, -1e9, 0)) },     // rings you send out wading: x, z (wrapped to 64 m), time, strength
   tShadow: { value: null }, uShadowC: { value: new THREE.Vector3() }, uShadowR: { value: new THREE.Vector3(1, 0, 0) }, uShadowU: { value: new THREE.Vector3(0, 0, 1) },
   uShadowP: { value: new THREE.Vector4(1, 1, 0, 0) },
@@ -82,7 +83,7 @@ export const CHUNK_UNIFORMS = {
   geo: ['tHeight', 'tShore', 'uMapTexels', 'uMpp', 'uCamTexel', 'uCamTexelShore', 'uSandbar', 'uSandbarP'],
   shore: ['uLift'],
   detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
-  rings: ['uRing'],
+  rings: ['uRing', 'uLeg'],
   shadow: ['tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP'],
   optics: ['uAbsOcean', 'uBbOcean', 'uAbsLagoon', 'uBbLagoon'],
   atmosphere: ['tTransmittance', 'tMultiScatter', 'tSkyView', 'uMieScale', 'uSunToa', 'tEnv'],

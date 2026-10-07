@@ -28,9 +28,17 @@ export const TIERS = {
   ultra: { maps: 'hi', block: 48, maxPixels: 8.3e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 80, lightSteps: 5, scale: 0.5, shadowEvery: 1 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2 } },
 };
 
-/** Picks a starting tier from what the device reports (the perf monitor may lower it later). */
-export function pickTier() {
+/** A browser drawing on the processor, with no graphics card behind it: its driver says so in its name. */
+export const isSoftware = renderer => /swiftshader|llvmpipe|softpipe|software|basic render/i.test(renderer || '');
+
+/**
+ * Picks a starting tier from what the device reports. `renderer` is the graphics driver's name. The page sends
+ * itself back here with 'lr-tier' set when it finds the device far too slow for the tier it began with (app.js).
+ */
+export function pickTier(renderer = '') {
   if (params.tier && TIERS[params.tier]) return params.tier;
+  try { const sent = sessionStorage.getItem('lr-tier'); if (sent && TIERS[sent]) return sent; } catch { /* no storage */ }
+  if (isSoftware(renderer)) return 'low';
   const mobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && Math.min(screen.width, screen.height) < 820);
   if (mobile || navigator.connection?.saveData) return 'low';
   if ((navigator.deviceMemory || 8) <= 4 || (navigator.hardwareConcurrency || 8) <= 4) return 'medium';

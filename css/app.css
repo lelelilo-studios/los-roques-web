@@ -112,3 +112,10 @@ dialog.about button { font: inherit; padding: 0.4rem 1rem; border-radius: 999px;
   .compare-tag { bottom: auto; top: 0.8rem; }
 }
 @media (prefers-reduced-motion: reduce) { #loader, .bar i, .chip { transition: none; } }
+
+/* A line at the foot of the page when something is wrong (app.js: notice). */
+.notice { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60; max-width: min(620px, calc(100vw - 32px)); padding: 10px 14px;
+  display: flex; gap: 12px; align-items: center; background: rgba(12, 28, 44, 0.92); color: #fff; font: 14px/1.4 system-ui, sans-serif; border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
+.notice button { flex: none; padding: 6px 12px; border: 1px solid rgba(255, 255, 255, 0.45); border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.notice button:hover { background: rgba(255, 255, 255, 0.12); }

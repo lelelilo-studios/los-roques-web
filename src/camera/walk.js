@@ -155,6 +155,10 @@ export class Walker {
     this.bob += (0.022 * this.bobAmount * stride * Math.abs(Math.sin(this.phase)) - this.bob) * (1 - Math.exp(-dt * 12));
     // (Your weight goes over each foot in turn: the head swings a centimetre and a half from side to side.)
     this.sway += (0.014 * this.bobAmount * stride * Math.sin(this.phase) - this.sway) * (1 - Math.exp(-dt * 10));
+    // (Whatever happened above, you are somewhere. A position that is not a number would stay one, and black
+    // the picture out for good: go back to the last place that was.)
+    if (Number.isFinite(this.x + this.z + this.yaw + this.look + this.eyeY + this.bob + this.sway)) this.safe = [this.x, this.z, this.yaw, this.look];
+    else if (this.safe) { this.bob = this.sway = this.stride = 0; this.place({ x: this.safe[0], z: this.safe[1], yaw: this.safe[2], look: this.safe[3] }); }
     return steps;
   }
 }
