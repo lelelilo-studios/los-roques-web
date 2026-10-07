@@ -46,8 +46,8 @@ float lrShadowCasters(highp sampler2D map, vec2 uv, vec2 reach, float towards, f
 }
 // Your own shadow. In the map of everything, 52 m across, a texel is over a centimetre, and three times that
 // along the ground under a low sun: your shadow had steps down its sides. Seen along the light your body fits
-// a square under three metres across wherever its shadow falls, so it has that square to itself, a texel under
-// 3 mm: fingers in the shadow of a hand, a crisp edge at the heels.
+// a square under three metres across wherever its shadow falls, so it has that square to itself, a texel little
+// over a millimetre: fingers in the shadow of a hand, a crisp edge at the heels.
 float lrShadowOwn(vec3 p, vec3 n, float turn) {
   vec3 q = p + n * 0.004 - uShadowB.xyz;
   vec2 s = vec2(dot(q, uShadowR), dot(q, uShadowU)) / uShadowB.w;
@@ -133,7 +133,7 @@ export class Shadows {
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, colorSpace: THREE.NoColorSpace });
     shared.tShadow.value = this.target.texture;
     // (Your own shadow's map: see lrShadowOwn.)
-    this.figure = new THREE.WebGLRenderTarget(1024, 1024, { type: THREE.FloatType, format: THREE.RedFormat, depthBuffer: true, stencilBuffer: false,
+    this.figure = new THREE.WebGLRenderTarget(2048, 2048, { type: THREE.FloatType, format: THREE.RedFormat, depthBuffer: true, stencilBuffer: false,
       minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, colorSpace: THREE.NoColorSpace });
     shared.tShadowB.value = this.figure.texture;
     this.material = new THREE.ShaderMaterial({

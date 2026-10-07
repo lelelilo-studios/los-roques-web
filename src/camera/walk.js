@@ -127,7 +127,8 @@ export class Walker {
 
     // The eye.
     const g2 = this.ground.heightAt(this.x, this.z);
-    const want = input.down && !this.diving && d < 0.9 ? CROUCH : STAND;
+    // (Crouched, reaching down to touch, you lean in over your hand: the eye comes a hand's breadth lower.)
+    const want = input.down && !this.diving && d < 0.9 ? CROUCH - (input.hand ? 0.12 : 0) : STAND;
     this.body += (want - this.body) * (1 - Math.exp(-dt * 10));
     this.afloat = this.surf + FLOAT > g2 + this.body;
     if (!this.diving) {
@@ -275,6 +276,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
         right: Math.max(-1, Math.min(1, h('d') + h('ArrowRight') - h('a') - h('ArrowLeft') + touch.vec[0])),
         run: held.has('Shift') || pressed.has('run') || Math.hypot(touch.vec[0], touch.vec[1]) > 0.97,
         down: held.has('c') || pressed.has('down'), up: held.has(' ') || pressed.has('up'),
+        hand: !!touch.look,                              // the mouse button (or a finger on the right of the screen) held: crouched, your hand goes down to touch
       };
     },
     release() { held.clear(); pressed.clear(); touch.stick = touch.look = null; touch.vec = [0, 0]; if (document.pointerLockElement === el) document.exitPointerLock?.(); },

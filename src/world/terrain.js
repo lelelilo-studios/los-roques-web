@@ -68,7 +68,10 @@ ${clipmapFragment}
 ${detailGLSL}
 ${shadowGLSL}
 uniform float uRain;
-uniform vec4 uLeg[2];        // your shins where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
+uniform vec4 uTouchSeg[16];  // what your hand has drawn or pressed in the sand: strokes from xy to zw (detail coordinates, wrapped to 64 m)
+uniform vec4 uTouchInfo[16]; // for each: when, kind (0 fingers drawn along, 1 a hand pressed flat), the hand's heading, how far apart the fingers' furrows lie (0 one behind another .. 1 side by side)
+uniform int uTouchCount;
+uniform vec4 uLeg[3];        // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
 uniform vec4 uFoot[24];       // your footprints: x, z (detail coordinates, wrapped to 64 m), heading, time made
 uniform int uFootCount;
@@ -114,7 +117,7 @@ float lrCaustics(vec2 rel, float water, float px) {
     // The ripples round your own legs (the same rings as in the water pass). Through a hand's depth of clear
     // water, seen from above, a ripple hardly shows on the surface: what you see is the rings of light it
     // throws on the sand about your ankles. Curvature of a ring: along the radius, and round it.
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
       if (uLeg[i].z < 0.5) continue;
       vec2 q = mod(entry + uCamMod.xy - uLeg[i].xy + 32.0, 64.0) - 32.0;
       float r = length(q);
@@ -156,6 +159,44 @@ float lrFootprints(vec2 d, float soft, float since) {
   }
   return h;
 }
+
+// What your hand has done to the sand at d (metres, negative = down). Fingers drawn through it leave four
+// furrows two centimetres apart, the sand pushed up between and beside them: soft-edged in dry sand, which
+// slumps, narrow and clean in wet. A hand pressed flat leaves its print: the palm, the four fingers, the thumb.
+// Like footprints, what was made before the sea last covered the place is gone.
+float lrCapsule(vec2 p, vec2 a, vec2 b, float r) { vec2 ab = b - a, ap = p - a; return length(ap - ab * clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0)) / r; }
+float lrHandMarks(vec2 d, float soft, float since) {
+  float lo = 0.0, hi = 0.0;
+  for (int i = 0; i < 16; i++) {
+    if (i >= uTouchCount) break;
+    vec4 seg = uTouchSeg[i], info = uTouchInfo[i];
+    if (info.x < since) continue;
+    vec2 a = mod(d - seg.xy + 32.0, 64.0) - 32.0, ab = mod(seg.zw - seg.xy + 32.0, 64.0) - 32.0;
+    float len = length(ab);
+    if (dot(a, a) > (len + 0.2) * (len + 0.2)) continue;
+    vec2 dir = len > 1e-4 ? ab / len : vec2(sin(info.z), -cos(info.z));
+    vec2 l = vec2(dot(a, dir), dot(a, vec2(-dir.y, dir.x)));               // along the stroke (or the hand), across it
+    float v;
+    if (info.y < 0.5) {
+      // (Fingers at half and one and a half spacings either side of the middle. Drawn sideways the spacing
+      // closes up and the four furrows become one, wider and deeper, with the sand banked along it.)
+      float apart = 0.02 * info.w, beyond = max(max(-l.x, l.x - len), 0.0), side = abs(l.y), one = 1.0 - smoothstep(0.15, 0.5, info.w);
+      float finger = min(abs(side - 0.5 * apart), abs(side - 1.5 * apart)), wide = mix(0.0034, 0.0052, soft) * (1.0 + 0.9 * one);
+      float within = (1.0 - smoothstep(1.5 * apart + 0.008 + 0.01 * one, 1.5 * apart + 0.018 + 0.014 * one, side)) * (1.0 - smoothstep(0.0, 0.012, beyond));
+      v = mix(0.0045, 0.0075, soft) * (1.0 + 0.5 * one) * (0.4 * soft + 0.1 - (1.1 + 0.4 * soft) * exp(-finger * finger / (2.0 * wide * wide))) * within;
+    } else {
+      // (l.x = 0 at the tip of the middle finger; the knuckles are 8.5 cm back, the heel of the hand 19.)
+      float r = lrCapsule(l, vec2(-0.155, 0.0), vec2(-0.115, 0.0), 0.04);                                           // the palm
+      r = min(r, min(min(lrCapsule(l, vec2(-0.085, 0.029), vec2(-0.01, 0.031), 0.0085), lrCapsule(l, vec2(-0.085, 0.0095), vec2(0.0, 0.0095), 0.009)),
+                     min(lrCapsule(l, vec2(-0.085, -0.0095), vec2(-0.006, -0.0105), 0.0085), lrCapsule(l, vec2(-0.085, -0.029), vec2(-0.024, -0.032), 0.0078))));
+      r = min(r, lrCapsule(l, vec2(-0.15, 0.04), vec2(-0.095, 0.068), 0.0105));                                     // the thumb
+      v = -mix(0.0035, 0.0065, soft) * (1.0 - smoothstep(mix(0.82, 0.55, soft), 1.0, r)) + soft * 0.0015 * smoothstep(0.9, 1.15, r) * (1.0 - smoothstep(1.15, 1.7, r));
+    }
+    lo = min(lo, v); hi = max(hi, v);
+  }
+  return lo < -2e-4 ? lo : hi;
+}
+float lrMarks(vec2 d, float soft, float since) { return lrFootprints(d, soft, since) + lrHandMarks(d, soft, since); }
 
 // Sparkle of single grains in the sun: a lattice of facets fixed to the sand, each tilted its own way, flashing
 // when it mirrors the sun into the eye. The cells are about a pixel and a half across, and two lattice sizes
@@ -376,11 +417,11 @@ void main() {
       albedo *= 1.0 - 0.65 * holes * wetLine * (1.0 - smoothstep(0.008, 0.02, px));
     }
   }
-  if (!covered && uFootCount > 0 && sand > 0.5 && px < 0.03) {
+  if (!covered && uFootCount + uTouchCount > 0 && sand > 0.5 && px < 0.03) {
     // Your own footprints.
     float soft = 1.0 - wetness, since = beach && sw.age < 900.0 ? uTime - sw.age : -1e9, e = 0.004;
-    float h0 = lrFootprints(d, soft, since);
-    vec2 slope = vec2(lrFootprints(d + vec2(e, 0.0), soft, since), lrFootprints(d + vec2(0.0, e), soft, since)) - h0;
+    float h0 = lrMarks(d, soft, since);
+    vec2 slope = vec2(lrMarks(d + vec2(e, 0.0), soft, since), lrMarks(d + vec2(0.0, e), soft, since)) - h0;
     if (h0 != 0.0 || slope != vec2(0.0)) {
       n = normalize(vec3(n.x - slope.x / e, n.y, n.z - slope.y / e));
       openSky *= 1.0 + 16.0 * min(h0, 0.0);                 // (the bottom of a print 2 cm deep sees two thirds of the sky)
@@ -480,7 +521,7 @@ export class Terrain {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg']),
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg', ...CHUNK_UNIFORMS.touch]),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

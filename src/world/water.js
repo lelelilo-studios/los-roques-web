@@ -55,7 +55,7 @@ ${clipmapFragment}
 ${detailGLSL}
 ${shadowGLSL}
 uniform vec4 uRing[6];        // rings you send out wading: x, z (detail coordinates), time, strength
-uniform vec4 uLeg[2];         // your shins where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
+uniform vec4 uLeg[3];         // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform sampler2D tRefr;      // copy of the opaque scene: rgb = lit bottom reflectance, a = water depth
 uniform sampler2D tWaterType; // 1 = lagoon water, 0 = clear ocean water
 uniform mat4 uViewProj;
@@ -241,7 +241,7 @@ void main() {
     }
     // The water parts round your legs: a ruff of small ripples at each shin, hugging it when you stand still,
     // livelier and wider when you push through or the swash runs past you.
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 3; i++) {
       if (uLeg[i].z < 0.5) continue;
       vec2 q = mod(spot + uCamMod.xy - uLeg[i].xy + 32.0, 64.0) - 32.0;
       float r = length(q), lively = 0.35 + 0.65 * lrSaturate(uLeg[i].w / 0.6 + (aboveStill > 0.0 ? 1.0 - smoothstep(0.2, 0.8, sw.p) : 0.0));

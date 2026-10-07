@@ -12,6 +12,7 @@ import { CameraRig, attachOrbitInput } from './camera/rig.js';
 import { OVERVIEW, shotFor, walkSpotFor } from './camera/bookmarks.js';
 import { Walker, attachWalkInput, buildingBlocker, paceLength } from './camera/walk.js';
 import { footfall } from './world/bodyshape.js';
+import { Spray } from './world/spray.js';
 import { Terrain } from './world/terrain.js';
 import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
@@ -42,7 +43,7 @@ import { buildPanel, buildWalkHud } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
-const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false };
+const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false };
 
 export async function start(canvas, onProgress = () => {}) {
   const errors = [];
@@ -201,6 +202,13 @@ export async function start(canvas, onProgress = () => {}) {
   const birds = new Birds(places, ground, landmarks.material);
   // Your own body: seen when you look down, and the caster of your shadow (the head only ever in the shadow).
   const body = new Body(createObjectMaterial(tier.fp.shadowTaps, true), true);
+  const spray = new Spray();
+  // Your hand on the sand and in the water: crouched, with the button held, it goes down to where you are
+  // looking (as far as the arm reaches) and stays there, following your look, until you let go.
+  //   amount: 0 at rest .. 1 down;  kind: what it is on ('dry' sand, 'wet' sand, 'water');  tip: the middle
+  //   fingertip in the world;  stroke: which mark in the sand it is making;  wet, sand: what it carries away.
+  const hand = { amount: 0, down: false, kind: 'dry', tip: null, from: null, stroke: -1, strokes: 0, spoke: 0, ringed: 0, speed: 0, wet: 0, sand: 0, floor: 0 };
+  const STROKES = shared.uTouchSeg.value.length;
   // How wet you are: `high` is as far up as the sea has stood round you lately (drying), `now` the water you stand in.
   const soak = { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 };
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
@@ -214,7 +222,7 @@ export async function start(canvas, onProgress = () => {}) {
   shared.uTreesNear.value = tier.fp.life ? 1 : 0;
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, spray.points);
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
@@ -277,17 +285,26 @@ export async function start(canvas, onProgress = () => {}) {
     // (On a pier: the knock of boards, and no prints in the sand below.)
     if (onDeck(step.x, step.z) && step.depth < 0.03) { sound.step({ side: step.side, surface: 'wood' }); return; }
     const above = ground.heightAt(step.x, step.z) - shared.uSeaLevel.value;
-    sound.step({ depth: step.depth, side: step.side, wet: above < runup(seaAt(step.x, step.z).hs) + 0.02 ? 1 : 0 });
+    const wetSand = above < runup(seaAt(step.x, step.z).hs) + 0.02;
+    sound.step({ depth: step.depth, side: step.side, wet: wetSand ? 1 : 0 });
+    // Where that foot came down: under the foot itself as it was posed a moment ago (the middle of the sole is
+    // 6 cm ahead of the ankle), or, when nothing is being drawn (a test walking on fast), a hip's width to the
+    // side and ahead of you by the reach of the pace.
+    const fresh = frames - posedAt <= 1 ? body.joints?.ankles : null, landed = fresh?.[step.side], cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
+    const side = landed ? landed[0] + (step.side ? 0.007 : -0.007) : step.side ? 0.1 : -0.1, ahead = landed ? 0.06 - landed[2] : footfall(step.stride ?? 1);
+    const px = step.x + cy * side + sy * ahead, pz = step.z + sy * side - cy * ahead, pace = Math.min(step.stride ?? 1, 1.6);
     if (step.depth > 0.03) {
-      // Wading: each pace sends a ring out over the water.
+      // Wading: each pace sends a ring out over the water, and throws up drops where the foot goes in.
       shared.uRing.value[rings++ % 6].set(wrap64(step.x), wrap64(step.z), clock.time, Math.min(1, 0.4 + step.depth * 2));
+      if (fresh) spray.burst(wrap64(px), ground.heightAt(px, pz) + step.depth, wrap64(pz), clock.time, [-sy, cy], Math.round((6 + 10 * pace) * Math.min(1, step.depth / 0.1)), true, 0.6 + 0.4 * pace);
       return;
     }
-    // The print is where that foot came down: under the foot itself as it was posed a moment ago (the middle of
-    // the sole is 6 cm ahead of the ankle), or, when nothing is being drawn (a test walking on fast), a hip's
-    // width to the side and ahead of you by the reach of the pace.
-    const landed = frames - posedAt <= 1 ? body.joints?.ankles?.[step.side] : null, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
-    const side = landed ? landed[0] + (step.side ? 0.007 : -0.007) : step.side ? 0.1 : -0.1, ahead = landed ? 0.06 - landed[2] : footfall(step.stride ?? 1);
+    // On dry sand the other foot, pushing off a tenth of a second from now, flicks grains back from under its toes.
+    const pushing = fresh?.[1 - step.side];
+    if (pushing && !wetSand) {
+      const tx = pushing[0], tz = pushing[2] - 0.13, wx = step.x + cy * tx - sy * tz, wz = step.z + sy * tx + cy * tz;
+      spray.burst(wrap64(wx), ground.heightAt(wx, wz), wrap64(wz), clock.time + 0.1 / Math.max(pace, 0.5), [-sy, cy], Math.round(3 + 8 * pace), false, 0.45 + 0.55 * pace);
+    }
     shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), Math.atan2(Math.sin(step.yaw), Math.cos(step.yaw)) + (step.side ? 0.12 : -0.12) + (feetWet() ? 64 : 0), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
   }
@@ -352,6 +369,8 @@ export async function start(canvas, onProgress = () => {}) {
      * `pose`: { x, z, yaw (deg), pitch (deg), height, eye } or { near: [x, z], shore, face, ... }; `instant` skips the flight down.
      */
     setWalk(on, pose = null, instant = false) {
+      // (Wherever you are put down, your hand is at your side and the sand there is as you found it.)
+      Object.assign(hand, { amount: 0, down: false, tip: null, stroke: -1, strokes: 0, speed: 0 }); shared.uTouchCount.value = 0; shared.uLeg.value[2].z = 0;
       if (!on) {
         sound.stop();
         if (rig.mode === 'walk') { rig.setMode('orbit'); walkInput?.release(); }
@@ -450,7 +469,7 @@ export async function start(canvas, onProgress = () => {}) {
   resize();
 
   let adapt = 1;                                            // how far the eye has opened up for a cloud's shade (1 in the sun)
-  let frames = 0, posedAt = -9, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
+  let frames = 0, posedAt = -9, lastInput = NO_INPUT, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
   function frame(dt = 0) {
     frames++;
     if (env.playing && dt > 0) {
@@ -463,7 +482,8 @@ export async function start(canvas, onProgress = () => {}) {
     rig.seaLevel = shared.uSeaLevel.value;
     if (rig.mode === 'walk') {
       const moved = walker.x + walker.z + walker.yaw;
-      for (const step of walker.step(dt, walkInput ? walkInput.read() : NO_INPUT)) stamp(step);
+      lastInput = walkInput ? walkInput.read() : NO_INPUT;
+      for (const step of walker.step(dt, lastInput)) stamp(step);
       sound.update(dt, soundScene(dt));
       if (moved !== walker.x + walker.z + walker.yaw) saveHash();
     }
@@ -512,12 +532,93 @@ export async function start(canvas, onProgress = () => {}) {
       const fx = Math.sin(walker.yaw), fz = -Math.cos(walker.yaw), g = (dx, dz) => footing.heightAt(walker.x + dx, walker.z + dz);
       const slope = [(g(fx * 0.3, fz * 0.3) - g(-fx * 0.3, -fz * 0.3)) / 0.6, (g(-fz * 0.2, fx * 0.2) - g(fz * 0.2, -fx * 0.2)) / 0.4];
       const wade = Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4));
+      // Your hand: down to the ground (or into the water) on the line of your look, no further than the arm goes.
+      const cyw = Math.cos(walker.yaw), syw = Math.sin(walker.yaw), feet = walker.eyeY - walker.body, low = Math.min(1, Math.max(0, (1.65 - walker.body) / 0.9));
+      const reaching = !!lastInput.hand && low > 0.8 && walker.depth < 0.5 && !onDeck(walker.x, walker.z);
+      if (dt > 0) hand.amount = Math.min(1, Math.max(0, hand.amount + (reaching ? dt * 4.5 : -dt * 3.5)));
+      let reach = null;
+      if (hand.amount > 0) {
+        const far = Math.min(0.6, Math.max(0.3, Math.cos(walker.look) * walker.body / Math.max(0.25, -Math.sin(walker.look)))), lx = 0.1, lz = -far;
+        const wx = walker.x + lx * cyw - lz * syw, wz = walker.z + lx * syw + lz * cyw, g = footing.heightAt(wx, wz), depth = Math.max(walker.surf - g, 0);
+        if (!hand.down) hand.kind = depth > 0.015 ? 'water' : g - shared.uSeaLevel.value < runup(seaAt(wx, wz).hs) + 0.02 ? 'wet' : 'dry';
+        // (In dry sand the fingers go in to the first joint; on wet sand they press on it; in water the hand
+        // goes to the bottom if that is within a hand's length, or under the surface by that much.)
+        hand.floor = hand.kind === 'water' ? walker.surf : g;
+        const y = hand.kind === 'water' ? Math.max(g + 0.004, walker.surf - 0.17) : hand.kind === 'dry' ? g - 0.012 : g - 0.003;
+        reach = { at: [lx, y - feet, lz], amount: hand.amount, curl: hand.kind === 'dry' ? 0.36 : hand.kind === 'wet' ? 0.16 : 0.1 };
+      }
       // (The planted foot goes back under you at exactly the rate you travel, so it stays where it was put; your
       // weight presses it a centimetre into dry sand, less into wet; turning on the spot you shift your feet.)
       const speed = Math.hypot(walker.vx, walker.vz), firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5;
       body.pose({ phase: walker.phase, stride: Math.max(walker.stride, walker.turned), eye: walker.body, look: walker.look, slope, wade, breath: Math.sin(clock.time * 1.45),
-        pace: speed > 0.3 ? paceLength(speed, Math.min(1, Math.max(0, (1.65 - walker.body) / 0.9))) : null, sink: onDeck(walker.x, walker.z) ? 0 : firm ? 0.004 : 0.011 });
-      posedAt = frames; body.place(walker.eyeY - walker.body, walker.yaw);
+        pace: speed > 0.3 ? paceLength(speed, Math.min(1, Math.max(0, (1.65 - walker.body) / 0.9))) : null, sink: onDeck(walker.x, walker.z) ? 0 : firm ? 0.004 : 0.011, touch: reach });
+      posedAt = frames; body.place(walker.eyeY - walker.body, walker.yaw, 0, walker.sway);
+      // What the hand does where it is. (Points of the body are turned to your heading and stood on your feet.)
+      const world = q => [walker.x + q[0] * cyw - q[2] * syw, feet + q[1], walker.z + q[0] * syw + q[2] * cyw];
+      const touching = body.joints.touching, tip = touching ? world(touching.tip) : null;
+      if (tip && dt > 0) hand.speed = hand.tip ? Math.hypot(tip[0] - hand.tip[0], tip[2] - hand.tip[2]) / dt : 0;
+      // (A frame drawn without time passing, for a picture, changes nothing in what the hand is doing.)
+      const pressing = reaching || (dt === 0 && hand.down);
+      if (tip && hand.amount >= 1 && pressing) {
+        const seg = shared.uTouchSeg.value, info = shared.uTouchInfo.value, sandy = hand.kind !== 'water';
+        if (!hand.down) {
+          // It lands: a pat, a plop and a ring; on sand, a hand's print to begin with.
+          hand.down = true; hand.from = tip; hand.spoke = clock.time;
+          sound.touch(hand.kind, 'down');
+          if (sandy) {
+            hand.stroke = hand.strokes++ % STROKES;
+            seg[hand.stroke].set(wrap64(tip[0]), wrap64(tip[2]), wrap64(tip[0]), wrap64(tip[2]));
+            info[hand.stroke].set(clock.time, 1, walker.yaw, 0);
+            shared.uTouchCount.value = Math.min(hand.strokes, STROKES);
+          } else { shared.uRing.value[rings++ % 6].set(wrap64(tip[0]), wrap64(tip[2]), clock.time, 0.45); hand.ringed = clock.time; }
+        } else if (sandy && hand.stroke >= 0) {
+          // Drawn along, the fingers leave their furrows: the stroke follows the hand, and a new one begins
+          // every few centimetres so that a curve is drawn as it was made. (A hand that has moved less than
+          // its own width has only pressed.)
+          const far = Math.hypot(tip[0] - hand.from[0], tip[2] - hand.from[2]), stroke = info[hand.stroke];
+          if (stroke.y > 0.5 && far > 0.025) { stroke.y = 0; stroke.x = clock.time; }
+          if (stroke.y < 0.5) {
+            seg[hand.stroke].z = wrap64(tip[0]); seg[hand.stroke].w = wrap64(tip[2]);
+            // (Drawn towards you or away, the four fingers each plough their own furrow; drawn sideways they
+            // follow one another in a single one: how far apart the furrows lie goes with the direction.)
+            if (far > 0.004) stroke.w = Math.abs(((tip[0] - hand.from[0]) * syw - (tip[2] - hand.from[2]) * cyw) / far);
+            if (far > 0.05) {
+              hand.stroke = hand.strokes++ % STROKES; hand.from = tip;
+              seg[hand.stroke].set(wrap64(tip[0]), wrap64(tip[2]), wrap64(tip[0]), wrap64(tip[2]));
+              info[hand.stroke].set(clock.time, 0, walker.yaw, stroke.w);
+              shared.uTouchCount.value = Math.min(hand.strokes, STROKES);
+            }
+          }
+        }
+        // What it sounds like as it moves, and the rings it leaves in water.
+        if (hand.speed > 0.06 && clock.time - hand.spoke > 0.13) { sound.touch(hand.kind, 'drag', hand.speed); hand.spoke = clock.time; }
+        if (!sandy && hand.speed > 0.12 && clock.time - hand.ringed > 0.28) { shared.uRing.value[rings++ % 6].set(wrap64(tip[0]), wrap64(tip[2]), clock.time, 0.3); hand.ringed = clock.time; }
+        // What it carries away: the sea wets it and rinses it; wet sand clings; dry sand clings to a wet hand only.
+        if (dt > 0) {
+          if (!sandy) { hand.wet = 1; hand.sand = Math.max(0, hand.sand - dt * 3); }
+          else if (hand.kind === 'wet') { hand.wet = Math.max(hand.wet, 0.55); hand.sand = Math.min(1, hand.sand + dt * 1.5); }
+          else hand.sand = Math.min(hand.wet > 0.3 ? 1 : 0.3, hand.sand + dt * 1.2);
+        }
+      } else if (hand.down && dt > 0) {
+        // It lifts: water runs off it in drops (each a small ring where it falls back), sand trickles from the fingers.
+        hand.down = false;
+        sound.touch(hand.kind, 'up');
+        const at = tip || hand.tip;
+        if (at) {
+          spray.drip(wrap64(at[0]), hand.floor + 0.1, wrap64(at[2]), hand.floor, clock.time + 0.05, hand.kind === 'water' ? 18 : hand.kind === 'dry' ? 22 : 5, hand.kind === 'water', hand.kind === 'water' ? 0.9 : 0.5);
+          if (hand.kind === 'water') for (const later of [0.25, 0.55]) shared.uRing.value[rings++ % 6].set(wrap64(at[0] + 0.03 * later), wrap64(at[2] - 0.02 * later), clock.time + later, 0.2);
+        }
+      }
+      hand.tip = tip;
+      shared.uLeg.value[2].set(tip ? wrap64(tip[0]) : 0, tip ? wrap64(tip[2]) : 0, tip && hand.down && hand.kind === 'water' ? 1 : 0, hand.speed);
+      // (A wet hand dries in a minute or so in this sun and wind; dry sand falls off it sooner.)
+      if (dt > 0 && !hand.down) { hand.wet = Math.max(0, hand.wet - dt / 70); hand.sand = Math.max(0, hand.sand - dt / (hand.wet > 0.3 ? 60 : 6)); }
+      const wrist = body.joints.wrists[1], end = body.joints.fingertips[1];
+      if (wrist && end) {
+        const mid = world([(wrist[0] + end[0]) / 2, (wrist[1] + end[1]) / 2, (wrist[2] + end[2]) / 2]);
+        body.mesh.material.uniforms.uHandWet.value.set(mid[0] - rig.eye.x, mid[1], mid[2] - rig.eye.z, hand.wet);
+        body.mesh.material.uniforms.uHandSand.value = hand.sand;
+      }
     }
     else if (walking) {
       const under = walker.diving ? 1 : 0;
@@ -543,7 +644,7 @@ export async function start(canvas, onProgress = () => {}) {
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
       const figure = walking ? { meshes: [body.mesh, body.headMesh], centre: standing ? { x: 0, y: walker.eyeY - walker.body + 0.9, z: 0 } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, ...(walking ? [body.mesh] : [])], [], casters, figure);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, ...(walking ? [body.mesh] : [])], [], casters, figure);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
@@ -708,6 +809,8 @@ export async function start(canvas, onProgress = () => {}) {
       if (s.stroke !== undefined) walker.stroke = s.stroke * 2 * Math.PI;      // (place in the swimming stroke, 0..1)
       // soaked: { to: metres above your feet, amount: 0..1 }: as if you had just waded that deep (for pictures).
       if (s.soaked !== undefined) Object.assign(soak, s.soaked ? { high: s.soaked.to, amount: s.soaked.amount ?? 1, sand: s.soaked.sand ?? 0 } : { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 });
+      // touch: { seconds, turn (degrees a second) }: crouch, put your hand down and draw it along for that long (for pictures).
+      if (s.touch) { api.run(0.7, { down: true }); api.run(0.4, { down: true, hand: true }); api.run(s.touch.seconds ?? 1.2, { down: true, hand: true }, s.touch.turn ?? 0, s.touch.nod ?? 0); if (s.touch.then) api.run(s.touch.then.seconds ?? 1, { down: true, hand: true }, s.touch.then.turn ?? 0, s.touch.then.nod ?? 0); }
       if (s.stroll) {
         api.walkFor(s.stroll.seconds, s.stroll.input || { fwd: 1 });
         if (s.stroll.wait) clock.time += s.stroll.wait;       // (then stand a while: prints dry, waves come and go)
@@ -720,14 +823,15 @@ export async function start(canvas, onProgress = () => {}) {
     getState: () => ({ cam: rig.get(), mode: rig.mode, walk: { x: walker.x, z: walker.z, yaw: walker.yaw * 180 / Math.PI, look: walker.look * 180 / Math.PI, eye: walker.eyeY - shared.uSeaLevel.value, depth: walker.depth, diving: walker.diving, afloat: walker.afloat }, time: clock.time, env: { ...env }, status: { ...status } }),
     /**
      * Runs the whole simulation (walking, sound scene, drawing) for `seconds` of its own time, as fast as the
-     * machine goes: the long-run test (tools/soak.mjs). `turn` (degrees a second) swings your heading as you go.
+     * machine goes: the long-run test (tools/soak.mjs). `turn` (degrees a second) swings your heading as you go,
+     * `nod` raises your look.
      */
-    run(seconds, input = {}, turn = 0) {
+    run(seconds, input = {}, turn = 0, nod = 0) {
       const gl = renderer.getContext(), px = new Uint8Array(4), held = walkInput;
       walkInput = { read: () => ({ ...NO_INPUT, ...input }) }; paceHold = true;
       try {
         for (let i = 0, n = Math.round(seconds * 60); i < n; i++) {
-          clock.time += 1 / 60; walker.yaw += turn * Math.PI / 180 / 60;
+          clock.time += 1 / 60; walker.yaw += turn * Math.PI / 180 / 60; walker.look = Math.min(1.5, Math.max(-1.5, walker.look + nod * Math.PI / 180 / 60));
           frame(1 / 60);
           // (Reading a pixel back makes the GPU catch up, so that the queue of work does not grow without limit.)
           if (i % 20 === 19) { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }

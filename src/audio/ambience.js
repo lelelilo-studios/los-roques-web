@@ -134,6 +134,27 @@ export class Ambience {
     }
   }
 
+  /**
+   * Your hand on the sand or in the water. `kind`: 'dry', 'wet' or 'water'; `how`: 'down' as it lands, 'drag' as
+   * it is drawn along (called a few times a second while it moves), 'up' as it leaves; `speed` in m/s.
+   */
+  touch(kind, how, speed = 0) {
+    const k = clamp01(speed / 0.6);
+    if (kind === 'water') {
+      if (how === 'down') { this.burst('pink', 'lowpass', 420, 1.1, 0.16, 0.008, 0.11, 0.1); this.burst('white', 'highpass', 1500, 0.5, 0.05, 0.01, 0.16, 0.1, 0.02); }      // a soft plop
+      else if (how === 'drag') this.burst('white', 'bandpass', 900 + 500 * k, 0.6, 0.035 + 0.06 * k, 0.03, 0.16, 0.1);                                                      // water parting round the fingers
+      else { for (let i = 0; i < 5; i++) this.burst('white', 'bandpass', 2600 + 1800 * this.rnd(), 6, 0.035, 0.002, 0.03, 0.1, 0.08 + 0.09 * i + 0.05 * this.rnd()); }       // drops falling back
+    } else if (kind === 'wet') {
+      if (how === 'down') this.burst('pink', 'lowpass', 520, 0.8, 0.12, 0.005, 0.06, 0.1);                                                                                  // a pat
+      else if (how === 'drag') this.burst('pink', 'bandpass', 1300 + 500 * k, 0.9, 0.03 + 0.05 * k, 0.02, 0.1, 0.1);                                                        // a firm scrape
+      else this.burst('white', 'bandpass', 2300, 1.6, 0.02, 0.004, 0.05, 0.1);                                                                                              // a little suck as it lifts
+    } else {
+      if (how === 'down') this.burst('white', 'bandpass', 2000, 0.6, 0.06, 0.008, 0.07, 0.1);
+      else if (how === 'drag') this.burst('white', 'highpass', 2600 + 1400 * k, 0.5, 0.03 + 0.07 * k, 0.025, 0.12, 0.1);                                                    // the hiss of dry grains
+      else this.burst('white', 'highpass', 4200, 0.5, 0.025, 0.02, 0.3, 0.1, 0.05);                                                                                         // grains trickling off the hand
+    }
+  }
+
   /** The laugh of a laughing gull: a run of short notes falling in pitch, slowing at the end. */
   gull() {
     const { ctx } = this, pan = this.rnd() * 1.6 - 0.8, far = 0.25 + 0.75 * this.rnd(), notes = 5 + Math.floor(this.rnd() * 5);
@@ -176,6 +197,7 @@ export class Sound {
   // (A fault in the sound must never stop the picture: it is noted, once, and that moment of sound is skipped.)
   update(dt, scene) { if (this.on && this.ctx.state === 'running') try { this.ambience.update(dt, scene); } catch (e) { this.error ??= String(e?.message || e); } }
   step(info) { if (this.on && this.ctx.state === 'running') try { this.ambience.step(info); } catch (e) { this.error ??= String(e?.message || e); } }
+  touch(kind, how, speed) { if (this.on && this.ctx.state === 'running') try { this.ambience.touch(kind, how, speed); } catch (e) { this.error ??= String(e?.message || e); } }
 }
 
 /**

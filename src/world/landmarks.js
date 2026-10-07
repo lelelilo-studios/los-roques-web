@@ -49,6 +49,8 @@ in vec3 vColor;
 in vec3 vNormal;
 in vec3 vObj;
 uniform float uBodySand;    // (your own body) how much sand is stuck to your feet, 0..1
+uniform vec4 uHandWet;      // (your own body) the hand that touched: where it is (x, z relative to the camera, y absolute) and how wet, 0..1
+uniform float uHandSand;    // and how much sand is on it, 0..1
 uniform vec3 uWind;         // xy = the way the wind blows, z = its speed, m/s
 #endif
 layout(location = 0) out vec4 outColor;
@@ -98,6 +100,9 @@ void main() {
 #ifdef LR_SMOOTH
   // Your own body: wet as far up as the sea has stood round you (all over after a swim), drying in a few minutes.
   soaked = max(uBodyWet.y * (1.0 - smoothstep(uBodyWet.x - 0.04, uBodyWet.x + 0.015, vRel.y)), uBodyWet.w * (1.0 - smoothstep(uBodyWet.z - 0.03, uBodyWet.z + 0.01, vRel.y)));
+  // (The hand you put in the sea, to a little above the wrist.)
+  float hand = 1.0 - smoothstep(0.17, 0.24, distance(vRel, uHandWet.xyz));
+  soaked = max(soaked, uHandWet.w * hand);
   wet = max(wet, soaked);
 #endif
 #ifdef LR_SMOOTH
@@ -107,6 +112,13 @@ void main() {
     float stuck = uBodySand * (1.0 - smoothstep(0.4 * line, line, vObj.y)) * step(0.35 - 0.5 * uBodySand, grains);
     albedo = mix(albedo, vec3(0.5, 0.46, 0.39) * (0.8 + 0.4 * grains), stuck);
     soaked *= 1.0 - stuck;                                   // (sanded skin does not shine)
+  }
+  hand = 1.0 - smoothstep(0.1, 0.15, distance(vRel, uHandWet.xyz));       // (sand: on the hand itself, not up the arm)
+  if (uHandSand * hand > 0.01) {
+    // Sand on the hand that touched it: on the fingers and the palm, more of it the wetter the sand was.
+    float grains = lrNoise(vObj.xz * 1100.0 + vObj.y * 700.0), stuck = uHandSand * hand * step(0.72 - 0.45 * uHandSand, grains);
+    albedo = mix(albedo, vec3(0.5, 0.46, 0.39) * (0.8 + 0.4 * grains), stuck);
+    soaked *= 1.0 - stuck;
   }
 #endif
   // (Cloth drinks the water and goes much darker; skin only a little, but it shines.)
@@ -125,7 +137,7 @@ void main() {
 export function createObjectMaterial(shadowTaps = 8, smooth = false) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, ...(smooth ? { LR_SMOOTH: 1 } : {}) },
-    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet', 'uWind'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 } }),
+    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet', 'uWind'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 } }),
   });
 }
 

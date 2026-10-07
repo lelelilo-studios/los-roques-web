@@ -42,7 +42,8 @@ export class Body {
    * and `pitch` (radians above the horizon) tips the body along the way you look when dived.
    * `yaw` is the walker's heading (radians).
    */
-  place(y, yaw, pitch = 0) {
-    for (const m of [this.mesh, this.headMesh]) { m.position.set(0, y, 0); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix); }
+  /** Stands the body with its feet at height y, heading `yaw`. `side`: how far the eye has swung to its right of the body's own line (the head sways over each foot; the feet do not). */
+  place(y, yaw, pitch = 0, side = 0) {
+    for (const m of [this.mesh, this.headMesh]) { m.position.set(-Math.cos(yaw) * side, y, -Math.sin(yaw) * side); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix); }
   }
 }
