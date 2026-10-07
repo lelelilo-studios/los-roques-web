@@ -134,7 +134,7 @@ export class Sky {
     this.last = { mie: -1, sun: new THREE.Vector3(), camY: -1e9, irrSun: new THREE.Vector3(9, 9, 9) };
     this.pending = false;
     this.readBuffer = new Float32Array(4);
-    this.clearSky = [0.35, 0.5, 0.75];      // until the first read-back
+    this.clearSky = [0.035, 0.05, 0.075];   // sky light on the ground per unit of sunlight above the air (until the first read-back)
     this.overcast = 0;                      // 0 clear .. 1 fully overcast (set by the app from the cloud cover)
   }
 
@@ -166,7 +166,7 @@ export class Sky {
     if (this.canReadFloat && !this.pending && (mediumChanged || last.irrSun.distanceToSquared(sun) > 2e-6)) {
       last.irrSun.copy(sun);
       this.passes.irradiance.render(renderer, this.irradiance);
-      const apply = () => { this.clearSky = [toa.x * this.readBuffer[0], toa.y * this.readBuffer[1], toa.z * this.readBuffer[2]]; };
+      const apply = () => { this.clearSky = [this.readBuffer[0], this.readBuffer[1], this.readBuffer[2]]; };
       if (this.syncReadback) { renderer.readRenderTargetPixels(this.irradiance, 0, 0, 1, 1, this.readBuffer); apply(); }
       else {
         this.pending = true;
@@ -178,7 +178,7 @@ export class Sky {
     shared.uSunE.value.set(toa.x * t[0], toa.y * t[1], toa.z * t[2]);
     // Sky light: the clear sky's (blue) under few clouds; under an overcast it is the sun's own light, spread out
     // and grey. After dark the moon and stars keep a little light in the scene (a fixed dim blue floor).
-    const c = this.clearSky, ov = this.overcast, e = shared.uSunE.value, mu = Math.max(sun.y, 0);
+    const c = [toa.x * this.clearSky[0], toa.y * this.clearSky[1], toa.z * this.clearSky[2]], ov = this.overcast, e = shared.uSunE.value, mu = Math.max(sun.y, 0);
     const grey = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2] + 0.3 * mu * (0.2126 * e.x + 0.7152 * e.y + 0.0722 * e.z);
     shared.uSkyE.value.set(c[0] + (grey - c[0]) * ov + 0.004, c[1] + (grey - c[1]) * ov + 0.006, c[2] + (grey - c[2]) * ov + 0.011);
   }

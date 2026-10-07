@@ -156,9 +156,10 @@ void main() {
         float star = step(0.992, lrHash12(cell + 7.0)) * smoothstep(0.12, 0.0, length(f));
         col += dark * star * (0.0015 + 0.018 * h.x * h.x) * mix(vec3(1.0, 0.85, 0.7), vec3(0.75, 0.85, 1.0), h.y) * smoothstep(0.0, 0.15, dir.y);
       }
-      // The sun's disc (0.53 degrees across), dimmed by the air it shines through and capped for the bloom.
+      // The sun's disc (0.53 degrees across; after dark the moon's, which is as wide), dimmed by the air it
+      // shines through and capped for the bloom.
       float disc = smoothstep(0.999985, 0.999991, dot(dir, uSunDir));
-      if (disc > 0.0) col += disc * min(uSunToa * lrTransmittanceToSun(lrAtmoPos(uCamY), uSunDir) / 6.8e-5, vec3(4000.0));
+      if (disc > 0.0) col += disc * min(uSunToa * lrTransmittanceToSun(lrAtmoPos(uCamY), uSunDir) / 6.8e-5, 400.0 * uSunToa);
     } else {
       // The open sea beyond the mesh, shaded like the mesh: a rough surface whose slope variance follows the
       // wind (Cox & Munk), the deep-water colour under it, the sky and the sun's glitter on top.

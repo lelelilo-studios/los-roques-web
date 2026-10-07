@@ -23,6 +23,7 @@ import { Turtle, buildStatue } from './world/creatures.js';
 import { buildConchMounds, buildShoreLife } from './world/shorelife.js';
 import { buildPlants } from './world/plants.js';
 import { Sound, measure, runup } from './audio/ambience.js';
+import { fullMoonDay, moonPosition } from './world/moon.js';
 import { shoreCrest } from './data/shoreCPU.js';
 import { createObjectMaterial } from './world/landmarks.js';
 import { pierWalk } from './world/piers.js';
@@ -91,7 +92,9 @@ export async function start(canvas, onProgress = () => {}) {
   const env = { hours: 10.5, month: new Date().getUTCMonth(), weather: 'trade', windOverride: null, playing: false, sunOverride: null, exposure: 1, seaLevelOverride: null, live: null };
   const status = { wind: 7, windFrom: 78, sunElevation: 0, sunrise: 6, sunset: 18, sea: 27, airMax: 30, compare: -1 };
   const convergence = manifest.grid.convergenceDeg || 0;
-  const dayOf = month => `2026-${String(month + 1).padStart(2, '0')}-15`;
+  // Each month is shown on the day of its full moon (the sun hardly moves within a month; the moon decides
+  // what a night looks like, and a night walk wants one).
+  const fullMoons = Array.from({ length: 12 }, (_, month) => fullMoonDay(2026, month)), dayOf = month => fullMoons[month];
   let liveAsked = false;
   function applyEnv() {
     if (env.weather === 'live' && !liveAsked) {
@@ -108,6 +111,18 @@ export async function start(canvas, onProgress = () => {}) {
     const date = localDate(dayOf(env.month), env.hours);
     const sun = env.sunOverride || sunPosition(date), times = sunTimes(date), c = conditions(env.weather, env.month, env.hours, env.live);
     shared.uSunDir.value.fromArray(sunDirection(sun.azimuth, sun.elevation, env.sunOverride ? 0 : convergence));
+    // After dark the moon takes the sun's place in the sky and in the lighting (shadows, glitter, the lit side of
+    // clouds). Its light is the sun's, some four hundred thousand times weaker, which the eye's adaptation
+    // (the night exposure) mostly takes up; what is left is a dim, blue-tinged day. The last twilight fades out
+    // between 10 and 11.5 degrees of sun below the horizon, and the moonlight comes in by 13.
+    const moon = moonPosition(date), dusk = Math.min(1, Math.max(0, (-10 - sun.elevation) / 3)), toa = shared.uSunToa.value;
+    toa.set(10, 10, 10);
+    if (!env.sunOverride && dusk > 0) {
+      const up = Math.min(1, Math.max(0, (moon.elevation + 1) / 5)), light = 0.022 * Math.pow(moon.illuminated, 1.6) * up * Math.max(0, 2 * dusk - 1);
+      if (dusk >= 0.5 && light > 0) { shared.uSunDir.value.fromArray(sunDirection(moon.azimuth, moon.elevation, convergence)); toa.set(0.74 * light, 0.9 * light, 1.2 * light); }
+      else toa.setScalar(Math.max(10 * (1 - 2 * dusk), 1e-5));
+    }
+    status.moon = { azimuth: moon.azimuth - convergence, elevation: moon.elevation, illuminated: moon.illuminated };
     const wind = env.windOverride ?? c.wind;
     if (wind !== waves.wind.speed || c.windFrom !== waves.wind.from) waves.setWind(wind, c.windFrom);
     shared.uMieScale.value = c.haze;
@@ -287,6 +302,8 @@ export async function start(canvas, onProgress = () => {}) {
         if (!walker.blocked(x, z)) spot = { ...spot, x, z };
       }
       if (!instant) sound.start();                         // (a click brought us here: the browser lets sound begin)
+      // (For pictures: facing the moon, wherever it is.)
+      if (spot.towards === 'moon' && status.moon) spot = { ...spot, yaw: status.moon.azimuth + (spot.face ?? 0) };
       const arrive = () => {
         walker.place({ x: spot.x, z: spot.z, yaw: (spot.yaw ?? 0) * Math.PI / 180, look: (spot.pitch ?? -4) * Math.PI / 180, height: spot.height ?? 1.65, eye: spot.eye ?? null });
         rig.setMode('walk');

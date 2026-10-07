@@ -188,6 +188,9 @@ void main() {
 
   vec3 albedo = texture(tAlbedo, uv).rgb;
   vec4 land = texture(tLand, uv);
+  // In the village a pixel of the satellite picture is roofs, their shade and the street all mixed: dark grey.
+  // Near the eye, where the houses are drawn one by one, the streets get their own colour: pale trodden sand.
+  albedo = mix(albedo, vec3(0.47, 0.43, 0.36) * (0.92 + 0.16 * lrNoise(wxz / 3.1)), smoothstep(0.3, 0.6, land.b) * (1.0 - smoothstep(1.5, 8.0, px)) * step(water, 0.0));
   float stand = smoothstep(0.34, 0.62, land.r + (lrNoise(wxz / 11.0) - 0.5) * 0.5 * (1.0 - smoothstep(4.0, 16.0, px)));
   // (Where the trees themselves are drawn, the ground under them shows instead: dark mud and leaf litter.)
   float trees = uTreesNear * (1.0 - smoothstep(24.0, 40.0, length(vec3(vRel.x, uCamY - ground, vRel.z))));
