@@ -21,7 +21,7 @@ const rand = seed => { let s = seed >>> 0; return () => { s = (Math.imul(s, 1664
 const CLOTH = [[0.1, 0.35, 0.75], [0.8, 0.15, 0.12], [0.9, 0.7, 0.1], [0.1, 0.55, 0.45], [0.85, 0.4, 0.1], [0.82, 0.82, 0.8]];
 const SPOTS = [[/francisqu/, 14], [/madrisqu|pirata/, 12], [/crasqu/, 10], [/agua isthmus|agua-isthmus/, 8], [/noronqu/, 6], [/cay$/, 6]];
 
-export function buildBeachSets(places, ground, material) {
+export function buildBeachSets(places, ground, material, tombolo = null) {
   const group = new THREE.Group();
   group.userData.people = [];                               // who is on the beaches (see person())
   group.userData.spots = [];                                // where the umbrellas stand: [x, z, bearing to the water (radians, from +x towards +z)]
@@ -75,6 +75,21 @@ export function buildBeachSets(places, ground, material) {
     m.userData.world = { x: place.pos[0], z: place.pos[1] };
     m.frustumCulled = false;
     group.add(m);
+  }
+  // The sandbar of Cayo de Agua, the most photographed spot of the archipelago: people walking its length
+  // between the two seas, and a few standing about on it.
+  const crest = tombolo?.crest || [];
+  if (crest.length > 6) {
+    const r = rand(4711), mid = k => ground.ridge(crest[k][0], crest[k][1]), n = crest.length;
+    for (const [k, reach, speed] of [[Math.round(n * 0.45), 34, 1.0], [Math.round(n * 0.7), 22, 1.15]]) {
+      const p = mid(k), q = mid(Math.min(n - 1, k + 2)), l = Math.hypot(q.x - p.x, q.z - p.z) || 1, dir = [(q.x - p.x) / l, (q.z - p.z) / l];
+      group.userData.people.push(person(p.x - dir[1] * (r() - 0.5) * 3, p.z + dir[0] * (r() - 0.5) * 3, dir, r, { dir, reach, speed }));
+    }
+    for (const frac of [0.3, 0.55, 0.58, 0.85]) {
+      const k = Math.round(n * frac), p = mid(k), a = r() * 6.283, off = 1 + 3 * r();
+      const turn = r() * 6.283;
+      group.userData.people.push(person(p.x + Math.cos(a) * off, p.z + Math.sin(a) * off, [Math.cos(turn), Math.sin(turn)], r));
+    }
   }
   return group;
 }

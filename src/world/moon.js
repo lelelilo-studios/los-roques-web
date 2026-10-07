@@ -9,8 +9,8 @@ const sin = d => Math.sin(d * RAD), cos = d => Math.cos(d * RAD);
 
 /**
  * Moon position for a Date. Returns degrees: right ascension and declination, azimuth clockwise from true
- * north and elevation above the horizon as seen from the site (parallax included), and the lit share of its
- * disc (0 new .. 1 full).
+ * north and elevation above the horizon as seen from the site (parallax included), its hour angle (0 as it
+ * crosses the meridian, growing 14.5 degrees an hour), and the lit share of its disc (0 new .. 1 full).
  */
 export function moonPosition(date, lat = SITE.lat, lon = SITE.lon) {
   const d = date.getTime() / 86400000 + 2440587.5 - 2451545, T = d / 36525;
@@ -28,7 +28,7 @@ export function moonPosition(date, lat = SITE.lat, lon = SITE.lon) {
   elevation -= 0.95 * cos(elevation);                       // the moon is near: seen from the surface it stands almost a degree lower
   // The lit share, from how far round the sky it is from the sun.
   const M = 357.529 + 35999.05 * T, sun = 280.459 + 36000.77 * T + 1.915 * sin(M) + 0.02 * sin(2 * M);
-  return { ra, dec, azimuth, elevation, illuminated: (1 - cos(b) * cos(l - sun)) / 2 };
+  return { ra, dec, azimuth, elevation, hourAngle: ha, illuminated: (1 - cos(b) * cos(l - sun)) / 2 };
 }
 
 /** The day of a month ('YYYY-MM-DD') on which the moon is fullest at local midnight. `month` 0-11. */

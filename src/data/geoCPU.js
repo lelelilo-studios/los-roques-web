@@ -12,9 +12,10 @@ export function bspline(f, out = [0, 0, 0, 0]) {
 }
 
 /** Height of a sand shore at signed distance s from the waterline (s > 0 seaward). Same as lrShoreProfile. */
-export function shoreProfile(s, mapHeight) {
+export function shoreProfile(s, mapHeight, bermMin = 0.22) {
   if (s >= 0) return -0.11 * s / (1 + 0.22 * s) - Math.max(s - 4, 0) * 0.02;
-  const berm = Math.min(1, Math.max(0.3, mapHeight * 1.2 + 0.05));
+  let berm = Math.min(1, Math.max(0.22, mapHeight * 1.2 + 0.05));
+  if (bermMin < 0.2199) berm = Math.min(berm, bermMin);       // (on the sandbar of Cayo de Agua: its own crest height)
   return berm * (1 - Math.exp(s * 0.11 / berm));
 }
 
@@ -24,7 +25,21 @@ export class Ground {
    * @param {{raw: Uint16Array, width: number, height: number, scale: number, offset: number}} shore
    * @param {{x: number, z: number, w: number, h: number}} rect  world rectangle of the maps
    */
-  constructor(height, shore, rect) { Object.assign(this, { height, shore, rect }); this.cover = {}; }
+  constructor(height, shore, rect) {
+    Object.assign(this, { height, shore, rect });
+    this.cover = {};
+    /** The sandbar of Cayo de Agua, lower than any beach: { a: [x, z], b: [x, z], reach (m), crest (m) }, or null (lrBermMinAt in lr_geo). */
+    this.sandbar = null;
+  }
+
+  /** The lowest a berm can be at a point: 0.22 m, less along the sandbar. */
+  bermMinAt(x, z) {
+    const bar = this.sandbar;
+    if (!bar) return 0.22;
+    const abx = bar.b[0] - bar.a[0], abz = bar.b[1] - bar.a[1], apx = x - bar.a[0], apz = z - bar.a[1];
+    const along = Math.min(0.94, Math.max(0.06, (apx * abx + apz * abz) / (abx * abx + abz * abz)));
+    return bar.crest + (0.22 - bar.crest) * smoothstep(0.5 * bar.reach, bar.reach, Math.hypot(apx - abx * along, apz - abz * along));
+  }
 
   /**
    * One texel (0..1 per channel) of an 8-bit RGBA map given to `this.cover` (`land`: mangrove, scrub, built-up,
@@ -84,6 +99,19 @@ export class Ground {
     return g ? { x, z, yaw: Math.atan2(g.x, -g.z) * 180 / Math.PI } : null;
   }
 
+  /**
+   * The middle of a sand bar: from a point on it, the nearby point furthest from the water on either side
+   * (found by walking up the shore-distance field until it levels off, as it does along a ridge).
+   */
+  ridge(x, z) {
+    for (let i = 0; i < 80; i++) {
+      const g = this.seaward(x, z, 2);
+      if (!g || g.slope < 0.2) break;
+      x -= g.x * 0.6; z -= g.z * 0.6;
+    }
+    return { x, z };
+  }
+
   /** Ground height above mean sea level at world x/z: what lrGround gives in the shader at full detail. */
   heightAt(x, z) {
     const u = (x - this.rect.x) / this.rect.w, v = (z - this.rect.z) / this.rect.h;
@@ -91,6 +119,6 @@ export class Ground {
     const e = Math.max(Math.abs(u - 0.5), Math.abs(v - 0.5)) * 2, inside = 1 - smoothstep(0.985, 1, e);
     const h = -64 + (this.sample(this.height, u, v) + 64) * inside, s = 300 + (this.sample(this.shore, u, v) - 300) * inside;
     const w = 1 - smoothstep(25, 60, Math.abs(s));
-    return h + (shoreProfile(s, h) - h) * w;
+    return h + (shoreProfile(s, h, this.bermMinAt(x, z)) - h) * w;
   }
 }

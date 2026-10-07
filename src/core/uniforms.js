@@ -21,6 +21,7 @@ export const shared = {
   uShadowZ: { value: new THREE.Vector2(100, 0) },         // depth of the shadow map along the light (m), 1 if the depth buffer is reversed
   uCamTexel: { value: new THREE.Vector4() },
   uCamTexelShore: { value: new THREE.Vector4() },
+  uSandbar: { value: new THREE.Vector4() }, uSandbarP: { value: new THREE.Vector2(0, 0.22) },
   uLift: { value: new THREE.Vector2(2e-4, 0) },   // how far the sea's mesh rides above the beach face: per metre, per metre squared
   uSeaLevel: { value: 0 },
   uTime: { value: 0 },
@@ -78,7 +79,7 @@ export function uniformsFor(names, own = {}) {
 /** Names that the chunks declare, grouped by chunk, so materials list what they include. */
 export const CHUNK_UNIFORMS = {
   common: ['uCamXZ', 'uCamMod', 'uCamY', 'uMapRect', 'uSeaLevel', 'uTime', 'uInvEarthR', 'uSunDir', 'uSunE', 'uSkyE', 'uNearFar', 'uInvResolution'],
-  geo: ['tHeight', 'tShore', 'uMapTexels', 'uMpp', 'uCamTexel', 'uCamTexelShore'],
+  geo: ['tHeight', 'tShore', 'uMapTexels', 'uMpp', 'uCamTexel', 'uCamTexelShore', 'uSandbar', 'uSandbarP'],
   shore: ['uLift'],
   detail: ['tDetail', 'uDetailMean', 'uFoot', 'uFootCount'],
   rings: ['uRing'],

@@ -36,7 +36,7 @@ import { Boats } from './world/boats.js';
 import { Birds } from './world/birds.js';
 import { buildBeachSets } from './world/beach.js';
 import { localDate, sunDirection, sunPosition, sunTimes } from './world/sun.js';
-import { conditions } from './world/weather.js';
+import { CLIMATE, conditions, tide } from './world/weather.js';
 import { fetchLiveWeather } from './world/liveWeather.js';
 import { buildPanel, buildWalkHud } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
@@ -110,13 +110,14 @@ export async function start(canvas, onProgress = () => {}) {
       });
     }
     const date = localDate(dayOf(env.month), env.hours);
-    const sun = env.sunOverride || sunPosition(date), times = sunTimes(date), c = conditions(env.weather, env.month, env.hours, env.live);
+    const moon = moonPosition(date);
+    const sun = env.sunOverride || sunPosition(date), times = sunTimes(date), c = conditions(env.weather, env.month, moon.hourAngle, env.live);
     shared.uSunDir.value.fromArray(sunDirection(sun.azimuth, sun.elevation, env.sunOverride ? 0 : convergence));
     // After dark the moon takes the sun's place in the sky and in the lighting (shadows, glitter, the lit side of
     // clouds). Its light is the sun's, some four hundred thousand times weaker, which the eye's adaptation
     // (the night exposure) mostly takes up; what is left is a dim, blue-tinged day. The last twilight fades out
     // between 10 and 11.5 degrees of sun below the horizon, and the moonlight comes in by 13.
-    const moon = moonPosition(date), dusk = Math.min(1, Math.max(0, (-10 - sun.elevation) / 3)), toa = shared.uSunToa.value;
+    const dusk = Math.min(1, Math.max(0, (-10 - sun.elevation) / 3)), toa = shared.uSunToa.value;
     toa.set(10, 10, 10);
     if (!env.sunOverride && dusk > 0) {
       const up = Math.min(1, Math.max(0, (moon.elevation + 1) / 5)), light = 0.022 * Math.pow(moon.illuminated, 1.6) * up * Math.max(0, 2 * dusk - 1);
@@ -137,11 +138,19 @@ export async function start(canvas, onProgress = () => {}) {
 
   // ---- places, labels, controls
   const features = data.features || {};
+  // The sandbar of Cayo de Agua stands lower than any beach: at an autumn high water the sea covers it, the rest
+  // of the time it is a strip of sand between two seas (see lrBermMin in lr_geo).
+  const BAR_CREST = 0.1;
+  if (features.tombolo?.crest?.length > 1) {
+    const c = features.tombolo.crest, a = c[0], b = c[c.length - 1];
+    ground.sandbar = { a, b, reach: 30, crest: BAR_CREST };
+    shared.uSandbar.value.set(a[0], a[1], b[0], b[1]); shared.uSandbarP.value.set(30, BAR_CREST);
+  }
   const places = (features.places || []).filter(p => p.pos);
   if (!places.some(p => p.id === 'overview')) places.unshift(OVERVIEW);
 
   // ---- the opaque scene: terrain, buildings and lighthouses, boats
-  const landmarks = new Landmarks(features, ground, material => buildBeachSets(places, ground, material));
+  const landmarks = new Landmarks(features, ground, material => buildBeachSets(places, ground, material, features.tombolo));
   const boats = new Boats(places, ground, waves, data.cpu.waveMap, rect, landmarks.material);
   const opaque = new THREE.Scene();
   opaque.matrixWorldAutoUpdate = false;
@@ -250,7 +259,18 @@ export async function start(canvas, onProgress = () => {}) {
    * set up umbrellas, a few steps up the beach from the nearest of them, looking out to sea past it: you arrive
    * among things whose size you know (an umbrella, loungers, people, the boats beyond).
    */
+  /**
+   * Where the site opens: standing on the sandbar of Cayo de Agua, a third of the way along it from the main
+   * cay, looking down its length between the two seas to West Cay and its lighthouse.
+   */
+  function sandbarSpot() {
+    const crest = features.tombolo?.crest || [];
+    if (crest.length < 8) return null;
+    const a = ground.ridge(...crest[Math.round(crest.length * 0.22)]), b = ground.ridge(...crest[Math.round(crest.length * 0.75)]);
+    return { x: a.x, z: a.z, yaw: Math.atan2(b.x - a.x, -(b.z - a.z)) * 180 / Math.PI + 6, pitch: -6 };
+  }
   function arrivalSpot(place) {
+    if (place.id === 'cayo-de-agua-isthmus' && sandbarSpot()) return sandbarSpot();
     const spot = walkSpotFor(place);
     if (spot.near !== place.pos) return spot;               // (a spot chosen by hand)
     const u = landmarks.umbrellas.map(q => [Math.hypot(q[0] - place.pos[0], q[1] - place.pos[1]), q]).sort((a, b) => a[0] - b[0])[0];
@@ -286,7 +306,7 @@ export async function start(canvas, onProgress = () => {}) {
         spot = place && place[0] < 900 ? arrivalSpot(place[1]) : { x: t.x, z: t.z, yaw: rig.yaw * 180 / Math.PI };
       }
       // ({ place: id }: where "Walk here" puts you down at that place.)
-      if (spot.place) { const q = places.find(v => v.id === spot.place); if (q) { const { place: _, ...rest } = spot; spot = { ...arrivalSpot(q), ...rest }; } }
+      if (spot.place) { const q = places.find(v => v.id === spot.place); if (q) { const { place: _, face, ...rest } = spot, there = arrivalSpot(q); spot = { ...there, ...rest, ...(face !== undefined ? (there.yaw !== undefined ? { yaw: there.yaw + face } : { face }) : {}) }; } }
       if (spot.pier) {
         // "So many metres out along the pier whose landward end is nearest this point, facing out to sea."
         const q = pierAt.spot(spot.pier, spot.along ?? 8);
@@ -473,8 +493,19 @@ export async function start(canvas, onProgress = () => {}) {
 
   if (!params.freeze) {
     // Opening: glide down from the overview to the first place, unless the link asked for a view or motion is unwelcome.
-    const first = places.find(p => p.id === 'madrisqui-cayo-pirata') || places.find(p => p.id !== 'overview');
-    if (first && !fromLink && !matchMedia('(prefers-reduced-motion: reduce)').matches) rig.flyTo(shotFor(first), 9);
+    // Opening: you are standing on the sandbar of Cayo de Agua late in the morning, the tide coming in (unless
+    // the link asked for a view of its own). "Back to the air" lifts you off; the places are in the panel.
+    const bar = fromLink ? null : sandbarSpot();
+    if (bar) {
+      // (The hour, between nine and one, at which the rising tide first brings the sea to within a finger's
+      // breadth of the bar's crest: the waves of the two seas meet along it. In the months when the sea
+      // never gets that high, high water: a dry strip between them.)
+      let hour = 13;
+      for (let h = 9; h < 13; h += 0.1) {
+        if (CLIMATE.seaLevel[env.month] + tide(moonPosition(localDate(dayOf(env.month), h)).hourAngle) > BAR_CREST - 0.015) { hour = h; break; }
+      }
+      env.hours = hour; applyEnv(); app.setWalk(true, bar, true);
+    }
     let lastFrame = performance.now();
     const loop = now => {
       const dt = Math.min(0.1, (now - clock.last) / 1000);

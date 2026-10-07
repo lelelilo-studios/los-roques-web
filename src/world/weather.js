@@ -17,8 +17,12 @@ export const CLIMATE = {
   seaLevel: [0.0, -0.03, -0.07, -0.12, -0.14, -0.14, -0.12, -0.10, -0.02, 0.04, 0.04, 0.02],
 };
 
-/** Tide at a local clock hour, metres: Los Roques is microtidal (about 0.26 m between high and low water). */
-export const tide = hours => 0.13 * Math.sin(2 * Math.PI * (hours - 2.5) / 12.42);
+/**
+ * The tide, metres: Los Roques is microtidal (about 0.26 m between high and low water). High water follows
+ * the moon, about an hour after it crosses the meridian above or below (`moonHourAngle` in degrees): around
+ * a full moon that is early afternoon and the small hours, with low water after dawn and after dusk.
+ */
+export const tide = moonHourAngle => 0.13 * Math.cos(2 * (moonHourAngle - 15) * Math.PI / 180);
 
 /** Weather presets. `wind` null = the month's normal trade wind. haze scales the aerosol in the air. */
 export const WEATHER = {
@@ -33,12 +37,12 @@ const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', '
 export const compass = deg => COMPASS[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16];
 export const knots = ms => ms * 1.94384;
 
-/** Resolves a preset for a month (0-11) into numbers. */
-export function conditions(preset, month, hours = 12, live = null) {
+/** Resolves a preset for a month (0-11) into numbers; `moonHourAngle` (degrees) sets the tide. */
+export function conditions(preset, month, moonHourAngle = 15, live = null) {
   const w = WEATHER[preset] || WEATHER.trade;
   const c = {
     wind: w.wind ?? CLIMATE.wind[month], windFrom: CLIMATE.windFrom[month], haze: w.haze, cloud: w.cloud,
-    sea: CLIMATE.sea[month], airMax: CLIMATE.airMax[month], seaLevel: CLIMATE.seaLevel[month] + tide(hours), live: false, rain: w.rain || 0,
+    sea: CLIMATE.sea[month], airMax: CLIMATE.airMax[month], seaLevel: CLIMATE.seaLevel[month] + tide(moonHourAngle), live: false, rain: w.rain || 0,
   };
   if (preset === 'live' && live) {
     // What it is doing there right now (cloud capped so the islands stay visible from the air).

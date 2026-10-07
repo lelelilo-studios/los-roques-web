@@ -31,7 +31,7 @@ export class Tubes {
    * A tube from a to b. Radii are [across, fore-and-aft] at each end, so trunks can be wider than deep; the
    * rings lie square to the tube's axis, turned so that "across" stays the body's x.
    */
-  tube(a, b, ra, rb, ca, cb = ca) {
+  tube(a, b, ra, rb, ca, cb = ca, leanA = null, leanB = null) {
     const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], len = Math.hypot(dx, dy, dz) || 1e-6, wx = dx / len, wy = dy / len, wz = dz / len;
     // u = the body's x made square to the axis, v = axis x u.
     let ux = 1 - wx * wx, uy = -wx * wy, uz = -wx * wz;
@@ -39,13 +39,14 @@ export class Tubes {
     ux /= ul; uy /= ul; uz /= ul;
     const vx = wy * uz - wz * uy, vy = wz * ux - wx * uz, vz = wx * uy - wy * ux;
     // (Where the tube narrows, its skin faces partly along it: a shoulder sloping to the neck faces up.)
-    const lean = ((ra[0] + ra[1]) - (rb[0] + rb[1])) / (2 * len), ring = RING;
+    const own = ((ra[0] + ra[1]) - (rb[0] + rb[1])) / (2 * len), ring = RING;
     // Both end rings once (position and normal of each point), then the quads between them: this runs for
     // every limb of everyone near you each frame, so nothing is allocated here.
     for (let k = 0, o = 0; k <= SIDES; k++) {
       const c = COS[k], sn = SIN[k];
       for (let e = 0; e < 2; e++, o += 6) {
         const p = e ? b : a, r = e ? rb : ra, cr = c * r[0], sr = sn * r[1], nc = c / r[0], ns = sn / r[1], nl = Math.hypot(nc, ns) || 1;
+        const lean = (e ? leanB : leanA) ?? own;
         const nx = (ux * nc + vx * ns) / nl + wx * lean, ny = (uy * nc + vy * ns) / nl + wy * lean, nz = (uz * nc + vz * ns) / nl + wz * lean, l = Math.hypot(nx, ny, nz) || 1;
         ring[o] = p[0] + ux * cr + vx * sr; ring[o + 1] = p[1] + uy * cr + vy * sr; ring[o + 2] = p[2] + uz * cr + vz * sr;
         ring[o + 3] = nx / l; ring[o + 4] = ny / l; ring[o + 5] = nz / l;
@@ -63,6 +64,20 @@ export class Tubes {
     }
     this.n += SIDES * 6;
   }
+  /**
+   * Consecutive tubes through `pts`, with a radius pair per point and a colour per stretch. The slant of the
+   * skin is shared at the joints, so the light does not jump from one stretch to the next (a trunk built of
+   * separate tubes showed as bands).
+   */
+  chain(pts, radii, colours) {
+    const n = pts.length - 1, lean = [];
+    for (let i = 0; i < n; i++) {
+      const len = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]) || 1e-6;
+      lean.push(((radii[i][0] + radii[i][1]) - (radii[i + 1][0] + radii[i + 1][1])) / (2 * len));
+    }
+    for (let i = 0; i < n; i++) this.tube(pts[i], pts[i + 1], radii[i], radii[i + 1], colours[i], colours[i], i ? (lean[i - 1] + lean[i]) / 2 : lean[i], i < n - 1 ? (lean[i] + lean[i + 1]) / 2 : lean[i]);
+  }
+
   /** A rounded end on a tube (a low cone of triangles to a point just beyond b). */
   cap(a, b, r, colour, bulge = 0.6) {
     const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], len = Math.hypot(d[0], d[1], d[2]) || 1e-6, w = [d[0] / len, d[1] / len, d[2] / len];
@@ -148,10 +163,9 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
     const knee = reach(hipJ, ankle, THIGH, SHIN, [side * 0.12 * (1 + crouch), 0, -1]);
     const hem = [hipJ[0] + (knee[0] - hipJ[0]) * 0.55, hipJ[1] + (knee[1] - hipJ[1]) * 0.55, hipJ[2] + (knee[2] - hipJ[2]) * 0.55];
     t.tube(hipJ, hem, [0.088, 0.092], [0.074, 0.076], SHORTS);
-    t.tube(hem, knee, [0.07, 0.072], [0.056, 0.058], SKIN);
+    t.tube(hem, knee, [0.07, 0.072], [0.055, 0.057], SKIN);
     const calf = [knee[0] + (ankle[0] - knee[0]) * 0.35, knee[1] + (ankle[1] - knee[1]) * 0.35, knee[2] + (ankle[2] - knee[2]) * 0.35 + 0.012];
-    t.tube(knee, calf, [0.054, 0.056], [0.052, 0.058], SKIN);
-    t.tube(calf, ankle, [0.052, 0.058], [0.034, 0.038], SKIN);
+    t.chain([knee, calf, ankle], [[0.055, 0.057], [0.052, 0.058], [0.034, 0.038]], [SKIN, SKIN]);
     t.foot(ankle, [side * 0.12, -0.993], SKIN);
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
@@ -172,14 +186,10 @@ export function poseBody(t, h, { phase, stride, eye, look = 0, colours = {}, slo
   // The trunk: seat, hips, waist, chest, shoulders, up to the base of the neck.
   const on = k => [0, hip[1] + (shoulder[1] - hip[1]) * k, hip[2] + (shoulder[2] - hip[2]) * k];
   const seat = [0, hip[1] - 0.09, hip[2] + 0.01];
-  t.tube(seat, on(0.04), [0.15, 0.1], [0.172, 0.118], SHORTS);
-  t.tube(on(0.04), on(0.2), [0.172, 0.118], [0.16, 0.112], SHORTS);
-  t.tube(on(0.2), on(0.42), [0.162, 0.114], [0.148, 0.106], SHIRT);
-  t.tube(on(0.42), on(0.74), [0.148, 0.106], [0.172, 0.12], SHIRT);
-  t.tube(on(0.74), on(0.9), [0.172, 0.12], [0.168, 0.112], SHIRT);
   // (The shoulders slope up to the neck; the collar closes the trunk, so looking down you see your shirt, not into it.)
   const collar = [0, sy + 0.07, shoulder[2] - 0.012 - 0.03 * crouch], neck = [0, sy + 0.1, collar[2]];
-  t.tube(on(0.9), collar, [0.168, 0.112], [0.07, 0.066], SHIRT);
+  t.chain([seat, on(0.04), on(0.2), on(0.42), on(0.74), on(0.9), collar],
+    [[0.15, 0.1], [0.172, 0.118], [0.161, 0.113], [0.148, 0.106], [0.172, 0.12], [0.168, 0.112], [0.07, 0.066]], [SHORTS, SHORTS, SHIRT, SHIRT, SHIRT, SHIRT]);
   t.cap(on(0.9), collar, [0.07, 0.066], SHIRT, 0.25);
   t.cap(on(0.04), seat, [0.15, 0.1], SHORTS, 0.35);
 
@@ -239,9 +249,8 @@ export function poseSwim(t, h, { stroke, under = 0 }) {
     const ankle = lerp3(straight, up, drawn), knee = reach(hipJ, ankle, THIGH, SHIN, [side * 0.9, -0.5, -0.2]);
     const hem = lerp3(hipJ, knee, 0.55), calf = lerp3(knee, ankle, 0.35);
     t.tube(hipJ, hem, [0.088, 0.092], [0.074, 0.076], SHORTS);
-    t.tube(hem, knee, [0.07, 0.072], [0.056, 0.058], SKIN);
-    t.tube(knee, calf, [0.054, 0.056], [0.052, 0.058], SKIN);
-    t.tube(calf, ankle, [0.052, 0.058], [0.034, 0.038], SKIN);
+    t.tube(hem, knee, [0.07, 0.072], [0.055, 0.057], SKIN);
+    t.chain([knee, calf, ankle], [[0.055, 0.057], [0.052, 0.058], [0.034, 0.038]], [SKIN, SKIN]);
     // (The foot trails along the shin, toes pointed.)
     const shin = [ankle[0] - knee[0], ankle[1] - knee[1], ankle[2] - knee[2]], sl = Math.hypot(...shin) || 1;
     const toes = [ankle[0] + shin[0] / sl * 0.21 + side * 0.03 * drawn, ankle[1] + shin[1] / sl * 0.21, ankle[2] + shin[2] / sl * 0.21];
@@ -250,13 +259,9 @@ export function poseSwim(t, h, { stroke, under = 0 }) {
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
   }
   const on = k => lerp3(hip, chest, k), seat = lerp3(hip, chest, -0.18);
-  t.tube(seat, on(0.04), [0.15, 0.1], [0.172, 0.118], SHORTS);
-  t.tube(on(0.04), on(0.2), [0.172, 0.118], [0.16, 0.112], SHORTS);
-  t.tube(on(0.2), on(0.42), [0.162, 0.114], [0.148, 0.106], SHIRT);
-  t.tube(on(0.42), on(0.74), [0.148, 0.106], [0.172, 0.12], SHIRT);
-  t.tube(on(0.74), on(1.0), [0.172, 0.12], [0.168, 0.11], SHIRT);
   const collar = [0, -0.09, 0.07];
-  t.tube(on(1.0), collar, [0.168, 0.11], [0.07, 0.066], SHIRT);
+  t.chain([seat, on(0.04), on(0.2), on(0.42), on(0.74), on(1.0), collar],
+    [[0.15, 0.1], [0.172, 0.118], [0.161, 0.113], [0.148, 0.106], [0.172, 0.12], [0.168, 0.11], [0.07, 0.066]], [SHORTS, SHORTS, SHIRT, SHIRT, SHIRT, SHIRT]);
   t.cap(on(1.0), collar, [0.07, 0.066], SHIRT, 0.25);
   t.cap(on(0.04), seat, [0.15, 0.1], SHORTS, 0.35);
   // The head, round the eye (only ever drawn into the shadow map).

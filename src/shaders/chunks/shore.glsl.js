@@ -65,6 +65,9 @@ LrSwash lrBeach(vec2 wxz, float shore, float hs, float a, float fine) {
   s.open = lrOpenWater(wxz, shore);
   // (Flat sand: how much further from the waterline this point is than a beach face would put it.)
   float flat_ = max(-shore - max(a, 0.0) / 0.08, 0.0), R = lrRunup(hs) * fine * mix(0.1, 1.0, s.open), run = R / 0.11 + 0.3;
+  // (Over sand that is barely above still water the sheet runs on four times as far: a low bar is washed right
+  // across, and the waves from its two sides meet along its middle.)
+  run *= 1.0 + 3.0 * (1.0 - lrSaturate(max(a, 0.0) / max(R, 1e-4)));
   R *= 1.0 - smoothstep(1.2 * run, 3.0 * run, flat_);
   // Neighbouring stretches are out of step (noise along the shore), so the edge of the sea is scalloped.
   float c = uTime / LR_SWASH_T - lrShoreLag(wxz) + (2.2 * (sqrt(max(shore, 0.0) + 1.0) - 1.0) - flat_ / 1.5) / LR_SWASH_T;

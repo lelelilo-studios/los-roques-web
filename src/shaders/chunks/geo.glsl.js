@@ -13,6 +13,19 @@ uniform vec4 uMapTexels;     // xy = height map size in texels, zw = shore map s
 uniform float uMpp;          // metres per texel of the height map
 uniform vec4 uCamTexel;      // the camera's place in the height map: xy = whole texels, zw = the fraction (split in doubles on the CPU)
 uniform vec4 uCamTexelShore; // the same in the shore map (which may be finer than the height map)
+uniform vec4 uSandbar;       // the sandbar of Cayo de Agua: the two ends of its crest (world xz, xz)
+uniform vec2 uSandbarP;      // how far to either side it reaches (m; 0 = none), and the height of its crest (m)
+
+// The lowest a beach's berm can be: 0.22 m, so that no beach is under still water at the highest tide
+// (+0.17 m); except along the sandbar of Cayo de Agua, which is lower than any beach and goes under at an
+// autumn high water. Set by lrGround / lrGroundFine for the point in hand before the profile is taken.
+float lrBermMin = 0.22;
+float lrBermMinAt(vec2 wxz) {
+  if (uSandbarP.x <= 0.0) return 0.22;
+  vec2 ab = uSandbar.zw - uSandbar.xy, ap = wxz - uSandbar.xy;
+  float along = clamp(dot(ap, ab) / dot(ab, ab), 0.06, 0.94);            // (its roots at either end are the cays' own beaches)
+  return mix(uSandbarP.y, 0.22, smoothstep(0.5 * uSandbarP.x, uSandbarP.x, length(ap - ab * along)));
+}
 
 // Bicubic B-spline with four bilinear taps (the texture must be linear-filtered, single channel).
 float lrBicubic(sampler2D tex, vec2 uv, vec2 size) {
@@ -27,11 +40,11 @@ float lrBicubic(sampler2D tex, vec2 uv, vec2 size) {
 
 // Height of a sand shore at signed distance s from the waterline (s > 0 is seaward), relative to mean sea level.
 // Land side: rises at 0.11 m/m and levels off at a berm whose height follows the mapped ground there, between
-// 0.3 and 1 m: no beach is flooded by the tide alone (the highest sea level is +0.17 m), but on a sand spit
-// as low as the Cayo de Agua isthmus the swash of a high tide runs right across.
+// 0.22 and 1 m (lower along the sandbar of Cayo de Agua: see lrBermMin).
 // Sea side: a step to -0.5 m a few metres out, then a 1:50 terrace.
 float lrShoreProfile(float s, float mapHeight) {
-  float berm = clamp(mapHeight * 1.2 + 0.05, 0.3, 1.0);
+  float berm = clamp(mapHeight * 1.2 + 0.05, 0.22, 1.0);
+  berm = min(berm, mix(1.0, lrBermMin, step(lrBermMin, 0.2199)));       // (on the sandbar: its own crest height)
   float up = berm * (1.0 - exp(min(s, 0.0) * 0.11 / berm));
   float dn = -0.11 * s / (1.0 + 0.22 * max(s, 0.0)) - max(s - 4.0, 0.0) * 0.02;
   return s < 0.0 ? up : dn;
@@ -54,6 +67,7 @@ float lrGround(vec2 wxz, float cell, out float shore) {
   float inside = 1.0 - smoothstep(0.985, 1.0, max(e.x, e.y));
   h = mix(-64.0, h, inside);
   shore = mix(300.0, shore, inside);
+  lrBermMin = lrBermMinAt(wxz);
   return lrGroundBlend(h, shore);
 }
 
@@ -106,6 +120,7 @@ float lrGroundFine(vec2 rel, out float shore, out vec3 normal) {
   float inside = 1.0 - smoothstep(0.985, 1.0, max(e.x, e.y));
   h = vec3(mix(-64.0, h.x, inside), h.yz * inside); s = vec3(mix(300.0, s.x, inside), s.yz * inside);
   shore = s.x;
+  lrBermMin = lrBermMinAt(uCamXZ + rel);
   const float d = 0.25;
   float gx = lrGroundBlend(h.x + h.y * d, s.x + s.y * d) - lrGroundBlend(h.x - h.y * d, s.x - s.y * d);
   float gz = lrGroundBlend(h.x + h.z * d, s.x + s.z * d) - lrGroundBlend(h.x - h.z * d, s.x - s.z * d);
@@ -114,7 +129,9 @@ float lrGroundFine(vec2 rel, out float shore, out vec3 normal) {
 }
 
 // How much of the close-up ground a pixel with a footprint of 'px' metres gets (1 near, 0 from afar).
-float lrGroundNear(float px) { return 1.0 - smoothstep(0.1, 0.2, px); }
+// (Out to some 40 m from a standing eye: on sand as flat as a bar the waterline and the wet line wander by
+// metres for a centimetre of height, and the cheap lookup's steps showed as a sawtooth.)
+float lrGroundNear(float px) { return 1.0 - smoothstep(0.5, 1.0, px); }
 
 // Ground height, shore distance and normal for a pixel: the exact version close up, the cheap one from afar,
 // blended in between. With farNormal false the normal from afar is simply 'up' (four ground lookups saved).
