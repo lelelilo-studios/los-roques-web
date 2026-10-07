@@ -17,6 +17,7 @@ import { Hand } from './world/hand.js';
 import { Figure, loadFigure } from './world/figure.js';
 import { FigureRig } from './world/figurepose.js';
 import { SandPatch } from './sim/patch.js';
+import { Ripples } from './sim/ripples.js';
 import { Terrain } from './world/terrain.js';
 import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
@@ -30,7 +31,7 @@ import { buildConchMounds, buildShoreLife } from './world/shorelife.js';
 import { buildPlants } from './world/plants.js';
 import { Sound, measure, runup } from './audio/ambience.js';
 import { fullMoonDay, moonPosition } from './world/moon.js';
-import { shoreCrest } from './data/shoreCPU.js';
+import { shoreCrest, swashPhase } from './data/shoreCPU.js';
 import { createObjectMaterial } from './world/landmarks.js';
 import { pierWalk } from './world/piers.js';
 import { Body } from './world/body.js';
@@ -209,7 +210,10 @@ export async function start(canvas, onProgress = () => {}) {
   // Your real body (world/figure.js: a woman of 1.63 m, built by pipeline/body). Until its files have come, and
   // on the simplest tier, you are the figure of tubes; once they have, the tubes only do the solving: the same
   // gait and reach, worked out with her proportions, are handed to her bones (figurepose.js).
-  let figure = null, figureRig = null, patch = null, pressing = null;
+  let figure = null, figureRig = null, patch = null, pressing = null, ripples = null, crossing = null;
+  // How far your feet have sunk as the wash drew the sand from under them (metres), and how the water runs past you (m/s).
+  let sunk = 0;
+  const flow = [0, 0];
   const figureReady = tierName === 'low' || params.tubes ? Promise.resolve(false) : loadFigure(manifest.compressed === 'gzip').then(data => {
     const u = body.mesh.material.uniforms;
     figure = new Figure(data, tier.fp.shadowTaps || 4, { uBodyWet: u.uBodyWet, uBodySand: u.uBodySand, uHandWet: u.uHandWet, uHandSand: u.uHandSand }); figureRig = new FigureRig(data.info);
@@ -220,7 +224,8 @@ export async function start(canvas, onProgress = () => {}) {
     if (walker.body >= was - 0.01) { walker.eyeY += p.stand - walker.body; walker.body = p.stand; }
     opaque.add(figure.mesh);
     // The sand round you as real sand: your body presses into it (sim/patch.js).
-    if (tier.fp.patch && !params.stamps) { patch = new SandPatch(renderer, tier.fp.patch); pressing = patch.toolMaterial(figure.mesh.material.uniforms.tBones); }
+    if (tier.fp.patch && !params.stamps) { patch = new SandPatch(renderer, tier.fp.patch); pressing = patch.toolMaterial(figure.mesh.material.uniforms.tBones);
+      ripples = new Ripples(renderer, patch, 512); crossing = ripples.crossMaterial(figure.mesh.material.uniforms.tBones); }
     return true;
   }).catch(e => { note(`the body model did not load: ${e?.message || e}`); return false; });
   const spray = new Spray();
@@ -235,7 +240,8 @@ export async function start(canvas, onProgress = () => {}) {
     return a < R * 1.02 + 0.02 * Math.min(1, R * 100);
   };
   // Your right hand, taking up sand and water and letting them run out between the fingers (world/hand.js).
-  const hand = new Hand({ spray, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch, ring: (x, z, when, strength) => shared.uRing.value[rings++ % 6].set(wrap64(x), wrap64(z), when, strength) });
+  const hand = new Hand({ spray, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch,
+    ring: (x, z, when, strength) => (ripples ? ripples.drop(x, z, when, strength, 0.022) : shared.uRing.value[rings++ % 6].set(wrap64(x), wrap64(z), when, strength)) });
   // How wet you are: `high` is as far up as the sea has stood round you lately (drying), `now` the water you stand in.
   const soak = { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 };
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
@@ -322,7 +328,8 @@ export async function start(canvas, onProgress = () => {}) {
     const px = step.x + cy * side + sy * ahead, pz = step.z + sy * side - cy * ahead, pace = Math.min(step.stride ?? 1, 1.6);
     if (step.depth > 0.03) {
       // Wading: each pace sends a ring out over the water, and throws up drops where the foot goes in.
-      shared.uRing.value[rings++ % 6].set(wrap64(step.x), wrap64(step.z), clock.time, Math.min(1, 0.4 + step.depth * 2));
+      if (ripples) ripples.drop(px, pz, clock.time, Math.min(1.6, 0.7 + step.depth * 3), 0.07);
+      else shared.uRing.value[rings++ % 6].set(wrap64(step.x), wrap64(step.z), clock.time, Math.min(1, 0.4 + step.depth * 2));
       if (fresh) spray.burst(wrap64(px), ground.heightAt(px, pz) + step.depth, wrap64(pz), clock.time, [-sy, cy], Math.round((6 + 10 * pace) * Math.min(1, step.depth / 0.1)), true, 0.6 + 0.4 * pace);
       return;
     }
@@ -397,7 +404,7 @@ export async function start(canvas, onProgress = () => {}) {
      */
     setWalk(on, pose = null, instant = false) {
       // (Wherever you are put down, your hand is at your side and the sand there is as you found it.)
-      hand.reset(); patch?.reset();
+      hand.reset(); patch?.reset(); ripples?.reset(); sunk = 0;
       if (!on) {
         sound.stop();
         if (rig.mode === 'walk') { rig.setMode('orbit'); walkInput?.release(); }
@@ -576,7 +583,7 @@ export async function start(canvas, onProgress = () => {}) {
       // deepest squat, for the shadow, and left out of the picture: it would be folded through the camera.)
       const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02;
       body.pose({ phase: walker.phase, stride: Math.max(walker.stride, walker.turned), eye: eyeUp, look: walker.look, slope, wade, breath: Math.sin(clock.time * 1.45),
-        pace: speed > 0.3 ? paceLength(speed, walker.crouched, walker.legs) : null, sink: onDeck(walker.x, walker.z) ? 0 : firm ? 0.005 : patch ? 0.018 : 0.011, touch: reach });
+        pace: speed > 0.3 ? paceLength(speed, walker.crouched, walker.legs) : null, sink: onDeck(walker.x, walker.z) ? 0 : (firm ? 0.005 : patch ? 0.018 : 0.011) + sunk, touch: reach });
       posedAt = frames; body.place(walker.eyeY - walker.body, walker.yaw, 0, walker.sway);
       if (figure) {
         // What of her rests on the sand or hangs just over it (for the soft dark under it: terrain.js).
@@ -616,13 +623,26 @@ export async function start(canvas, onProgress = () => {}) {
       for (const c of shared.uContact.value) c.w = 0;
       shared.uLeg.value[0].z = shared.uLeg.value[1].z = 0;
     }
+    // How the water runs past you: up the beach with each wave, more slowly back down. Standing in it, the
+    // backwash draws the sand from under your heels and you sink, a centimetre or two; a step frees you.
+    {
+      const sea = walking && standing && walker.depth > 0.008 && walker.depth < 0.35 ? ground.seaward(walker.x, walker.z) : null;
+      if (sea) {
+        const p = swashPhase(walker.x, walker.z, clock.time, Math.max(ground.shoreAt(walker.x, walker.z), 0)), run = p < 0.28 ? -1.3 * (1 - p / 0.28) : 0.7 * Math.sin(Math.PI * Math.min(1, (p - 0.28) / 0.6));
+        flow[0] = sea.x * run; flow[1] = sea.z * run;
+      } else flow[0] = flow[1] = 0;
+      const still = Math.hypot(walker.vx, walker.vz) < 0.08, pull = Math.hypot(flow[0], flow[1]);
+      // (Each wave that runs past takes a little more; standing on, you stay as deep as you are; moving frees you.)
+      if (dt > 0) sunk = !still ? Math.max(0, sunk - dt * 0.08) : sea ? Math.min(0.026, sunk + dt * 0.012 * pull) : sunk;
+    }
     // The sand round you moves on: pressed by your body where you stand on it, planed by the sea where that runs.
     if (patch) {
       if (walking && !onDeck(walker.x, walker.z)) {
         patch.update(dt, { x: walker.x, z: walker.z, cam: rig.eye, base: footing.heightAt(walker.x, walker.z), time: clock.time, feetWet: feetWet() ? 0.8 : 0,
           meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: pressing }] : [],
           sample: (x, z) => { const g = footing.heightAt(x, z); return [g, wetSandAt(x, z, g) ? 1 : 0, surfaceAt(x, z) - g]; } });
-      } else shared.uPatch.value.w = 0;
+        ripples?.update(dt, { x: walker.x, z: walker.z, time: clock.time, flow, meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: crossing }] : [] });
+      } else { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
     }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
@@ -762,6 +782,8 @@ export async function start(canvas, onProgress = () => {}) {
     },
     /** For tests: where the body's own frame stands in the world (x, z): under the eye, less the head's sway. */
     eyeXZ: () => [rig.eye.x - Math.cos(walker.yaw) * walker.sway, rig.eye.z - Math.sin(walker.yaw) * walker.sway],
+    /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
+    rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
     /** For tests: the sand round you at a place: [height gained or lost (m), dampness, in transit (m), pressed]. */
     patchAt: (x, z) => (patch ? patch.read(x, z) : null),
     /** For tests: whether you have the real body, and its size. */
@@ -865,13 +887,14 @@ export async function start(canvas, onProgress = () => {}) {
     /** Renders a frame and returns it as a PNG data URL. */
     capture() { frame(0); return canvas.toDataURL('image/png'); },
     /** Average milliseconds per frame over n frames, each finished on the GPU before the next starts. */
-    bench(n = 60) {
+    /** Mean milliseconds a frame over n frames. `live`: with time passing (the simulations near you run too: sand, ripples, what you hold). */
+    bench(n = 60, live = false) {
       // Reading a pixel back is what really waits for the GPU (gl.finish returns early in Chromium).
       const gl = renderer.getContext(), px = new Uint8Array(4);
       const sync = () => { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
       frame(0); sync();
       const t0 = performance.now();
-      for (let i = 0; i < n; i++) { clock.time += 1 / 60; frame(0); sync(); }
+      for (let i = 0; i < n; i++) { clock.time += 1 / 60; frame(live ? 1 / 60 : 0); sync(); }
       return (performance.now() - t0) / n;
     },
     info() {

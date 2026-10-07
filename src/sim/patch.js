@@ -150,6 +150,7 @@ export class SandPatch {
       tPrev: { value: null }, tTool: { value: this.tool.texture }, tGround: { value: this.grid }, uCentre: { value: new THREE.Vector2() }, uL: { value: this.L }, uN: { value: size },
       uDt: { value: 0 }, uFeetWet: { value: 0 }, uStride: { value: 5 }, uDrop: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) }, uDropWet: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) },
     });
+    /** (Shared with sim/ripples.js: the window's middle relative to the camera, the base height, half its length.) */
     this.toolUniforms = { uToolC: { value: new THREE.Vector3() }, uToolHalf: { value: this.L / 2 } };
     this.clearTool = new Float32Array([1, 0, 0, 0]); this.clearPatch = new Float32Array([0, 0, 0, 0]);
     this.reset();

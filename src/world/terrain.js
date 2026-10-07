@@ -14,6 +14,7 @@ import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
 import { detailGLSL } from './detail.js';
 import { shadowGLSL } from './shadow.js';
 import { patchGLSL } from '../sim/patch.js';
+import { ripplesGLSL } from '../sim/ripples.js';
 
 // Lumpy tops of tree crowns: 1 = average height. Used for the canopy's shape (vertices) and its shading (pixels).
 const crownsGLSL = /* glsl */`
@@ -74,6 +75,7 @@ uniform vec4 uTouchInfo[24]; // for each: when; kind (0 fingers drawn along, 1 a
                              // the hand's heading (1, 4) or the heap's height or how wet (2, 3); how far apart the furrows lie (0) or how wide (2, 3)
 uniform int uTouchCount;
 ${patchGLSL}
+${ripplesGLSL}
 uniform vec4 uContact[8];    // the parts of you on or just over the ground: where (x, z relative to the camera; y absolute) and how big (m)
 uniform vec4 uLeg[3];        // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
@@ -121,7 +123,12 @@ float lrCaustics(vec2 rel, float water, float px) {
     // The ripples round your own legs (the same rings as in the water pass). Through a hand's depth of clear
     // water, seen from above, a ripple hardly shows on the surface: what you see is the rings of light it
     // throws on the sand about your ankles. Curvature of a ring: along the radius, and round it.
-    for (int i = 0; i < 3; i++) {
+    if (uRipple.w > 0.5) {
+      // (As the water has them: sim/ripples.js. How sharply the surface bends is what gathers the light.)
+      vec2 dr = entry + uCamMod.xy;
+      float rip = lrRippleIn(dr) * (1.0 - smoothstep(0.02, 0.05, px));
+      if (rip > 0.0) { vec2 b = lrRippleBend(dr) * rip; float lim = kd * max(abs(b.x), abs(b.y)); h += vec3(b, 0.0) / (1.0 + lim * lim); }
+    } else for (int i = 0; i < 3; i++) {
       if (uLeg[i].z < 0.5) continue;
       vec2 q = mod(entry + uCamMod.xy - uLeg[i].xy + 32.0, 64.0) - 32.0;
       float r = length(q);
@@ -606,7 +613,7 @@ export class Terrain {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg', ...CHUNK_UNIFORMS.touch, ...CHUNK_UNIFORMS.patch]),
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg', ...CHUNK_UNIFORMS.touch, ...CHUNK_UNIFORMS.patch, ...CHUNK_UNIFORMS.ripple]),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

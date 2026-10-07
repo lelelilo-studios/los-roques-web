@@ -9,6 +9,7 @@ import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
 import { detailGLSL } from './detail.js';
 import { shadowGLSL } from './shadow.js';
+import { ripplesGLSL } from '../sim/ripples.js';
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -55,6 +56,7 @@ ${clipmapFragment}
 ${detailGLSL}
 ${shadowGLSL}
 uniform vec4 uRing[6];        // rings you send out wading: x, z (detail coordinates), time, strength
+${ripplesGLSL}
 uniform vec4 uLeg[3];         // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform sampler2D tRefr;      // copy of the opaque scene: rgb = lit bottom reflectance, a = water depth
 uniform sampler2D tWaterType; // 1 = lagoon water, 0 = clear ocean water
@@ -230,8 +232,13 @@ void main() {
   if (aboveStill > 0.0) slope += lrSheetSlope(bedSlope, aboveStill, sw);
   float spray = 0.0;
   if (close > 0.0 && uRain > 0.01 && column > 0.004) slope += lrRainRings(spot + uCamMod.xy, uRain, spray) * close;
-  if (close > 0.0) {
-    // Rings spreading from where you wade: a short train of ripples that widens and fades.
+  if (close > 0.0 && uRipple.w > 0.5) {
+    // The ripples you make, as the water has them (sim/ripples.js).
+    vec2 dr = spot + uCamMod.xy;
+    float rip = lrRippleIn(dr);
+    if (rip > 0.0) slope += lrRippleSlope(dr) * rip * close;
+  } else if (close > 0.0) {
+    // (Without that simulation: rings drawn by rule.) Rings spreading from where you wade: a short train of ripples that widens and fades.
     for (int i = 0; i < 6; i++) {
       float age = uTime - uRing[i].z;
       if (age < 0.0 || age > 5.0) continue;
@@ -366,7 +373,7 @@ export class Water {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-4, 4] });
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4 },
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.ripple, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
         'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
