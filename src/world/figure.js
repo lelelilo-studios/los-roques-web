@@ -128,9 +128,15 @@ void main() {
   // The bikini: where the field is positive. Its edge is a line a pixel wide however near you look; the skin
   // beside it is a little shaded by it, and the cloth has a weave.
   // (Looked for only where the vertices say it is near: not on the arms that hang beside it.)
-  float field = vCloth > -0.019 ? lrCloth(vRest, vRestN) : -1.0;
-  float edge = fwidth(field) + 1e-5, cloth = smoothstep(-edge, edge, field), hem = 1.0 - smoothstep(0.0, 0.004, abs(field));
-  float weave = 0.9 + 0.1 * sin(vRest.x * 2600.0) * sin(vRest.y * 2600.0) + 0.06 * (lrNoise(vRest.xy * 400.0 + vRest.z * 300.0) - 0.5);
+  // (How wide a pixel is, in the field's own terms, is taken from the field itself and held to a centimetre:
+  // taken after the vertices' say-so it leapt wherever that changed, and a pixel there came out half cloth: thin
+  // dashed red lines across her stomach, along the edges of the mesh.)
+  float around = lrCloth(vRest, vRestN), field = vCloth > -0.019 ? around : -1.0;
+  float edge = min(fwidth(around), 0.01) + 1e-5, cloth = smoothstep(-edge, edge, field), hem = 1.0 - smoothstep(0.0, 0.004, abs(field));
+  // (The weave is two and a half millimetres from thread to thread: seen from further off than a pixel can
+  // show that, or at a slant, it is left out. Drawn regardless it made rings and stripes across the cloth.)
+  float thread = 1.0 - smoothstep(0.0005, 0.0012, max(fwidth(vRest.x), fwidth(vRest.y)));
+  float weave = 0.9 + 0.1 * thread * sin(vRest.x * 2600.0) * sin(vRest.y * 2600.0) + 0.06 * (lrNoise(vRest.xy * 400.0 + vRest.z * 300.0) - 0.5);
   // (The skin beside the edge is a little shaded by it, for a few millimetres; the cloth is darker along its hem.)
   vec3 albedo = mix(skin * 0.75 * (1.0 - 0.22 * hem), uClothColour * weave * 0.82 * (1.0 - 0.12 * hem), cloth);
   float nearHand = distance(vRel, uHandWet.xyz), nearLeft = distance(vRel, uHandWetL.xyz);
