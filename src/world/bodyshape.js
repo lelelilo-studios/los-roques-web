@@ -713,7 +713,9 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
   const u = stroke / (2 * Math.PI) - Math.floor(stroke / (2 * Math.PI));
   // (At the surface only the head is out of the water: the shoulders ride a hand's breadth under it, and the
   // arms work below the surface, seen through it. Dived, the body lies in line with the head.)
-  const chest = [0, -0.3 + 0.14 * under, 0.1], sink = 0.34 - 0.3 * under, hip = [0, chest[1] - PROP.torso * sink, chest[2] + PROP.torso * Math.sqrt(1 - sink * sink)];
+  // (The shoulders are where a neck can have them: 21 cm under the eye and a little behind it. At 30 cm, as they
+  // were, the neck was stretched half as long again: seen from the side, a head on a stalk.)
+  const chest = [0, -0.21 + 0.05 * under, 0.11 + 0.06 * under], sink = 0.34 - 0.3 * under, hip = [0, chest[1] - PROP.torso * sink, chest[2] + PROP.torso * Math.sqrt(1 - sink * sink)];
   const joints = { hips: [], knees: [], ankles: [], shoulders: [], elbows: [], wrists: [], hip, chest };
   // How far through each part of the stroke: the pull (hands out and back), the tuck (hands in under the chest,
   // knees drawn up), the reach (hands shoot forward as the legs kick).
