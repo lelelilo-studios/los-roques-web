@@ -23,7 +23,7 @@ const GRID = 13, EVENTS = 4;
 
 const simFragment = /* glsl */`
 precision highp float;
-uniform sampler2D tPrev;
+uniform sampler2D tPrev;      // (always read at its finest level here: textureLod 0)
 uniform sampler2D tTool;      // the lowest skin over each point of the window, above uBase (m); 1 where there is none
 uniform sampler2D tGround;    // over the window: r = the ground above uBase (m), g = sand the sea keeps wet (0..1), b = depth of water over it now (m)
 uniform vec2 uCentre;         // where the window's middle is (detail coordinates)
@@ -38,9 +38,11 @@ float talus(float wet, float under) { return mix(mix(0.65, 3.5, smoothstep(0.15,
 void main() {
   vec2 d = vUv * uL, q = mod(d - uCentre + 0.5 * uL, uL) - 0.5 * uL;
   float cell = uL / uN, e = 1.0 / uN;
-  // Leaving the window: this texel will next be somewhere else. Clean sand.
-  if (max(abs(q.x), abs(q.y)) > 0.5 * uL - 4.0 * cell) { outColor = vec4(0.0); return; }
-  vec4 c = texture(tPrev, vUv);
+  // Leaving the window: this texel will next be somewhere else. Clean sand. (The rim that is wiped is 15 cm
+  // wide: wider than you go in a frame at a run. It was four texels, 8 mm: walking, two rows in three got
+  // through it unwiped, and a print came round again four metres on as a ghost in stripes.)
+  if (max(abs(q.x), abs(q.y)) > 0.5 * uL - 0.15) { outColor = vec4(0.0); return; }
+  vec4 c = textureLod(tPrev, vUv, 0.0);
   vec3 g = texture(tGround, q / uL + 0.5).rgb;
   float under = smoothstep(0.003, 0.012, g.b), wet = max(g.g, c.g), h = c.r, damp = c.g, pressed = min(c.a, 1.0);
 
@@ -53,7 +55,7 @@ void main() {
   // (Eight neighbours, the diagonal ones further off: with four, a heap came out a pyramid.)
   vec2 at[8] = vec2[8](vec2(e, 0.0), vec2(-e, 0.0), vec2(0.0, e), vec2(0.0, -e), vec2(e, e), vec2(-e, e), vec2(e, -e), vec2(-e, -e));
   for (int i = 0; i < 8; i++) {
-    vec4 nb = texture(tPrev, vUv + at[i]);
+    vec4 nb = textureLod(tPrev, vUv + at[i], 0.0);
     if (held || nb.a > 1.5) continue;
     float dh = h - nb.r, most = talus(max(g.g, 0.5 * (c.g + nb.g)), under) * cell * (i < 4 ? 1.0 : 1.4142);
     give += sign(dh) * max(abs(dh) - most, 0.0) * (i < 4 ? 1.0 : 0.7071);
@@ -66,7 +68,7 @@ void main() {
   // a rounded rim. (Hops along the texture's axes, of a few fixed lengths, set it down in rows that far apart:
   // a tread like a tyre's along everything dragged through the sand.)
   vec2 hop = uHop * e, side = vec2(-hop.y, hop.x);
-  float moving = 0.25 * (texture(tPrev, vUv + hop).b + texture(tPrev, vUv - hop).b + texture(tPrev, vUv + side).b + texture(tPrev, vUv - side).b);
+  float moving = 0.25 * (textureLod(tPrev, vUv + hop, 0.0).b + textureLod(tPrev, vUv - hop, 0.0).b + textureLod(tPrev, vUv + side, 0.0).b + textureLod(tPrev, vUv - side, 0.0).b);
 
   // The sea over it: the sheet planes the sand flat and leaves it wet.
   if (under > 0.0) {
@@ -129,10 +131,15 @@ uniform sampler2D tPatch;
 uniform vec4 uPatch;      // the window's middle (detail coordinates), its length (m), 1 = there is a patch
 float lrPatchIn(vec2 d) {
   if (uPatch.w < 0.5) return 0.0;
-  vec2 q = mod(d - uPatch.xy + 0.5 * uPatch.z, uPatch.z) - 0.5 * uPatch.z;
-  return 1.0 - smoothstep(0.42 * uPatch.z, 0.47 * uPatch.z, max(abs(q.x), abs(q.y)));
+  // (How far the point really is from the window's middle: the detail coordinates wrap at 64 m, not at the
+  // window's own length. Taken modulo that length, every place on the beach was 'inside' some copy of it.)
+  vec2 q = mod(d - uPatch.xy + 32.0, 64.0) - 32.0;
+  return 1.0 - smoothstep(0.4 * uPatch.z, 0.455 * uPatch.z, max(abs(q.x), abs(q.y)));
 }
-vec4 lrPatch(vec2 d) { return textureLod(tPatch, d / uPatch.z, 0.0); }
+// (Which level of the patch to read: 0 where a pixel is no bigger than a texel; further off or at a low angle,
+// the level whose texels are a pixel's reach across. Read sharp from afar, a print came out in stripes.)
+float lrPatchLod = 0.0;
+vec4 lrPatch(vec2 d) { return textureLod(tPatch, d / uPatch.z, lrPatchLod); }
 // The height of the sand as it is to be drawn. Where your skin is in it now, the sand lies against the skin at
 // the level of the beach: the hollow under a foot is full of foot, and is seen only when the foot has gone.
 float lrPatchHeight(vec2 d) { vec4 t = lrPatch(d); return t.r * (1.0 - clamp(4.0 * (t.a - 1.0), 0.0, 1.0)); }
@@ -143,7 +150,7 @@ export class SandPatch {
   constructor(renderer, size = 2048) {
     this.renderer = renderer; this.size = size; this.L = PATCH_LENGTH;
     const target = () => new THREE.WebGLRenderTarget(size, size, { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
-      minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, generateMipmaps: false, colorSpace: THREE.NoColorSpace });
+      minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, generateMipmaps: true, colorSpace: THREE.NoColorSpace });
     this.targets = [target(), target()]; this.now = 0;
     this.tool = new THREE.WebGLRenderTarget(size, size, { type: THREE.HalfFloatType, format: THREE.RedFormat, depthBuffer: false, stencilBuffer: false,
       minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false, colorSpace: THREE.NoColorSpace });

@@ -410,7 +410,10 @@ void main() {
   // The sand round you as you have left it (sim/patch.js): where you have pressed it, it is smooth.
   // (Only as far as a pixel is not much bigger than its texels, two millimetres: beyond that the stamps do.)
   float pxLong = max(length(ddx), length(ddy));           // (a pixel's reach along the ground, the long way: at a low angle, much more than across)
-  float inPatch = pxLong < 0.008 && sand > 0.5 ? lrPatchIn(d) * (1.0 - smoothstep(0.0042, 0.008, pxLong)) : 0.0, patchSteep = 0.0;
+  // (The patch is read at the level that suits the pixel, so it can be shown as far as it reaches: what you
+  // pressed two metres off is still there, soft, not gone at the first low angle.)
+  lrPatchLod = max(0.0, log2(pxLong * float(textureSize(tPatch, 0).x) / uPatch.z) - 0.5);
+  float inPatch = pxLong < 0.07 && sand > 0.5 ? lrPatchIn(d) * (1.0 - smoothstep(0.03, 0.07, pxLong)) : 0.0, patchSteep = 0.0;
   if (inPatch > 0.0) lumpy *= 1.0 - inPatch * min(lrPatch(d).a, 1.0);
   vec2 at = d;                                              // where on the sand this pixel lands, once its relief is counted
   float hollow = 0.0;                                       // how far down in a hollow of trodden ground (0..1)
@@ -481,7 +484,8 @@ void main() {
   }
   if (inPatch > 0.0) {
     // The eye sees the floor of a hollow further along its line of sight, the top of a heap nearer.
-    float texel = uPatch.z / float(textureSize(tPatch, 0).x), e2 = 1.5 * texel;
+    // (The slope is measured over a texel and a half of the level that is being read.)
+    float texel = uPatch.z / float(textureSize(tPatch, 0).x), e2 = 1.5 * texel * exp2(lrPatchLod);
     vec2 lean = V.xz / max(V.y, 0.3), p = d;
     for (int i = 0; i < 3; i++) p = d + lean * lrPatchHeight(p) * inPatch;
     vec4 P = lrPatch(p);

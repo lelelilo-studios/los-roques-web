@@ -30,7 +30,8 @@ layout(location = 0) out vec4 outColor;
 void main() {
   vec2 d = vUv * uL, q = mod(d - uCentre + 0.5 * uL, uL) - 0.5 * uL;
   float cell = uL / uN, e = 1.0 / uN;
-  if (max(abs(q.x), abs(q.y)) > 0.5 * uL - 4.0 * cell) { outColor = vec4(0.0); return; }
+  // (A rim wider than you go in a frame: see sim/patch.js.)
+  if (max(abs(q.x), abs(q.y)) > 0.5 * uL - 0.15) { outColor = vec4(0.0); return; }
   vec4 c = texture(tPrev, vUv), xp = texture(tPrev, vUv + vec2(e, 0.0)), xm = texture(tPrev, vUv - vec2(e, 0.0)), zp = texture(tPrev, vUv + vec2(0.0, e)), zm = texture(tPrev, vUv - vec2(0.0, e));
   float depth = texture(tGround, q / uL + 0.5).b, wet = smoothstep(0.004, 0.02, depth), m = texture(tCross, q / uL + 0.5).r;
   float v = c.g + ${(SPEED * SPEED).toFixed(4)} * (xp.r + xm.r + zp.r + zm.r - 4.0 * c.r) / (cell * cell) * uDt;
@@ -80,8 +81,8 @@ uniform sampler2D tRipple;
 uniform vec4 uRipple;     // the window's middle (detail coordinates), its length (m), 1 = there are ripples
 float lrRippleIn(vec2 d) {
   if (uRipple.w < 0.5) return 0.0;
-  vec2 q = mod(d - uRipple.xy + 0.5 * uRipple.z, uRipple.z) - 0.5 * uRipple.z;
-  return 1.0 - smoothstep(0.42 * uRipple.z, 0.47 * uRipple.z, max(abs(q.x), abs(q.y)));
+  vec2 q = mod(d - uRipple.xy + 32.0, 64.0) - 32.0;        // (really how far from the window's middle: see lrPatchIn)
+  return 1.0 - smoothstep(0.4 * uRipple.z, 0.455 * uRipple.z, max(abs(q.x), abs(q.y)));
 }
 float lrRippleH(vec2 d) { return textureLod(tRipple, d / uRipple.z, 0.0).r; }
 // (The slope of the surface they add, and how sharply it bends each way: for reflections, and for the light on the bed.)
