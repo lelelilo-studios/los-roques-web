@@ -243,7 +243,7 @@ export class Hand {
     this.trail = Array.from({ length: GAPS }, () => []);
     this.count = shared.uTouchSeg.value.length;
     /** Her own hand (handpose.js HandModel), once the body has come: this hand then holds itself by every joint. */
-    this.model = null; this.poses = [0, 1, 2].map(() => new Array(POSE_LENGTH));
+    this.model = null; this.poses = [0, 1, 2].map(() => new Array(POSE_LENGTH)); this.memo = { way: null, step: 0 };
     // Each hand has its own chance, begun again whenever the hand is: the same doing gives the same grains.
     // (Both drew on the one sequence the splashes of your feet draw on, never begun again: what a hand let fall
     // depended on everything done since the page was opened.)
@@ -327,7 +327,9 @@ export class Hand {
       this.rake = (this.rake || 0) + ((this.down && going && !this.took && (this.aimSpeed || 0) > 0.05 ? 1 : 0) - (this.rake || 0)) * (1 - Math.exp(-dt * 8));
       this.grip = closing ? Math.min(1, this.grip + dt * 4) : this.lift > 0.3 ? this.grip : Math.max(0, this.grip - dt * 6);
     }
-    if (this.ik <= 0) { this.aimAt = null; this.aimSpeed = 0; return null; }
+    // (The elbow goes a step at a time from where it was: half a turn a second at most. A hand at rest has no such past.)
+    this.memo.step = dt * Math.PI;
+    if (this.ik <= 0) { this.aimAt = null; this.aimSpeed = 0; this.memo.way = null; return null; }
     // Where: on the line of your look, as far as the arm goes. (In dry sand the fingers go in; on wet sand they
     // press on it; in water the hand goes to the bottom if that is within a hand's length, or under by that much.)
     // (Sitting, your legs lie where it would go: it works beside your right thigh.)
@@ -352,28 +354,32 @@ export class Hand {
     // (Raking, the fingers are bent like the tines of a rake and go a finger's breadth into dry sand, half that into wet.)
     const rake = this.rake || 0, y = this.kind === 'water' ? Math.max(g + 0.004, c.surf - 0.17) : this.kind === 'dry' ? g - 0.012 - 0.012 * this.grip - 0.008 * rake : g - 0.003 - 0.006 * this.grip - 0.006 * rake;
     this.at = { x: wx, z: wz, ground: g, depth };
-    // Held up: a forearm's length before your eyes and a little below the line of your look, to the right.
+    // Held up: where a person holds a handful to watch it. The upper arm hangs by your side and the forearm lies
+    // out before the lower chest, the hand a forearm's length from your eyes and below them; squatting, the
+    // hand is between your knees (your shoulders are then hardly above them, and an arm held out over them is
+    // an arm held up in the air: so it was, the hand out at the height of your face). It comes a little higher
+    // when you look less far down.
     const sl = Math.sin(c.look), cl = Math.cos(c.look), held = clamp01(this.lift * 2 - 1);
     const L = [0, sl, -cl], U = [0, cl, sl], eye = [0, c.body, 0];
-    // (Far enough out, and near enough to the middle of what you see, that the hand, what falls from it and the
-    // place where that lands are all in view.)
-    // Not hung from the line of your look, a forearm from your face: held as people hold a handful to watch it,
-    // the upper arm by your side, the forearm out in front of the lower chest, some 45 cm from your eyes. It comes
-    // a little higher when you look less far down. Squatting, it is held over your knees.
     const raise = 0.12 * clamp01((c.look + 0.95) / 0.7), low = c.low || 0;
-    // (Seated you lean back: it is held out beside your right thigh, the elbow still bent.)
+    // (Seated you lean back: it is held out beside your thigh, the elbow still bent.)
     // (`together`: both your hands hold something. Then they come together before you, side by side, little
     // fingers almost touching, the palms turned a little towards each other: one bowl of two hands.)
-    const tog = c.together || 0;
-    const up = [eye[0] + this.side * (0.13 + 0.03 * low - 0.072 * tog), eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low - 0.03 * tog], down = [eye[0] + this.side * (0.27 - 0.208 * tog), eye[1] - 0.36 + raise, eye[2] - 0.15 - 0.15 * tog];
+    const tog = c.together || 0, real = !!this.model;
+    const up = real ? [eye[0] + this.side * (0.085 - 0.03 * low) * (1 - tog) + this.side * 0.062 * tog, eye[1] - 0.34 - 0.01 * low + raise * (1 - 0.5 * low), eye[2] - 0.24 + 0.03 * low]
+      : [eye[0] + this.side * (0.13 + 0.03 * low - 0.072 * tog), eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low - 0.03 * tog];
+    const down = real ? [eye[0] + this.side * (0.27 - 0.2 * tog), eye[1] - 0.4 + raise, eye[2] - 0.2 - 0.1 * tog] : [eye[0] + this.side * (0.27 - 0.208 * tog), eye[1] - 0.36 + raise, eye[2] - 0.15 - 0.15 * tog];
     const wrist = [0, 1, 2].map(i => up[i] + (down[i] - up[i]) * seated);
-    // (Held up, it comes most of the way round with your look: you hold a handful where you can watch it.)
+    // (Held up, it comes most of the way round with your look: you hold a handful where you can watch it. Less
+    // far when you squat: it is between your knees.)
     const hb = 0.7 * aim, chb = Math.cos(hb), shb = Math.sin(hb), round_ = v => [v[0] * chb - v[2] * shb, v[1], v[0] * shb + v[2] * chb];
     { const r = round_([wrist[0] - eye[0], 0, wrist[2] - eye[2]]); wrist[0] = eye[0] + r[0]; wrist[2] = eye[2] + r[2]; }
+    // (Squatting, it is between your knees: carried round to one side with your look, it comes up over the knee.)
+    if (real) { const out = clamp01((Math.abs(wrist[0] - eye[0]) - 0.08) / 0.07), over = out * out * (3 - 2 * out) * low * (1 - seated); wrist[1] += Math.max(0, eye[1] - 0.2 - wrist[1]) * over; }
     // (A hand held out is never quite still: it rises and falls a little with your breath.)
     wrist[1] += 0.003 * Math.sin(c.time * 1.45 + this.side); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1 + this.side);
     // (No lower than the arm can hold it level, crouched: above your knees.)
-    wrist[1] = Math.max(wrist[1], Math.min(c.body - 0.22, 0.36));
+    if (!real) wrist[1] = Math.max(wrist[1], Math.min(c.body - 0.22, 0.36));
     // How far the fingers are parted: as you have set them (the wheel), wide while you send it all down.
     if (dt > 0) this.open += (clamp01(c.want && !c.canReach ? 1 : c.open ?? 0.3) - this.open) * (1 - Math.exp(-dt * 8));
     let dir, palm, cupped, spread;
@@ -381,10 +387,19 @@ export class Hand {
       // What it holds obeys the hand (sim/palm.js), so the hand is held to the world, not to your eye: level
       // while the fingers are together; with them parted it tips forward, slowly and further the longer it
       // pours (faster the wider they are), as a hand does to keep sand running; closed again, it comes level.
-      if (dt > 0) this.tipped = this.open > 0.05 && this.amount > 0.002 && held > 0.9 ? Math.min(0.8, this.tipped + dt * (0.06 + 0.4 * this.open)) : Math.max(0, this.tipped - dt * 1.2);
-      const tip = (0.1 + 0.25 * this.open + this.tipped) * held, st = Math.sin(tip), ct = Math.cos(tip);
-      // (Together, the fingers of both point straight ahead: they do not cross.)
-      dir = [-0.3 * this.side * (1 - tog), -st, -ct]; palm = [(0.06 - 0.2 * tog) * this.side, ct, -st]; cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
+      // (No further than a wrist will let it: it used to tip until the wrist was bent back eighty degrees.)
+      if (dt > 0) this.tipped = this.open > 0.05 && this.amount > 0.002 && held > 0.9 ? Math.min(0.32, this.tipped + dt * (0.06 + 0.4 * this.open)) : Math.max(0, this.tipped - dt * 1.2);
+      const tip = (0.08 + 0.2 * this.open + this.tipped) * held, st = Math.sin(tip), ct = Math.cos(tip);
+      // The fingers point ahead and a little towards your other hand, as a forearm lying across you points them;
+      // the palm is up, tilted a little towards your other hand: a forearm turns no further. (It was tilted the
+      // other way, outward: turned further than a forearm goes.) Together, the fingers of both point straight
+      // ahead (they do not cross) and the palms lean more towards each other: one bowl.
+      // (Seated, it is out beside your thigh: the forearm lies outward and the fingers with it.)
+      const inward = ((0.22 - 0.1 * low) * (1 - seated) - 0.25 * seated) * (1 - tog), lean = 0.17 + 0.17 * tog;
+      dir = [-Math.sin(inward) * this.side * ct, -st, -Math.cos(inward) * ct];
+      const k = dir[1], n0 = (v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; })([-dir[0] * k, 1 - dir[1] * k, -dir[2] * k]);
+      const a0 = [(dir[1] * n0[2] - dir[2] * n0[1]) * this.side, (dir[2] * n0[0] - dir[0] * n0[2]) * this.side, (dir[0] * n0[1] - dir[1] * n0[0]) * this.side];      // (across the palm, towards the thumb)
+      palm = [0, 1, 2].map(i => n0[i] * Math.cos(lean) - a0[i] * Math.sin(lean)); cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
     } else {
       // (The figure of tubes: the palm up and turned a little towards you, tipping forward as it empties.)
       const tip = 0.25 + 0.3 * (1 - this.amount) * held;
@@ -408,6 +423,10 @@ export class Hand {
       // (`settle`: how far your shoulders still have to come down: the solver puts the hand over the place it will
       // reach when they have, so it comes down on that place and does not slide to it through the sand.)
       at: [lx, y - c.feet, lz], settle: c.settling || 0, amount: this.ik, lift: this.lift, wrist, dir: round_(dir), palm: round_(palm),
+      // (Her own hand comes down on the sand tipped forward, the pads of the fingers first, not laid flat: more
+      // tipped into water, less on wet sand and when it rakes. `memo`: where its elbow was, for the solver.)
+      back: 26 + 28 * clamp01((this.tipped || 0) / 0.32),
+      incline: real ? (this.kind === 'water' ? 0.65 : this.kind === 'dry' ? 0.55 : 0.42) * (1 - 0.4 * rake) + 0.25 * seated : 0, memo: this.memo,
       // (On the ground the fingers close on what they take; held up they are cupped.)
       curl: (this.kind === 'water' ? 0.1 + 0.38 * full + 0.2 * rake : this.kind === 'dry' ? 0.34 + 0.4 * full + 0.5 * rake : 0.16 + 0.5 * full + 0.5 * rake) * (1 - this.lift) + cupped * this.lift, spread: Math.max(spread, 0.45 * rake * (1 - this.lift)),
     };
@@ -460,7 +479,7 @@ export class Hand {
       // it (where the hand had only pressed, not where it was drawn along).
       if (this.grip >= 1 && !this.took) {
         this.took = true; this.amount = 1; this.owed = 0; this.empty = 0; this.heap = this.spot = null; this.epoch = time;
-        this.sim.shape(0.5, 0); this.sim.fill(this.kind);
+        this.sim.shape(0.5, 0); this.sim.fill(this.kind); this.worked = 0;
         this.ledger.takes++; this.ledger.taken += HANDFUL;
         this.sound.touch(this.kind, 'take');
         if (sandy && this.mark >= 0 && info[this.mark].y > 0.5) { info[this.mark].set(time, 4, c.yaw, this.kind === 'dry' ? 1 : 0.7); this.mark = -1; }
@@ -556,6 +575,10 @@ export class Hand {
     const v = this.lastK && dt > 0 ? [0, 1, 2].map(i => Math.max(-1.5, Math.min(1.5, (K[i] - this.lastK[i]) / dt))) : [0, 0, 0];
     this.lastK = K;
     sim.shape(this.cupped ?? 0.45, this.open, palm.half, palm.us);
+    // (When what it holds has stopped running though the fingers are apart, the fingers work it: sand lying on
+    // a palm tipped no further than a wrist will tip it stands still at its own slope. Worked, it runs on. The
+    // hand used to tip on until the wrist was bent back eighty degrees, to keep it running.)
+    sim.work = this.worked || 0;
     const under = g => { const q = sim.gapAt(g), p = at(q[0], q[1], -0.016); return p; };
     this.pour = { K, f, N, A, floor, sea, ground, v, wetGround: !sea && c.wetAt(K[0], K[2], ground), gaps: [under(0), under(1), under(2)] };
     let running = 0;
@@ -567,6 +590,7 @@ export class Hand {
       // How hard each gap is running (a stream at full strength carries a twentieth of a handful a second).
       for (let g = 0; g < 3; g++) this.rates[g] += (clamp01(out.gaps[g] / dt / (HANDFUL * 0.05)) - this.rates[g]) * (1 - Math.exp(-dt * 14));
       running = Math.max(...this.rates);
+      { const stalled = this.open > 0.05 && this.kind !== 'water' && gone * HANDFUL / dt < 3.5e-6 * (0.4 + 2 * this.open); this.worked = clamp01((this.worked || 0) + (stalled ? dt / 1.2 : -dt / 5)); }
       if (gone > 0) {
         // Where it lands: under the gaps it fell through, a third of a second later.
         const fall = Math.sqrt(Math.max(K[1] - floor, 0.01) / 4.9), r = this.random, patch = this.patch(), blown = this.carried(fall, c);

@@ -1134,7 +1134,7 @@ export async function start(canvas, onProgress = () => {}) {
         if (!figureRig || you.folded) return { ...doing, wrist: toWorld(body.joints.wrists[i]), elbow: toWorld(body.joints.elbows[i]), shoulder: toWorld(body.joints.shoulders[i]), centre: handAt(i) };
         const p = figureRig.handProbe(i);
         return { ...doing, wrist: toWorld(p.wrist), elbow: toWorld(p.elbow), shoulder: toWorld(p.shoulder), centre: toWorld(p.centre), knuckles: toWorld(p.knuckles), f: turned(p.f), N: turned(p.N), A: turned(p.A),
-          sup: p.sup, flex: p.flex, dev: p.dev, twists: p.twists, gaps: p.gaps, fingers: p.fingers.map(f => ({ ...f, tip: toWorld(f.tip) })), thumb: { ...p.thumb, tip: toWorld(p.thumb.tip) },
+          sup: p.sup, flex: p.flex, dev: p.dev, turned: p.turned, bent: p.bent, twists: p.twists, gaps: p.gaps, fingers: p.fingers.map(f => ({ ...f, tip: toWorld(f.tip) })), thumb: { ...p.thumb, tip: toWorld(p.thumb.tip) },
           caps: p.caps ? { fingers: p.caps.fingers.map(f => f.map(rod)), thumb: p.caps.thumb.map(rod), palm: p.caps.palm.map(rod) } : null, clear: p.caps ? clearance(p.caps) : null };
       });
       return { time: clock.time, eye: [rig.own.x, rig.own.y, rig.own.z], yaw: walker.yaw, heading: walker.heading, look: walker.look, feet: you.y, crouched: walker.crouched, seated: walker.seated,

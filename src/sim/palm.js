@@ -19,6 +19,8 @@ export class Palm {
     this.gap = new Int8Array(NU * NV).fill(-1);   // which gap a cell drains through (0..2), -1 none
     this.next = new Float32Array(NU * NV);
     this.kind = 'dry'; this.knuckle = 0.045; this.shape(0.45, 0.3);
+    /** 0..1: how hard the fingers are working what they hold: worked, dry sand stands at a lower slope and runs on. */
+    this.work = 0;
   }
 
   /**
@@ -83,7 +85,7 @@ export class Palm {
     const { s, floor, leak, gap, next } = this, water = this.kind === 'water', wet = this.kind === 'wet';
     // The slope it stands at. Dry sand: 32 degrees in a still hand; fingers that are parting work it loose, and it
     // creeps at half that. Wet sand from the wash is a slurry: it sags slowly. Water stands at none.
-    const talus = water ? 0.01 : wet ? 0.3 : 0.62 - 0.36 * Math.min(1, this.open * 1.4), rate = water ? 0.11 : wet ? 0.08 : 0.2, out = { gaps: [0, 0, 0], edge: 0, at: [0, 0] };
+    const talus = water ? 0.01 : wet ? 0.3 * (1 - 0.5 * this.work) : (0.62 - 0.36 * Math.min(1, this.open * 1.4)) * (1 - 0.75 * this.work), rate = water ? 0.11 : wet ? 0.08 : 0.2, out = { gaps: [0, 0, 0], edge: 0, at: [0, 0] };
     // (A step is a sixtieth of a second's worth; a slow frame takes more than one.)
     // (Water finds its level quickly: it gets three rounds of running to one of leaking.)
     const frames = Math.max(1, Math.min(4, Math.round(dt * 60))), rounds = frames * (water ? 3 : 1);
@@ -111,7 +113,7 @@ export class Palm {
         if (next[k] < 0) next[k] = 0;
         if (!leaking) continue;
         // (Water finds the crack between closed fingers; wet sand goes through an open gap only once enough of it has sagged in there, and then all at once: in lumps.)
-        const through = water ? (gap[k] >= 0 ? Math.max(leak[k], 0.08) : 0) : wet ? (leak[k] > 0 && next[k] > 0.004 ? 16 : 0) : leak[k];
+        const through = water ? (gap[k] >= 0 ? Math.max(leak[k], 0.08) : 0) : wet ? (leak[k] > 0 && next[k] > 0.004 * (1 - 0.5 * this.work) ? 16 : 0) : leak[k] * (1 + 2 * this.work);
         if (through <= 0 || next[k] <= 0) continue;
         const gone = Math.min(next[k], (water ? 0.0018 : 0.0011) * through + next[k] * 0.06 * through);
         next[k] -= gone;

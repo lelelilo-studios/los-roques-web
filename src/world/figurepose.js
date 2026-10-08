@@ -7,13 +7,15 @@
 // thigh from the hip to the knee, the shin from the knee to the ankle, both turned so that the knee's hinge
 // lies across the plane of the leg; arms likewise, the hand's turn spread up the forearm.
 import { reach } from './bodyshape.js';
-import { HandModel, POSE_LENGTH, fingerAngles, fingerGaps, fitHand, handBones, thumbAngles, wristAngles } from './handpose.js';
+import { HandModel, POSE_LENGTH, fingerAngles, fingerGaps, fitHand, handBones, limitWrist, shoulderTurn, thumbAngles, wristAngles } from './handpose.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2], len = a => Math.hypot(a[0], a[1], a[2]);
 const unit = a => { const l = len(a) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
 const IDENTITY = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+// What her forearm and wrist do, in degrees (humanref.js): the drawn hand is held to it whatever it is asked.
+const WRIST_LIMITS = { sup: [-75, 85], flex: [-60, 60], dev: [-25, 15] };
 /** A frame from a direction and a hint for what is square to it: columns x = d, z = the hint made square, y = z x x. */
 function frame(d, hint) {
   const x = unit(d), k = dot(hint, x);
@@ -82,7 +84,7 @@ export class FigureRig {
         armPlane: unit(cross(sub(E, S), sub(W, E))),
         bone: Object.fromEntries(['upperleg01', 'lowerleg01', 'foot', 'clavicle', 'shoulder01', 'upperarm01', 'lowerarm01', 'lowerarm02', 'wrist'].map(n => [n, this.need(`${n}.${s}`)])),
         toes: this.bones.map((b, j) => (new RegExp(`^toe\\d-1\\.${s}$`).test(b.name) ? j : -1)).filter(j => j >= 0),
-        names: handBones(s), thumbBones: [1, 2, 3].map(j => this.need(`finger1-${j}.${s}`)), planeNow: null,
+        names: handBones(s), thumbBones: [1, 2, 3].map(j => this.need(`finger1-${j}.${s}`)), planeNow: null, twisted: null,
       };
     });
     this.head = this.need('head'); this.neck = ['neck01', 'neck02', 'neck03'].map(n => this.need(n)); this.trunk = this.need('root');
@@ -158,7 +160,10 @@ export class FigureRig {
       const rods = this.fit[i].rods, rod = name => { const b = this.need(name), r = rods[name]; return { a: this.carry(b, r.head), b: this.carry(b, r.tail), r: r.r, w: r.w, t: r.t }; };
       caps = { fingers: s.names.fingers.map(f => f.map(rod)), thumb: s.names.thumb.map(rod), palm: s.names.palm.map(rod) };
     }
-    return { ...h, shoulder: S, elbow: E, ...wristAngles(S, E, h.wrist, h.f, h.N, s.side, plane), twists: [twist(s.bone.lowerarm01), twist(s.bone.lowerarm02), twist(s.bone.wrist)], fingers, thumb, caps, gaps: caps ? fingerGaps(caps.fingers, h.A, h.f) : null };
+    // (How the hand is held on the arm is measured by the wrist's own bone: the line from the wrist to the
+    // knuckles, which hand(i) goes by, moves as the palm is hollowed.)
+    const Rw = this.R[s.bone.wrist];
+    return { ...h, shoulder: S, elbow: E, ...wristAngles(S, E, h.wrist, turn(Rw, s.f), turn(Rw, s.N), s.side, plane), turned: shoulderTurn(S, E, h.wrist, s.side), bent: Math.acos(Math.max(-1, Math.min(1, dot(unit(sub(E, S)), along)))), twists: [twist(s.bone.lowerarm01), twist(s.bone.lowerarm02), twist(s.bone.wrist)], fingers, thumb, caps, gaps: caps ? fingerGaps(caps.fingers, h.A, h.f) : null };
   }
 
   /**
@@ -220,14 +225,25 @@ export class FigureRig {
       // The hand: the way the solver holds it; without that (swimming), flat along the forearm, palm down.
       const along = unit(sub(wrist, E)), h = j.hands?.[i] || { f: along, N: frame(along, [0, -1, 0])[2], curl: 0.1, spread: 0 };
       // (The way the palm faces is made square to the way the hand points: two directions mixed from two poses are not.)
-      const hf = unit(h.f), hk = dot(h.N, hf), hN = unit([h.N[0] - hf[0] * hk, h.N[1] - hf[1] * hk, h.N[2] - hf[2] * hk]);
+      // (And the hand is held on this arm as a wrist can hold it: the solver keeps to that with its own arm, a
+      // finger's breadth from hers, and two poses mixed may be outside it. A little is allowed over the solver's limits.)
+      const [hf, hN] = j.hands?.[i] ? limitWrist(S, E, wrist, h.f, h.N, s.side, WRIST_LIMITS, plane) : [unit(h.f), h.N];
       const rest = [s.f, s.N, cross(s.f, s.N).map(v => v * s.side)], held = [hf, hN, cross(hf, hN).map(v => v * s.side)];
       const Rhand = between(rest, held);
       // (The hand's turn about the forearm is shared up the forearm, as the two bones in it do: none at the elbow.)
       const Q = mul(Rhand, [Rfore[0], Rfore[3], Rfore[6], Rfore[1], Rfore[4], Rfore[7], Rfore[2], Rfore[5], Rfore[8]]), v = plane, w = turn(Q, v);
-      const k = dot(w, along), flat = [w[0] - along[0] * k, w[1] - along[1] * k, w[2] - along[2] * k], twist = Math.atan2(dot(along, cross(v, flat)), dot(v, flat));
-      this.hinge(s.bone.lowerarm01, mul(about(along, 0.15 * twist), Rfore));
-      this.hinge(s.bone.lowerarm02, mul(about(along, 0.6 * twist), Rfore));
+      const k = dot(w, along), flat = [w[0] - along[0] * k, w[1] - along[1] * k, w[2] - along[2] * k];
+      let twist = Math.atan2(dot(along, cross(v, flat)), dot(v, flat));
+      // (Followed round from where it was a moment ago, not taken afresh each frame: an angle read as just under
+      // half a turn one frame and just over minus half a turn the next would throw the forearm right round. And
+      // no further than a forearm turns, with a little to spare: the rest is left to the wrist's skin.)
+      if (s.twisted !== null) { const on = twist + 2 * Math.PI * Math.round((s.twisted - twist) / (2 * Math.PI)); if (Math.abs(on) < 1.5 * Math.PI) twist = on; }
+      s.twisted = twist;
+      const turned = Math.max(-1.75, Math.min(1.75, twist));
+      // (A third of it by the elbow's end of the forearm and three quarters by the wrist's: it was 0.15 and 0.6,
+      // which left two fifths of the turn to the skin of the wrist alone.)
+      this.hinge(s.bone.lowerarm01, mul(about(along, 0.3 * turned), Rfore));
+      this.hinge(s.bone.lowerarm02, mul(about(along, 0.75 * turned), Rfore));
       this.hinge(s.bone.wrist, Rhand);
       // Fingers, thumb and the bones of the palm: as the hand's pose has them (handpose.js). A pose is twenty-one
       // angles (`fingers`); a hand given only the old `curl` and `spread` takes the pose those stand for.

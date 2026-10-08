@@ -18,7 +18,7 @@ export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, S
  * (world/figure.js) gives hers with setProportions, and the same solver then walks, crouches and swims her.
  * stand = eye height standing; crouchBy = how far the eye comes down to a full crouch.
  */
-import { mixPose, slerpFrame } from './handpose.js';
+import { limitWrist, mixPose, slerpFrame, swivel } from './handpose.js';
 
 /**
  * Her hands as the body model has them (handpose.js HandModel: [left, right]), when the solver has been given
@@ -46,6 +46,76 @@ function fingertip(side, palm, fingers, fallback) {
   if (!m || !fingers) return fallback;
   const [a, b, c] = fingerReach(side, fingers, 0), { wrist, f, N, A } = palm;
   return [wrist[0] + f[0] * a + N[0] * b + A[0] * c, wrist[1] + f[1] * a + N[1] * b + A[1] * c, wrist[2] + f[2] * a + N[2] * b + A[2] * c];
+}
+
+// What a forearm and a wrist do (degrees; humanref.js FOREARM and WRIST): how far the forearm turns palm down and
+// palm up, the wrist bends back and towards the palm, and tilts towards the little finger and the thumb. (Two
+// degrees inside them: her own arm, which the rig aims, is a finger's breadth from the solver's.)
+const ARM = { sup: [-73, 83], flex: [-58, 58], dev: [-23, 13] };
+/** How far a hand's palm is rolled about the way it points: 0 with the thumb up, a quarter turn with the palm up, minus that with it down. */
+function rollOf(side, f, N) {
+  const m = inward(side, f), u = cross(f, m).map(v => v * side);
+  return Math.atan2(N[0] * u[0] + N[1] * u[1] + N[2] * u[2], N[0] * m[0] + N[1] * m[1] + N[2] * m[2]);
+}
+/** The way the palm faces, rolled by `roll` about the way the hand points. */
+function rolled(side, f, roll) { const m = inward(side, f), u = cross(f, m).map(v => v * side), c = Math.cos(roll), sn = Math.sin(roll); return [m[0] * c + u[0] * sn, m[1] * c + u[1] * sn, m[2] * c + u[2] * sn]; }
+/** Towards your other arm, square to the way a hand points (a hand pointing straight across you: towards you). */
+function inward(side, f) {
+  const k = -side * f[0], sq = Math.abs(f[0]) < 0.97 ? [-side - f[0] * k, -f[1] * k, -f[2] * k] : [-f[0] * f[2], -f[1] * f[2], 1 - f[2] * f[2]];
+  return unit(sq);
+}
+/**
+ * A hand at work (`work`: poseBody's `touch`), `reaching` of the way from where the arm rests (`wrist0`, `elbow0`,
+ * the hand held `f0`, `N0`). On the ground the hand points away from you, tipped down by `work.incline` so that
+ * the pads of the fingers come down first, the wrist behind the fingertip and above it by as much as her own hand
+ * is long and deep. Held up, it is where `work.wrist` has it, held as `work.dir` and `work.palm` say; and on the
+ * way from the one to the other the palm rolls round the way the hand points, through thumb up, as a forearm
+ * turns it. (The two ways the palm faces used to be mixed, down and up: half way there was no palm, and the hand
+ * flipped over in three frames, the wrong way round.) The elbow goes where the forearm need not be wrung and the
+ * arm passes through nothing (`blocks`), a step at a time (`work.memo`); and if the hand is asked to be held as no
+ * wrist can hold it, it gives. Returns { wrist, elbow, f, N }.
+ */
+function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0) {
+  const to = work.at, curl = work.curl ?? 0.2, lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift), inc = work.incline || 0;
+  const away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), ci = Math.cos(inc), si = Math.sin(inc);
+  const fG = [away[0] * ci, -si, away[2] * ci], NG = [-away[0] * si, -ci, -away[2] * si], AG = cross(fG, NG).map(v => v * side);
+  let f = fG, N = NG;
+  if (up > 0) {
+    const fH = unit(work.dir), k = work.palm[0] * fH[0] + work.palm[1] * fH[1] + work.palm[2] * fH[2], NH = unit([work.palm[0] - fH[0] * k, work.palm[1] - fH[1] * k, work.palm[2] - fH[2] * k]);
+    f = unit([fG[0] + (fH[0] - fG[0]) * up, fG[1] + (fH[1] - fG[1]) * up, fG[2] + (fH[2] - fG[2]) * up]);
+    const from = rollOf(side, fG, NG);
+    let till = rollOf(side, fH, NH);
+    if (till < from) till += 2 * Math.PI;
+    N = rolled(side, f, from + (till - from) * up);
+  }
+  const span = fingerReach(side, work.fingers, curl), want = [0, 1, 2].map(i => to[i] - fG[i] * span[0] - NG[i] * span[1] - AG[i] * span[2]);
+  // (No further than the arm goes: a place out of reach is reached for along the ground as far as the hand
+  // gets, not from above it. Reaching across yourself, the hand used to hang a hand's breadth over the sand.
+  // While your shoulders are still coming down, work.settle, the place is the one the arm will reach when
+  // they have: the hand is over it meanwhile, and comes down on it. And not to the arm's full length: an arm
+  // reaching for the sand before you is not locked straight.)
+  { const most = (PROP.upperArm + PROP.forearm) * 0.95, dy = want[1] - (sh[1] - (work.settle || 0)), flat = Math.hypot(want[0] - sh[0], want[2] - sh[2]), can = Math.sqrt(Math.max(most * most - dy * dy, 0.01)); if (flat > can) { want[0] = sh[0] + (want[0] - sh[0]) * can / flat; want[2] = sh[2] + (want[2] - sh[2]) * can / flat; } }
+  if (up > 0) for (let i = 0; i < 3; i++) want[i] += (work.wrist[i] - want[i]) * up;
+  const wrist = [0, 1, 2].map(i => wrist0[i] + (want[i] - wrist0[i]) * reaching);
+  { const d = [wrist[0] - sh[0], wrist[1] - sh[1], wrist[2] - sh[2]], l = Math.hypot(d[0], d[1], d[2]), most = (PROP.upperArm + PROP.forearm) * 0.999; if (l > most) for (let i = 0; i < 3; i++) wrist[i] = sh[i] + d[i] * most / l; }
+  const [hf, hN] = slerpFrame(f0, N0, f, N, reaching);
+  // (Held up to look at, a wrist is not bent back as far as it will go: `work.back` degrees at most, by default 26;
+  // more as the hand tips forward to let what it holds run.)
+  const limits = { sup: ARM.sup, flex: [ARM.flex[0] + (-ARM.flex[0] - (work.back ?? 26)) * up * reaching, ARM.flex[1]], dev: ARM.dev }, q = Math.min(1, reaching * 1.4), m = work.memo || null;
+  // (The way the elbow goes by habit: over from the resting arm's to the working arm's as the hand sets out.)
+  const habit = [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up].map((v, i) => pole0[i] + (v - pole0[i]) * q);
+  // (As the hand sets out the elbow is where habit has it, the resting arm's: it leaves that only as the work asks. So nothing jumps at the start.)
+  const found = swivel(sh, wrist, PROP.upperArm, PROP.forearm, hf, hN, side, habit, limits, { last: m && m.way ? m.way : null, step: m ? m.step ?? Infinity : Infinity, blocks, habit: 0.004 + 2 * (1 - q) * (1 - q) });
+  if (m) m.way = found.way;
+  // (And it leaves the resting arm's own place for the found one as the hand sets out, and comes back to it as
+  // the hand comes back: the two are not the same place, and at the moment between it jumped a hand's breadth.)
+  const elbow = [0, 1, 2].map(i => elbow0[i] + (found.elbow[i] - elbow0[i]) * q), [gf, gN] = limitWrist(sh, elbow, wrist, hf, hN, side, limits);
+  return { wrist, elbow, f: gf, N: gN };
+}
+/** The rods that stand for your legs, for an arm to keep out of: this side's thigh and shin, and the other side's taken to be the same. */
+function legBlocks(hip, knee, ankle) {
+  const other = p => [-p[0], p[1], p[2]];
+  return [{ a: hip, b: knee, r: 0.06 }, { a: knee, b: ankle, r: 0.045 }, { a: other(hip), b: other(knee), r: 0.06 }, { a: other(knee), b: other(ankle), r: 0.045 }];
 }
 
 const PROP = { stand: 1.65, crouchBy: 0.9, eyeToShoulder: 0.22, back: 0.09, thigh: THIGH, shin: SHIN, ankle: ANKLE, torso: TORSO, hip: HIP, shoulder: SHOULDER, upperArm: 0.32, forearm: 0.255 };
@@ -401,41 +471,39 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     t.foot(ankle, [side * (0.2 + 0.3 * splay), -0.97], SKIN, detail ? side : 0, pitch);
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     joints.feet.push({ pitch, out: side * (0.2 + 0.3 * splay), planted: 1, toes: wiggle });
-    // Arms: the left hand on the sand behind you, taking some of your weight; the right resting beside your
-    // thigh, or at work.
-    const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]];
-    const wrist = side < 0 ? [sh[0] - 0.12, 0.03 + 0.03 * hop, hip[2] + 0.2] : [sh[0] + 0.1, 0.03 + 0.03 * hop, hip[2] - 0.12];
-    let elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * 0.7, 0.1, 1]);
+    // Arms: the left hand on the sand behind you, taking some of your weight; the right resting on its thigh,
+    // or at work. (They were both laid flat on the sand beside you: which an arm reaches from a seat only by
+    // leaning. Hers, at its full stretch, stopped a hand's breadth short, and both hands hung in the air.) The
+    // left hand is on its fingertips, the palm off the sand, as a hand that props you from behind is; the right
+    // lies along the thigh, palm down.
+    const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], thigh = unit([knee[0] - hipJ[0], knee[1] - hipJ[1], knee[2] - hipJ[2]]), on = lerp3(hipJ, knee, 0.56);
+    const wrist = side < 0 ? [sh[0] - 0.1, 0.125 + 0.03 * hop, hip[2] + 0.17] : [on[0] + side * 0.012, on[1] + 0.084 + 0.03 * hop, on[2] + 0.03];
+    const pole = side < 0 ? [side * 0.7, 0.1, 1] : [side * 0.9, -0.25, 0.45];
+    let elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, pole);
     const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? work.amount * work.amount * (3 - 2 * work.amount) : 0;
-    let point = null, facing = null;
+    // (At rest: the left hand's fingers point down, out and back, into the sand; the right hand's along the thigh.)
+    const flat = side < 0 ? unit([-0.38, -0.74, 0.55]) : unit([thigh[0] - side * 0.1, thigh[1] - 0.12, thigh[2]]);
+    const facing = (v => { const k = v[0] * flat[0] + v[1] * flat[1] + v[2] * flat[2]; return unit([v[0] - flat[0] * k, v[1] - flat[1] * k, v[2] - flat[2] * k]); })(side < 0 ? [0, -0.5, 0.87] : [0, -1, 0]);
+    let held = null;
     if (reaching) {
-      const touch = work, to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      const lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
       // (You lean over towards what you reach for.)
-      if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } sh[0] += side * 0.03 * reaching * (1 - up);
-      // (The wrist is behind the fingertip and above it by as much as her own hand is long and deep, held as it is.)
-      const span = fingerReach(side, touch.fingers, curl), want = [to[0] - away[0] * span[0], to[1] + span[1], to[2] - away[2] * span[0]];
-      // (No further than the arm goes: a place out of reach is reached for along the ground as far as the hand
-      // gets, not from above it. Reaching across yourself, the hand used to hang a hand's breadth over the sand.
-      // While your shoulders are still coming down, touch.settle, the place is the one the arm will reach when
-      // they have: the hand is over it meanwhile, and comes down on it.)
-      { const most = (PROP.upperArm + PROP.forearm) * 0.985, dy = want[1] - (sh[1] - (touch.settle || 0)), flat = Math.hypot(want[0] - sh[0], want[2] - sh[2]), can = Math.sqrt(Math.max(most * most - dy * dy, 0.01)); if (flat > can) { want[0] = sh[0] + (want[0] - sh[0]) * can / flat; want[2] = sh[2] + (want[2] - sh[2]) * can / flat; } }
-      if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
-      for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
-      // (The way the elbow bends goes over from the resting arm's to the working arm's as the hand sets out: it does not flip.)
-      { const q = Math.min(1, reaching * 1.4), mixed = (a, b) => a + (b - a) * q; elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [mixed(side * 0.7, side * (0.75 - 0.15 * up)), mixed(0.1, 0.25 - 0.95 * up), mixed(1, 0.6 - 0.25 * up)]); }
-      point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, touch.dir[1] * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
-      facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
+      // (Seated upright, the shoulder dips towards the hand: the sand beside you is an arm's length down.)
+      if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } else sh[1] -= 0.06 * reaching * (1 - up);
+      sh[0] += side * 0.03 * reaching * (1 - up);
+      held = workArm(side, sh, wrist, elbow, flat, facing, work, reaching, legBlocks(hipJ, knee, ankle), pole);
+      for (let i = 0; i < 3; i++) wrist[i] = held.wrist[i];
+      elbow = held.elbow;
     }
     const sleeve = lerp3(sh, elbow, 0.5);
     t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
     if (!detail) t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
-    // (At rest a hand lies flat on the sand, fingers pointing out and back on the left, forward on the right.)
-    const flat = side < 0 ? unit([-0.55, 0, 0.83]) : unit([0.25, 0, -0.97]), mix = (a, b) => unit([a[0] + (b[0] - a[0]) * reaching, a[1] + (b[1] - a[1]) * reaching, a[2] + (b[2] - a[2]) * reaching]);
-    const curl = point ? 0.12 + ((work.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (work.spread ?? 0) * reaching : 0.25;
+    const point = !!held, curl = point ? 0.12 + ((work.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (work.spread ?? 0) * reaching : 0.1;
     if (detail) {
       // (Her own fingers: at rest laid flat on the sand, at work as the hand has them.)
       const fingers = fingersOf(side, 0.12, point ? work.fingers : null, reaching);
-      const tubeTip = t.hand(wrist, point ? mix(flat, point) : flat, point ? mix([0, -1, 0], facing) : [0, -1, 0], side, curl, SKIN, spread, elbow, sleeve), tip = fingertip(side, t.palm, fingers, tubeTip);
+      if (!held) { const [f, N] = limitWrist(sh, elbow, wrist, flat, facing, side, ARM); held = { f, N }; }
+      const tubeTip = t.hand(wrist, held.f, held.N, side, curl, SKIN, spread, elbow, sleeve), tip = fingertip(side, t.palm, fingers, tubeTip);
       joints.fingertips.push(tip);
       joints.hands.push({ ...t.palm, curl, spread, ...(fingers ? { fingers } : {}) });
       if (point) joints[side > 0 ? 'touching' : 'touchingL'] = { tip, wrist: wrist.slice(), amount: reaching, palm: { ...t.palm } };
@@ -659,54 +727,50 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       // in front of the shin, it does not fold up in the gap. Left on the knee, the elbow had nowhere to be and
       // swung about.)
       if (gait) { const near = Math.hypot(over[0] - sh[0], over[1] - sh[1], over[2] - sh[2]); if (near < 0.27) { over[1] -= (0.27 - near) * 1.2; over[2] -= (0.27 - near) * 0.5; } }
-      for (let i = 0; i < 3; i++) wrist[i] += (over[i] - wrist[i]) * squat;
+      // (The arms go to the knees sooner than the knees come up: half way down they are already over them. Going
+      // at one pace with the squat, a forearm was on its way through the thigh as the thigh came up to meet it.)
+      const early = (k => k * k * (3 - 2 * k))(Math.min(1, crouch * 1.7)) * (1 - wade);
+      for (let i = 0; i < 3; i++) wrist[i] += (over[i] - wrist[i]) * early;
       // (The elbow goes down and outward: a direction the line from shoulder to wrist, which runs forward, never
       // comes near. Asked to go back as well, it swung round that line whenever the knee came up level with the shoulder.)
       const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, gait ? [side * 0.7, -0.7, 0.15] : [side * 0.8, -0.45, 0.35]);
-      for (let i = 0; i < 3; i++) elbow[i] += (bent[i] - elbow[i]) * squat;
+      for (let i = 0; i < 3; i++) elbow[i] += (bent[i] - elbow[i]) * early;
     }
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid
     // flat, fingers pointing away from you, the wrist a hand's length behind the fingertip and just above it.
     // (Either hand: `touch` is the right one's work, `touchL` the left's.)
     const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? work.amount * work.amount * (3 - 2 * work.amount) : 0;
-    let point = null, facing = null;
+    // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
+    // (Squatting: palms down, fingers hanging.)
+    const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]);
+    const rest = gait ? [-side * (1 - 0.45 * squat), -0.6 * wade - 0.25 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.85 * squat] : [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat];
+    // How far the fingers of a hand at rest are curled. A hand hanging at ease is not flat: its fingers curl in,
+    // the little finger most, some thirty degrees at the knuckles and more at the middle joints; at a run it
+    // closes to a loose fist. And your two hands are not held alike: the left a little more closed.
+    const loose = (gait ? 0.86 - 0.05 * side + 0.7 * Math.min(1, Math.max(0, (s - 1.15) / 0.5)) : 0.55) - 0.3 * wade - 0.15 * squat;
+    // (Hanging from the knee, the hand points down and a little forward and inward, whatever way the forearm lies.)
+    const hang = gait ? unit([fore[0] * (1 - squat) - side * 0.18 * squat, fore[1] * (1 - squat) - 0.9 * squat, fore[2] * (1 - squat) - 0.4 * squat]) : unit([fore[0] * (1 - squat), fore[1] * (1 - squat) - 0.55 * squat, fore[2] * (1 - squat) - 0.83 * squat]);
+    // At work (workArm): the shoulder comes down and forward with a hand that reaches for the ground, the wrist
+    // and the elbow go where the work is, and the hand is held for it. At rest the hand is held within what a
+    // wrist does on the forearm as it lies.
+    let held;
     if (reaching) {
-      const touch = work, to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      const lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
       sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.12 * reaching * (1 - up);
-      // (Down on the ground: curled fingers reach less far and go down into what they touch, so the wrist comes
-      // nearer and higher. Held up: the wrist where it is asked for.)
-      // (The wrist is behind the fingertip and above it by as much as her own hand is long and deep, held as it is.)
-      const span = fingerReach(side, touch.fingers, curl), want = [to[0] - away[0] * span[0], to[1] + span[1], to[2] - away[2] * span[0]];
-      // (No further than the arm goes: a place out of reach is reached for along the ground as far as the hand
-      // gets, not from above it. Reaching across yourself, the hand used to hang a hand's breadth over the sand.
-      // While your shoulders are still coming down, touch.settle, the place is the one the arm will reach when
-      // they have: the hand is over it meanwhile, and comes down on it.)
-      { const most = (PROP.upperArm + PROP.forearm) * 0.985, dy = want[1] - (sh[1] - (touch.settle || 0)), flat = Math.hypot(want[0] - sh[0], want[2] - sh[2]), can = Math.sqrt(Math.max(most * most - dy * dy, 0.01)); if (flat > can) { want[0] = sh[0] + (want[0] - sh[0]) * can / flat; want[2] = sh[2] + (want[2] - sh[2]) * can / flat; } }
-      if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
-      for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
-      { const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up]), q = Math.min(1, reaching * 1.4); elbow = [elbow[0] + (bent[0] - elbow[0]) * q, elbow[1] + (bent[1] - elbow[1]) * q, elbow[2] + (bent[2] - elbow[2]) * q]; }
-      point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, (touch.dir[1]) * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
-      facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
-    }
+      held = workArm(side, sh, wrist, elbow, hang, rest, work, reaching, legBlocks(hipJ, knee, ankle), unit([elbow[0] - (sh[0] + wrist[0]) / 2, elbow[1] - (sh[1] + wrist[1]) / 2, elbow[2] - (sh[2] + wrist[2]) / 2]));
+      for (let i = 0; i < 3; i++) wrist[i] = held.wrist[i];
+      elbow = held.elbow;
+    } else { const [f, N] = limitWrist(sh, elbow, wrist, hang, rest, side, ARM); held = { f, N }; }
     const tip = [wrist[0] - side * 0.01, wrist[1] - 0.17 * Math.cos(a + bend + 0.15), wrist[2] - 0.17 * Math.sin(a + bend + 0.15)];
     const sleeve = [sh[0] + (elbow[0] - sh[0]) * 0.5, sh[1] + (elbow[1] - sh[1]) * 0.5, sh[2] + (elbow[2] - sh[2]) * 0.5];
     t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
     if (detail) t.tube([sh[0] + (sleeve[0] - sh[0]) * 0.86, sh[1] + (sleeve[1] - sh[1]) * 0.86, sh[2] + (sleeve[2] - sh[2]) * 0.86], sleeve, [0.0485, 0.0518], [0.0478, 0.0508], shade(SHIRT, 0.8));
     if (!detail) t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);        // (in detail, the whole bare arm is one skin with the hand: see Tubes.hand)
     if (detail) {
-      // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
-      const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
-      // (Squatting: palms down, fingers hanging.)
-      const rest = gait ? [-side * (1 - 0.45 * squat), -0.6 * wade - 0.25 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.85 * squat] : [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat];
-      // How far the fingers of a hand at rest are curled. A hand hanging at ease is not flat: its fingers curl in,
-      // the little finger most, some thirty degrees at the knuckles and more at the middle joints; at a run it
-      // closes to a loose fist. And your two hands are not held alike: the left a little more closed.
-      const loose = (gait ? 0.86 - 0.05 * side + 0.7 * Math.min(1, Math.max(0, (s - 1.15) / 0.5)) : 0.55) - 0.3 * wade - 0.15 * squat;
-      // (Hanging from the knee, the hand points down and a little forward and inward, whatever way the forearm lies.)
-      const hang = gait ? unit([fore[0] * (1 - squat) - side * 0.18 * squat, fore[1] * (1 - squat) - 0.9 * squat, fore[2] * (1 - squat) - 0.4 * squat]) : unit([fore[0] * (1 - squat), fore[1] * (1 - squat) - 0.55 * squat, fore[2] * (1 - squat) - 0.83 * squat]);
+      const point = reaching > 0;
       // (Her own fingers: at ease as a hanging hand's are, at work as the hand has them.)
       const fingers = fingersOf(side, loose, point ? work.fingers : null, reaching);
-      const tubeTip = t.hand(wrist, point ? mix(hang, point) : hang, point ? mix(rest, facing) : rest, side, point ? loose + ((work.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (work.spread ?? 0) * reaching : 0, elbow, sleeve);
+      const tubeTip = t.hand(wrist, held.f, held.N, side, point ? loose + ((work.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (work.spread ?? 0) * reaching : 0, elbow, sleeve);
       const tip = fingertip(side, t.palm, fingers, tubeTip);
       joints.fingertips.push(tip);
       // (How the hand is held: the frame of its palm, how far the fingers are curled and parted, and every joint of it.)

@@ -436,3 +436,80 @@ export class HandModel {
     return out;
   }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The arm that carries the hand: where the elbow goes, and how the hand may be held on it.
+
+/**
+ * A hand's frame from how it is held on the arm: the inverse of wristAngles. `sup`: how far the forearm is turned
+ * palm up, `flex`: the wrist bent towards the palm, `dev`: tilted towards the thumb (radians). Returns [f, N].
+ */
+export function handFrame(S, E, W, side, sup, flex, dev, hinge = null) {
+  const along = unit(sub(W, E)), bend = cross(sub(E, S), sub(W, E)), bent = len(bend) > 0.05 * len(sub(E, S)) * len(sub(W, E));
+  const h = square(bent || !hinge ? (len(bend) > 1e-9 ? bend : [1, 0, 0]) : hinge, along), up = cross(h, along), level = h.map(v => -v * side);
+  // With a straight wrist the hand lies along the forearm, its palm turned as the forearm is. Bent, the forearm's
+  // line lies in the hand's own frame where the two bends put it; the hand is turned from the straight one by the
+  // one turn that takes that line to where the forearm is, done again.
+  const n0 = [0, 1, 2].map(i => level[i] * Math.cos(sup) + up[i] * Math.sin(sup)), a0 = cross(along, n0).map(v => v * side);
+  const cd = Math.cos(dev), g = [0, 1, 2].map(i => along[i] * cd * Math.cos(flex) - a0[i] * Math.sin(dev) - n0[i] * cd * Math.sin(flex)), R = swing(unit(g), along);
+  return [turn(R, along), turn(R, n0)];
+}
+
+/**
+ * The hand's frame brought within what a wrist and a forearm do (`limits`: { sup, flex, dev }, each [least, most]
+ * in degrees: humanref.js), by as little as it takes: [f, N, changed]. The elbow and the wrist stay where they are.
+ */
+export function limitWrist(S, E, W, f, N, side, limits, hinge = null) {
+  const a = wristAngles(S, E, W, f, N, side, hinge), D = Math.PI / 180;
+  const sup = clamp(a.sup, limits.sup[0] * D, limits.sup[1] * D), flex = clamp(a.flex, limits.flex[0] * D, limits.flex[1] * D), dev = clamp(a.dev, limits.dev[0] * D, limits.dev[1] * D);
+  if (sup === a.sup && flex === a.flex && dev === a.dev) return [unit(f), square(N, unit(f)), false];
+  return [...handFrame(S, E, W, side, sup, flex, dev, hinge), true];
+}
+
+/**
+ * How far the upper arm is turned about its own length at the shoulder (radians): 0 with the elbow's hinge
+ * across the body (the forearm, bent, pointing ahead of an arm that hangs), positive turned inward (the forearm
+ * across your belly: a quarter turn), negative outward (the forearm out to the side: two thirds of that at most).
+ * An elbow bends one way only: where the wrist is, for a given shoulder and elbow, says how the upper arm is turned.
+ */
+export function shoulderTurn(S, E, W, side) {
+  const u = unit(sub(E, S)), bend = cross(sub(E, S), sub(W, E));
+  if (len(bend) < 0.05 * len(sub(E, S)) * len(sub(W, E))) return 0;            // (an arm nearly straight says nothing of it)
+  const H = unit(bend).map(v => v * side), out = Math.abs(u[0]) < 0.97 ? square([side, 0, 0], u) : square([0, 0, 1], u), fwd = cross(out, u).map(v => v * side);
+  return Math.atan2(dot(H, fwd), dot(H, out));
+}
+
+/**
+ * Where the elbow goes. The shoulder `S` and the wrist `W` leave it a circle to be on; of that circle it takes
+ * the place where the forearm is turned and the wrist bent within what they do (`limits`, as for limitWrist),
+ * where the arm passes through nothing (`blocks`: [{ a, b, r }], rods standing for your legs and trunk), and
+ * otherwise nearest where it goes by habit (`prefer`: a direction from the middle of the arm). `l1`, `l2`: the
+ * lengths of the upper arm and the forearm; `f`, `N`: the hand's frame; `last`: the way the elbow lay from the
+ * arm's line a moment ago (a direction: what the last call returned as `way`) and `step`: how far round it may go
+ * from that in one frame (radians: it does not swing round in a frame, whatever habit says now).
+ * Returns { elbow, angle (round the circle from `prefer`), way, sup, flex, dev, over: how far outside the limits (degrees) }.
+ */
+export function swivel(S, W, l1, l2, f, N, side, prefer, limits, { last = null, step = Infinity, blocks = [], habit = 0.004 } = {}) {
+  const span = sub(W, S), far = len(span), d = clamp(far, Math.abs(l1 - l2) + 1e-4, l1 + l2 - 1e-4), n = far > 1e-9 ? span.map(v => v / far) : [0, -1, 0];
+  const a = (l1 * l1 - l2 * l2 + d * d) / (2 * d), r = Math.sqrt(Math.max(l1 * l1 - a * a, 0)), C = [S[0] + n[0] * a, S[1] + n[1] * a, S[2] + n[2] * a];
+  const u = square(Math.abs(dot(unit(prefer), n)) > 0.999 ? [n[1], n[2], n[0]] : prefer, n), v = cross(n, u), D = 180 / Math.PI;
+  const at = phi => [0, 1, 2].map(i => C[i] + r * (u[i] * Math.cos(phi) + v[i] * Math.sin(phi)));
+  const outside = (x, lo, hi) => Math.max(0, lo - x, x - hi);
+  const cost = phi => {
+    const E = at(phi), w = wristAngles(S, E, W, f, N, side), o = outside(w.sup * D, limits.sup[0], limits.sup[1]) + outside(w.flex * D, limits.flex[0], limits.flex[1]) + outside(w.dev * D, limits.dev[0], limits.dev[1]);
+    // (And the upper arm turned at the shoulder no further than a shoulder turns.)
+    // (An arm nearly straight says little of how it is turned: it counts for less.)
+    const turned = shoulderTurn(S, E, W, side) * D, t = outside(turned, limits.shoulder?.[0] ?? -55, limits.shoulder?.[1] ?? 90) * clamp((r / l1 - 0.2) / 0.3, 0, 1);
+    let c = o * o + 4 * t * t + habit * (phi * D) * (phi * D);
+    // (An arm lies against a leg, and flesh gives: a centimetre in is nothing; beyond that it costs, as a joint past its range does.)
+    for (const b of blocks) { const deep = Math.max(0, b.r + 0.035 - between(S, E, b.a, b.b) - 0.01, b.r + 0.03 - between(E, W, b.a, b.b) - 0.01) * 100; c += 6 * deep * deep; }
+    return c;
+  };
+  // (Looked for round the whole circle, ten degrees at a time, then to a degree; or only as far as it may go from where it was.)
+  const was = last ? Math.atan2(dot(last, v), dot(last, u)) : null, lo = was === null ? -Math.PI : was - step, hi = was === null ? Math.PI : was + step;
+  let best = clamp(0, lo, hi), least = cost(best);
+  for (let k = 0; k <= 36; k++) { const phi = lo + (hi - lo) * k / 36, c = cost(phi); if (c < least) { least = c; best = phi; } }
+  for (let w = (hi - lo) / 36, k = 0; k < 5; k++, w /= 3) for (const phi of [best - w / 1.5, best + w / 1.5]) { if (phi < lo || phi > hi) continue; const c = cost(phi); if (c < least) { least = c; best = phi; } }
+  const E = at(best), w = wristAngles(S, E, W, f, N, side);
+  return { elbow: E, angle: best, way: [0, 1, 2].map(i => u[i] * Math.cos(best) + v[i] * Math.sin(best)), sup: w.sup, flex: w.flex, dev: w.dev, over: outside(w.sup * D, limits.sup[0], limits.sup[1]) + outside(w.flex * D, limits.flex[0], limits.flex[1]) + outside(w.dev * D, limits.dev[0], limits.dev[1]) };
+}
