@@ -560,6 +560,19 @@ export async function start(canvas, onProgress = () => {}) {
     // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
     const firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5, sink = deck ? 0 : (firm ? 0.005 : patch ? 0.018 : 0.011) + sunk;
     const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting, time: clock.time });
+    // Your toes, standing: Space curls them up and digs them into the sand, as it does when you sit; and left to
+    // themselves, standing a while, the toes of one foot and then the other lift and settle again every few
+    // seconds, as bare feet do on sand. (They press what they touch: the patch of real sand takes their marks.)
+    {
+      const quiet = !walker.sitting && walker.seated < 0.02 && gait.still > 2.5 && walker.crouched < 0.3;
+      const idle = i => { const u = ((clock.time + i * 4.3) / 9.2) % 1; return u < 0.1 ? 0.3 * Math.sin(Math.PI * u / 0.1) : u < 0.22 ? -0.14 * Math.sin(Math.PI * (u - 0.1) / 0.12) : 0; };
+      you.toes ??= [0, 0];
+      g.feet.forEach((f, i) => {
+        const want = walker.sitting || !f.down || walker.crouched > 0.3 ? 0 : input.up && gait.still > 0.3 ? 0.4 * Math.sin(clock.time * 9 + i * 1.3) - 0.12 : quiet ? idle(i) : 0;
+        if (dt > 0) you.toes[i] += (want - you.toes[i]) * (1 - Math.exp(-dt * 12));
+        f.toes = you.toes[i];
+      });
+    }
     // (A test may put the eye lower than anyone can squat, to look at the sand: the body is then posed in its
     // deepest squat, for the shadow, and left out of the picture: it would be folded through the camera.)
     const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02, breath = Math.sin(clock.time * 1.45);

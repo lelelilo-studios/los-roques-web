@@ -603,7 +603,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     // (The knee: both bones end rounded, so that a bent knee is a knee and not the open ends of two pipes.)
     if (detail) { t.cap(hem, knee, [0.055, 0.057], SKIN, 0.85); t.cap(calf, knee, [0.055, 0.057], SKIN, 0.85); }
     t.foot(ankle, [Math.sin(out), -Math.cos(out)], SKIN, detail ? side : 0, mine.pitch + tipped);
-    joints.feet.push({ pitch: mine.pitch + tipped, out, planted: mine.planted });
+    joints.feet.push({ pitch: mine.pitch + tipped, out, planted: mine.planted, toes: mine.toes || 0 });
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
     const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], a = ((gait ? gait.arm[side < 0 ? 0 : 1] : 0.7 * swing * c) - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = (gait ? 0.3 + 0.36 * Math.min(s, 1) * Math.max(0, Math.min(1, gait.arm[side < 0 ? 0 : 1] / 0.19)) + 0.95 * Math.min(1, Math.max(0, (s - 1.15) / 0.6)) : 0.14 + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0)) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
