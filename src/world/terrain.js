@@ -479,6 +479,7 @@ void main() {
       n = normalize(vec3(n.x - slope.x / e, n.y, n.z - slope.y / e));
       openSky *= 1.0 + 16.0 * min(h0, 0.0);                 // (the bottom of a print 2 cm deep sees two thirds of the sky)
       albedo *= 1.0 + 4.0 * min(h0, 0.0) * soft;            // pressed sand is a shade darker
+      albedo *= 1.0 + 12.0 * min(h0, 0.0) * (1.0 - soft);   // and on wet sand the floor of a print is soaked: a tenth darker
       albedo *= 1.0 - 0.42 * max(lrFootDamp, lrHandDamp) * soft * (1.0 - inPatch);       // and darker still where a wet foot, or water poured from your hand, has left it damp
     }
   }
@@ -497,6 +498,10 @@ void main() {
     if (wetness > 0.0) { patchDrained = inPatch * lrSaturate(-P.g); patchPool = inPatch * smoothstep(0.0015, 0.005, -h) * (1.0 - patchDrained); }
     // (Soaked sand was darkened above; drained, it is three quarters of the way back to its dry colour.)
     if (patchDrained > 0.0 && !covered) albedo *= mix(1.0, LR_SOAKED, fine * wetness * (1.0 - 0.75 * patchDrained)) / mix(1.0, LR_SOAKED, fine * wetness);
+    // (And the floor of a print in wet sand, lower than the sand about it, is where the water comes back to first
+    // and stays: packed, soaked, a tenth darker than the sand round it. Seen from above that, more than its
+    // depth of a few millimetres, is what shows a print on wet sand.)
+    if (patchPool > 0.0 && !covered) albedo *= 1.0 - 0.11 * patchPool;
     // Its own shadows: a rim shades the print beside it, a heap its far side.
     if (uSunDir.y > 0.02) {
       vec2 s = normalize(uSunDir.xz + 1e-5);
