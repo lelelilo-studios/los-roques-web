@@ -541,6 +541,65 @@ export async function start(canvas, onProgress = () => {}) {
   addEventListener('resize', resize);
   resize();
 
+  // Between swimming and standing your body goes over from the one pose to the other in half a second: your legs
+  // come down under you and your arms in from the stroke as the sea sets you on your feet, and the other way as
+  // it lifts you off them. (Your eye already did; your body was one pose in one frame and the other in the next.)
+  // The two are posed in different frames (standing: from your feet, facing as your body faces; swimming: from
+  // your eye, facing as you look), so both are put in one form and the swimmer is brought into the frame of the
+  // one who stands.
+  const going = { a: new THREE.Matrix4(), b: new THREE.Matrix4(), e: new THREE.Euler(), v: new THREE.Vector3() };
+  const frameOf = (m, f) => { going.e.set(f.pitch || 0, -f.yaw, 0, 'YXZ'); return m.makeRotationFromEuler(going.e).setPosition(f.x, f.y, f.z); };
+  const LIMBS = ['hips', 'knees', 'ankles', 'shoulders', 'elbows', 'wrists'], unitOf = v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+  /** The joints the rig needs, in one form for either pose. */
+  function inForm(j) {
+    const out = { hip: j.hip.slice(), shoulder: (j.shoulder || j.chest).slice(), eye: (j.eye || [0, 0, 0]).slice(), pelvis: j.pelvis || 0, headTurn: j.headTurn || 0, headNod: j.headNod || 0, feet: j.feet?.length ? j.feet.map(f => ({ ...f })) : null, drawn: j.drawn };
+    for (const name of LIMBS) out[name] = j[name].map(q => q.slice());
+    out.hands = j.wrists.map((w, i) => {
+      const h = j.hands?.[i];
+      if (h) return { ...h, f: h.f.slice(), N: h.N.slice() };
+      // (As the rig holds a swimmer's hand: along the forearm, palm down.)
+      const f = unitOf([w[0] - j.elbows[i][0], w[1] - j.elbows[i][1], w[2] - j.elbows[i][2]]), k = -f[1];
+      return { f, N: unitOf([-f[0] * k, -1 - f[1] * k, -f[2] * k]), curl: 0.1, spread: 0 };
+    });
+    return out;
+  }
+  /** A pose in the frame `from` (x, y, z, yaw, pitch), as it is in the frame `to`. */
+  function moved(j, from, to) {
+    const m = going.a.copy(frameOf(going.b, to)).invert().multiply(frameOf(going.b, from)), v = going.v;
+    const at = q => { v.set(q[0], q[1], q[2]).applyMatrix4(m); return [v.x, v.y, v.z]; }, way = q => { v.set(q[0], q[1], q[2]).transformDirection(m); return [v.x, v.y, v.z]; };
+    const out = { ...j, hip: at(j.hip), shoulder: at(j.shoulder), eye: at(j.eye), headTurn: j.headTurn + Math.atan2(Math.sin(from.yaw - to.yaw), Math.cos(from.yaw - to.yaw)) };
+    for (const name of LIMBS) out[name] = j[name].map(at);
+    out.hands = j.hands.map(h => ({ ...h, f: way(h.f), N: way(h.N) }));
+    return out;
+  }
+  function mixForms(a, b, k) {
+    const mix = (q, r) => [q[0] + (r[0] - q[0]) * k, q[1] + (r[1] - q[1]) * k, q[2] + (r[2] - q[2]) * k], num = (q, r) => q + (r - q) * k, near = k < 0.5 ? a : b;
+    const out = { hip: mix(a.hip, b.hip), shoulder: mix(a.shoulder, b.shoulder), eye: mix(a.eye, b.eye), pelvis: num(a.pelvis, b.pelvis), headTurn: num(a.headTurn, b.headTurn), headNod: num(a.headNod, b.headNod), feet: near.feet, drawn: near.drawn };
+    for (const name of LIMBS) out[name] = a[name].map((q, i) => mix(q, b[name][i]));
+    out.hands = a.hands.map((h, i) => { const g = b.hands[i]; return { ...(k < 0.5 ? h : g), f: unitOf(mix(h.f, g.f)), N: unitOf(mix(h.N, g.N)), curl: num(h.curl ?? 0.1, g.curl ?? 0.1), spread: num(h.spread || 0, g.spread || 0) }; });
+    return out;
+  }
+  /**
+   * What of you to draw this frame: `joints` as posed, `kind` 'stand' or 'swim', in `frame` (x, y, z relative to
+   * the camera, yaw, pitch). Returns { joints, frame, raw }: `raw` when it is the pose as posed, in its own frame;
+   * else a pose part of the way over from the last one, in the frame it is to be placed in.
+   */
+  function goingOver(dt, joints, kind, frame) {
+    const own = [rig.own.x - rig.eye.x, rig.own.y, rig.own.z - rig.eye.z], live = inForm(joints), b = you.blend ??= { kind: null, k: 1, from: null, last: null };
+    // (Put down somewhere: you are there as you are, at once.)
+    if (you.cut || !b.kind) { b.kind = kind; b.k = 1; b.from = null; you.cut = false; }
+    if (b.kind !== kind) { b.from = b.last; b.kind = kind; b.k = b.from ? 0 : 1; }
+    if (dt > 0 && b.k < 1) b.k = Math.min(1, b.k + dt / 0.5);
+    let out = { joints, frame, raw: true };
+    if (b.k < 1 && b.from) {
+      // (The pose you were in comes along with your eye, as it was.)
+      const k = b.k * b.k * (3 - 2 * b.k), was = { ...b.from.frame, x: own[0] + b.from.rel[0], y: own[1] + b.from.rel[1], z: own[2] + b.from.rel[2] };
+      out = kind === 'stand' ? { joints: mixForms(moved(b.from.j, was, frame), live, k), frame, raw: false } : { joints: mixForms(b.from.j, moved(live, frame, was), k), frame: was, raw: false };
+    } else b.from = null;
+    b.last = { j: out.raw ? live : out.joints, frame: { ...out.frame }, rel: [out.frame.x - own[0], out.frame.y - own[1], out.frame.z - own[2]] };
+    return out;
+  }
+
   /**
    * You move on by dt: the walker (where you are going), your feet (the gait), and your body posed over them.
    * It is done before the camera is set, because your eye is the posed body's eye.
@@ -548,6 +607,7 @@ export async function start(canvas, onProgress = () => {}) {
   function advance(dt, input) {
     walker.step(dt, input);          // (its own footfalls are not used: the gait says when a foot comes down)
     walker.head = null;
+    if (walker.placed) you.cut = true;
     // Where your eye is afloat (the walker's own place), and how far you are on your feet: 0 swimming .. 1
     // standing, half a second from the one to the other. Standing, your eye is the posed body's, a hand's
     // breadth from the walker's place: as the sea lifts you off your feet or sets you down, your eye goes over
@@ -737,7 +797,9 @@ export async function start(canvas, onProgress = () => {}) {
         body.joints.ankles.forEach((a, i) => { const o = body.joints.feet[i]?.out || 0, fx = Math.sin(o), fz = -Math.cos(o); put(i * 2, [a[0] - fx * 0.02, a[1] - 0.025, a[2] - fz * 0.02], 0.05); put(i * 2 + 1, [a[0] + fx * 0.11, Math.max(a[1] - 0.05, 0.02), a[2] + fz * 0.11], 0.045); });
         body.joints.wrists.forEach((w, i) => { const t = body.joints.fingertips[i] || w; put(4 + i, [(w[0] + t[0]) / 2, (w[1] + t[1]) / 2, (w[2] + t[2]) / 2], 0.05); });
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
-        figure.mesh.visible = !you.folded; figure.setPose(figureRig.pose(body.joints, you.eyeUp), body.joints.eye ? body.joints.eye[1] : you.eyeUp); figure.place(offX, you.y, offZ, you.heading);
+        // (Just set down by the sea: part of the way over from swimming still.)
+        const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
+        figure.mesh.visible = !you.folded; figure.setPose(figureRig.pose(over.joints, you.eyeUp), over.raw ? (body.joints.eye ? body.joints.eye[1] : you.eyeUp) : over.joints.eye[1]); figure.place(offX, you.y, offZ, you.heading);
         figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = figureRig.hand(1);
@@ -793,7 +855,9 @@ export async function start(canvas, onProgress = () => {}) {
       const sx = rig.own.x - rig.eye.x, sz = rig.own.z - rig.eye.z;
       body.pose({ swim: true, stroke: walker.stroke, under }); body.place(sx, walker.eyeY + walker.bob, sz, walker.yaw, under * walker.look);
       if (figure) {
-        figure.setPose(figureRig.pose(body.joints, 0), 0); figure.place(sx, walker.eyeY + walker.bob, sz, walker.yaw, under * walker.look);
+        // (Just lifted off your feet: part of the way over from standing still, in the frame you stood in.)
+        const over = goingOver(dt, body.joints, 'swim', { x: sx, y: walker.eyeY + walker.bob, z: sz, yaw: walker.yaw, pitch: under * walker.look });
+        figure.setPose(figureRig.pose(over.joints, 0), over.raw ? 0 : over.joints.eye[1]); figure.place(over.frame.x, over.frame.y, over.frame.z, over.frame.yaw, over.frame.pitch || 0);
         figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.hair.visible = !!rig.outside;
         // (Afloat, what of you is under the surface is seen through it, as your legs are when you wade: your arms
         // working under the water in front of you. It was painted over by the sea: a head floating by itself.)
@@ -854,7 +918,13 @@ export async function start(canvas, onProgress = () => {}) {
         patch.update(dt, { x: walker.x, z: walker.z, cam: rig.eye, base: footing.heightAt(walker.x, walker.z), time: clock.time, feetWet: feetWet() ? 0.8 : 0,
           meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: pressing }] : [],
           sample: (x, z) => { const g = footing.heightAt(x, z); return [g, wetSandAt(x, z, g) ? 1 : 0, surfaceAt(x, z) - g]; } });
-        ripples?.update(dt, { x: walker.x, z: walker.z, time: clock.time, flow, meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: crossing }] : [] });
+        // (What breaks the surface into bubbles is a leg lifted out of it and put back in, or a shin driven
+        // through it at a walk: up to the hip. Deeper, your legs stay under and your body only parts the water as
+        // it goes, slowly: ripples and a wake, no foam. It foamed at any speed: wading chest-deep you trailed a
+        // white sheet a metre long.)
+        const ease = (a, b, v) => { const t = Math.min(Math.max((v - a) / (b - a), 0), 1); return t * t * (3 - 2 * t); };
+        const stir = Math.max(1 - ease(0.55, 0.95, walker.depth), ease(0.9, 1.6, Math.hypot(walker.vx, walker.vz)));
+        ripples?.update(dt, { x: walker.x, z: walker.z, time: clock.time, flow, stir, meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: crossing }] : [] });
         if (skin && figure.mesh.visible) skin.update(dt, figure.mesh, !standing ? walker.surf : (you.waterY ?? -1e9), rig.eye);
       } else { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
       // (For tests: drawn as if there were no patch, to see that untouched sand looks the same with it as without.)
@@ -1001,6 +1071,13 @@ export async function start(canvas, onProgress = () => {}) {
     /** For tests: your feet as the gait has them (world), the joints as last posed (the body's frame), and where that frame stands. */
     gait: () => ({ feet: gait.feet.map(f => ({ x: f.x, z: f.z, yaw: f.yaw, down: f.down, pitch: f.pitch, ankle: f.ankle.slice() })), heading: walker.heading, yaw: walker.yaw, at: [walker.x, walker.z], you: { x: you.x, y: you.y, z: you.z, heading: you.heading, dip: you.dip }, eye: [rig.own.x, rig.own.y, rig.own.z] }),
     joints: () => (you.on ? JSON.parse(JSON.stringify(body.joints)) : null),
+    /** For tests: your joints as last drawn (standing, swimming or between the two), in the world: { ankles, knees, wrists, elbows, hip, eye, over: 0..1 }. */
+    drawn() {
+      const b = you.blend;
+      if (!b?.last) return null;
+      const m = frameOf(going.a, b.last.frame), v = going.v, at = q => { v.set(q[0], q[1], q[2]).applyMatrix4(m); return [v.x + rig.eye.x, v.y, v.z + rig.eye.z]; }, j = b.last.j;
+      return { ankles: j.ankles.map(at), knees: j.knees.map(at), wrists: j.wrists.map(at), elbows: j.elbows.map(at), hip: at(j.hip), eye: at(j.eye), over: b.k, kind: b.kind };
+    },
     /**
      * For tests: look at yourself from outside. `angle` degrees round you from behind (0) to in front (180), `dist`
      * metres off, `height` of the camera above your feet, `aim` the height it looks at. No arguments: back to your own eyes.

@@ -25,6 +25,7 @@ uniform sampler2D tGround;    // over the window: r = the ground above the base,
 uniform vec2 uCentre;         // the window's middle (detail coordinates)
 uniform float uL, uN, uDt;
 uniform vec2 uFlow;           // how the water is running over the ground here (m/s; the swash)
+uniform float uStir;          // how far what you are doing breaks the surface into bubbles, 0..1 (see update)
 uniform vec4 uDrop[${DROPS}]; // what falls in: where (detail coordinates), over what radius (m), how hard (m/s)
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
@@ -51,7 +52,7 @@ void main() {
   v += 2.6 * pushed * (1.0 - m);
   // And it is churned: bubbles for a second where water was thrown aside fast, spreading a little as they fade.
   float churn = max(c.a, 0.25 * (xp.a + xm.a + zp.a + zm.a)) * exp(-uDt * 1.6);
-  churn = max(churn, lrChurn(abs(pushed)) * (1.0 - m));
+  churn = max(churn, lrChurn(abs(pushed)) * (1.0 - m) * uStir);
   for (int i = 0; i < ${DROPS}; i++) {
     if (uDrop[i].z <= 0.0) continue;
     vec2 o = mod(d - uDrop[i].xy + 0.5 * uL, uL) - 0.5 * uL;
@@ -131,7 +132,7 @@ export class Ripples {
     this.cross.texture.wrapS = this.cross.texture.wrapT = THREE.ClampToEdgeWrapping;
     this.pass = new FullscreenPass(simFragment, {
       tPrev: { value: null }, tCross: { value: this.cross.texture }, tGround: { value: patch.grid }, uCentre: { value: new THREE.Vector2() }, uL: { value: this.L }, uN: { value: size },
-      uDt: { value: 0 }, uFlow: { value: new THREE.Vector2() }, uDrop: { value: Array.from({ length: DROPS }, () => new THREE.Vector4()) },
+      uDt: { value: 0 }, uFlow: { value: new THREE.Vector2() }, uStir: { value: 1 }, uDrop: { value: Array.from({ length: DROPS }, () => new THREE.Vector4()) },
     });
     this.falling = []; this.zero = new Float32Array([0, 0, 0, 0]);
     this.reset();
@@ -182,7 +183,7 @@ export class Ripples {
     renderer.autoClear = auto;
     // The water moves on: two half steps (it keeps the ripples' speed steady at any frame rate down to 30 a second).
     const u = this.pass.material.uniforms, step = Math.min(dt, 1 / 30) / 2;
-    u.uCentre.value.set(wrap(c.x), wrap(c.z)); u.uDt.value = step; u.uFlow.value.set(c.flow?.[0] || 0, c.flow?.[1] || 0);
+    u.uCentre.value.set(wrap(c.x), wrap(c.z)); u.uDt.value = step; u.uFlow.value.set(c.flow?.[0] || 0, c.flow?.[1] || 0); u.uStir.value = c.stir ?? 1;
     for (let half = 0; half < 2; half++) {
       // (What falls in, falls in once: in the first half step after its time.)
       let n = 0;
