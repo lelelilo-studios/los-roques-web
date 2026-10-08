@@ -76,32 +76,40 @@ function inward(side, f) {
  * wrist can hold it, it gives. Returns { wrist, elbow, f, N }.
  */
 function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0) {
-  const to = work.at, curl = work.curl ?? 0.2, lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift), inc = work.incline || 0;
+  const to = work.at, curl = work.curl ?? 0.2, lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = work.eased ? lift : lift * lift * (3 - 2 * lift), inc = work.incline || 0;
+  // (How far the palm has rolled over: with the lift, unless the hand says otherwise: it begins to turn in the sand.)
+  const turn = work.wrist ? Math.min(1, Math.max(0, work.turn ?? up)) : 0;
   const away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), ci = Math.cos(inc), si = Math.sin(inc);
-  const fG = [away[0] * ci, -si, away[2] * ci], NG = [-away[0] * si, -ci, -away[2] * si], AG = cross(fG, NG).map(v => v * side);
+  const fG = [away[0] * ci, -si, away[2] * ci], NG = [-away[0] * si, -ci, -away[2] * si];
   let f = fG, N = NG;
-  if (up > 0) {
+  if (up > 0 || turn > 0) {
     const fH = unit(work.dir), k = work.palm[0] * fH[0] + work.palm[1] * fH[1] + work.palm[2] * fH[2], NH = unit([work.palm[0] - fH[0] * k, work.palm[1] - fH[1] * k, work.palm[2] - fH[2] * k]);
     f = unit([fG[0] + (fH[0] - fG[0]) * up, fG[1] + (fH[1] - fG[1]) * up, fG[2] + (fH[2] - fG[2]) * up]);
     const from = rollOf(side, fG, NG);
     let till = rollOf(side, fH, NH);
     if (till < from) till += 2 * Math.PI;
-    N = rolled(side, f, from + (till - from) * up);
+    N = rolled(side, f, from + (till - from) * turn);
   }
-  const span = fingerReach(side, work.fingers, curl), want = [0, 1, 2].map(i => to[i] - fG[i] * span[0] - NG[i] * span[1] - AG[i] * span[2]);
+  // (On the ground the wrist is where the fingertip's place puts it, the hand held as it is: rolling over in the
+  // sand, the fingertips stay where they are and the hand comes round them.)
+  const AG = cross(f, N).map(v => v * side), span = fingerReach(side, work.fingers, curl), want = [0, 1, 2].map(i => to[i] - f[i] * span[0] - N[i] * span[1] - AG[i] * span[2]);
   // (No further than the arm goes: a place out of reach is reached for along the ground as far as the hand
   // gets, not from above it. Reaching across yourself, the hand used to hang a hand's breadth over the sand.
   // While your shoulders are still coming down, work.settle, the place is the one the arm will reach when
   // they have: the hand is over it meanwhile, and comes down on it. And not to the arm's full length: an arm
   // reaching for the sand before you is not locked straight.)
   { const most = (PROP.upperArm + PROP.forearm) * 0.95, dy = want[1] - (sh[1] - (work.settle || 0)), flat = Math.hypot(want[0] - sh[0], want[2] - sh[2]), can = Math.sqrt(Math.max(most * most - dy * dy, 0.01)); if (flat > can) { want[0] = sh[0] + (want[0] - sh[0]) * can / flat; want[2] = sh[2] + (want[2] - sh[2]) * can / flat; } }
+  // (Coming up, it comes from where it was on the ground when it left it: as your shoulder rises, the place an
+  // arm at full stretch reaches moves in under you, and the hand was drawn in over the sand before it rose.)
+  const m = work.memo || null;
+  if (m) { if (up > 0 && m.ground) for (let i = 0; i < 3; i++) want[i] = m.ground[i]; else if (up <= 0) m.ground = want.slice(); }
   if (up > 0) for (let i = 0; i < 3; i++) want[i] += (work.wrist[i] - want[i]) * up;
   const wrist = [0, 1, 2].map(i => wrist0[i] + (want[i] - wrist0[i]) * reaching);
   { const d = [wrist[0] - sh[0], wrist[1] - sh[1], wrist[2] - sh[2]], l = Math.hypot(d[0], d[1], d[2]), most = (PROP.upperArm + PROP.forearm) * 0.999; if (l > most) for (let i = 0; i < 3; i++) wrist[i] = sh[i] + d[i] * most / l; }
   const [hf, hN] = slerpFrame(f0, N0, f, N, reaching);
   // (Held up to look at, a wrist is not bent back as far as it will go: `work.back` degrees at most, by default 26;
   // more as the hand tips forward to let what it holds run.)
-  const limits = { sup: ARM.sup, flex: [ARM.flex[0] + (-ARM.flex[0] - (work.back ?? 26)) * up * reaching, ARM.flex[1]], dev: ARM.dev }, q = Math.min(1, reaching * 1.4), m = work.memo || null;
+  const limits = { sup: ARM.sup, flex: [ARM.flex[0] + (-ARM.flex[0] - (work.back ?? 26)) * up * reaching, ARM.flex[1]], dev: ARM.dev }, q = Math.min(1, reaching * 1.4);
   // (The way the elbow goes by habit: over from the resting arm's to the working arm's as the hand sets out.)
   const habit = [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up].map((v, i) => pole0[i] + (v - pole0[i]) * q);
   // (As the hand sets out the elbow is where habit has it, the resting arm's: it leaves that only as the work asks. So nothing jumps at the start.)
@@ -480,13 +488,13 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     const wrist = side < 0 ? [sh[0] - 0.1, 0.125 + 0.03 * hop, hip[2] + 0.17] : [on[0] + side * 0.012, on[1] + 0.084 + 0.03 * hop, on[2] + 0.03];
     const pole = side < 0 ? [side * 0.7, 0.1, 1] : [side * 0.9, -0.25, 0.45];
     let elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, pole);
-    const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? work.amount * work.amount * (3 - 2 * work.amount) : 0;
+    const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? (work.eased ? Math.min(1, work.amount) : work.amount * work.amount * (3 - 2 * work.amount)) : 0;
     // (At rest: the left hand's fingers point down, out and back, into the sand; the right hand's along the thigh.)
     const flat = side < 0 ? unit([-0.38, -0.74, 0.55]) : unit([thigh[0] - side * 0.1, thigh[1] - 0.12, thigh[2]]);
     const facing = (v => { const k = v[0] * flat[0] + v[1] * flat[1] + v[2] * flat[2]; return unit([v[0] - flat[0] * k, v[1] - flat[1] * k, v[2] - flat[2] * k]); })(side < 0 ? [0, -0.5, 0.87] : [0, -1, 0]);
     let held = null;
     if (reaching) {
-      const lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      const lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = work.eased ? lift : lift * lift * (3 - 2 * lift);
       // (You lean over towards what you reach for.)
       // (Seated upright, the shoulder dips towards the hand: the sand beside you is an arm's length down.)
       if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } else sh[1] -= 0.06 * reaching * (1 - up);
@@ -739,7 +747,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid
     // flat, fingers pointing away from you, the wrist a hand's length behind the fingertip and just above it.
     // (Either hand: `touch` is the right one's work, `touchL` the left's.)
-    const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? work.amount * work.amount * (3 - 2 * work.amount) : 0;
+    const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? (work.eased ? Math.min(1, work.amount) : work.amount * work.amount * (3 - 2 * work.amount)) : 0;
     // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
     // (Squatting: palms down, fingers hanging.)
     const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]);
@@ -755,7 +763,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     // wrist does on the forearm as it lies.
     let held;
     if (reaching) {
-      const lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      const lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = work.eased ? lift : lift * lift * (3 - 2 * lift);
       sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.12 * reaching * (1 - up);
       held = workArm(side, sh, wrist, elbow, hang, rest, work, reaching, legBlocks(hipJ, knee, ankle), unit([elbow[0] - (sh[0] + wrist[0]) / 2, elbow[1] - (sh[1] + wrist[1]) / 2, elbow[2] - (sh[2] + wrist[2]) / 2]));
       for (let i = 0; i < 3; i++) wrist[i] = held.wrist[i];

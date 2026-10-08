@@ -198,8 +198,11 @@ export class Walker {
     // (Nobody walks in a full squat: going anywhere crouched, you come half way up and go stooped.)
     const stoop = this.gaited ? 0.3 * (this.stand - this.crouch) * Math.min(1, Math.hypot(this.vx, this.vz) / 0.3) : 0;
     // (Either hand at work brings you a hand's breadth lower.)
-    const reaching = input.hand || input.hand2;
-    const want = this.sitting ? this.sit - (reaching && !this.gaited ? 0.06 : 0) : input.down && !this.diving && d < 0.9 ? this.crouch + stoop - (reaching ? 0.12 : 0) : this.stand;
+    // (And you come up with the hand as it comes up from the sand, not all at once when you let go: the hand,
+    // still on the sand, was dragged in under you.)
+    // (`atWork`, 0..1: how far a hand is still down at the sand, as it comes up from it.)
+    const reaching = Math.max(input.hand || input.hand2 ? 1 : 0, input.atWork || 0);
+    const want = this.sitting ? this.sit - (this.gaited ? 0 : 0.06 * reaching) : input.down && !this.diving && d < 0.9 ? this.crouch + stoop - 0.12 * reaching : this.stand;
     this.bodyWant = want;                                         // (where your eye is on its way to: app.js holds the hand off the sand until you are nearly there)
     // (Down into a squat and up again in two thirds of a second; on to your seat and off it in a second and more.)
     { const to = this.sitting ? 1 : 0; this.seated += Math.sign(to - this.seated) * Math.min(Math.abs(to - this.seated), dt / 1.1); }

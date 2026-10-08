@@ -212,7 +212,10 @@ export class FigureRig {
       const raised = Math.acos(Math.max(-1, Math.min(1, dot(hang, down)))), drop = 0.11 * (1 - Math.min(1, Math.max(0, (raised - 0.25) / 1.1)));
       const Rclav = mul(Rt, about([0, 0, 1], -s.side * drop)), c0 = this.bones[s.bone.clavicle].head;
       this.hinge(s.bone.clavicle, Rclav);
-      const S = add(S0, sub(turn(Rclav, sub(s.S, c0)), turn(Rt, sub(s.S, c0)))), wrist = j.wrists[i].slice(), elbowTo = sub(j.elbows[i], [(S[0] + wrist[0]) / 2, (S[1] + wrist[1]) / 2, (S[2] + wrist[2]) / 2]);
+      // (Which way the elbow bends is taken from the solver's own arm, its elbow off the line from its shoulder
+      // to its wrist: an arm nearly straight has its elbow a finger's breadth off that line, and against her
+      // shoulder, a finger's breadth from the solver's, the way to it swung right round from frame to frame.)
+      const S = add(S0, sub(turn(Rclav, sub(s.S, c0)), turn(Rt, sub(s.S, c0)))), wrist = j.wrists[i].slice(), elbowTo = sub(j.elbows[i], [(j.shoulders[i][0] + wrist[0]) / 2, (j.shoulders[i][1] + wrist[1]) / 2, (j.shoulders[i][2] + wrist[2]) / 2]);
       const E = reach(S, wrist, s.upper, s.fore, len(elbowTo) > 1e-4 ? elbowTo : [0, -1, 0.3]);
       let plane = cross(sub(E, S), sub(wrist, E));
       plane = len(plane) > 1e-4 ? unit(plane) : turn(Rt, s.armPlane);

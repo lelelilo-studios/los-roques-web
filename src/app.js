@@ -613,7 +613,7 @@ export async function start(canvas, onProgress = () => {}) {
    * It is done before the camera is set, because your eye is the posed body's eye.
    */
   function advance(dt, input) {
-    walker.step(dt, input);          // (its own footfalls are not used: the gait says when a foot comes down)
+    walker.step(dt, hand.low || handL.low ? { ...input, atWork: Math.max(hand.low, handL.low) } : input);          // (its own footfalls are not used: the gait says when a foot comes down)
     walker.head = null;
     if (walker.placed) you.cut = true;
     // Where your eye is afloat (the walker's own place), and how far you are on your feet: 0 swimming .. 1
@@ -1231,7 +1231,8 @@ void main() { outColor = vec4(lrRagged(uPts[int(gl_FragCoord.x)]), 0.0, 0.0, 1.0
       // soaked: { to: metres above your feet, amount: 0..1 }: as if you had just waded that deep (for pictures).
       if (s.soaked !== undefined) Object.assign(soak, s.soaked ? { high: s.soaked.to, amount: s.soaked.amount ?? 1, sand: s.soaked.sand ?? 0 } : { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 });
       // touch: { seconds, turn (degrees a second) }: crouch, put your hand down and draw it along for that long (for pictures).
-      if (s.touch) { api.run(0.7, { down: true }); api.run(0.4, { down: true, hand: true }); api.run(s.touch.seconds ?? 1.2, { down: true, hand: true }, s.touch.turn ?? 0, s.touch.nod ?? 0); if (s.touch.then) api.run(s.touch.then.seconds ?? 1, { down: true, hand: true }, s.touch.then.turn ?? 0, s.touch.then.nod ?? 0);
+      // (A hand takes three quarters of a second to reach the sand, and about as long again to take a handful.)
+      if (s.touch) { api.run(0.7, { down: true }); api.run(0.9, { down: true, hand: true }); api.run(s.touch.seconds ?? 1.2, { down: true, hand: true }, s.touch.turn ?? 0, s.touch.nod ?? 0); if (s.touch.then) api.run(s.touch.then.seconds ?? 1, { down: true, hand: true }, s.touch.then.turn ?? 0, s.touch.then.nod ?? 0);
         // (release: let go and watch it run out for that long, crouched still, or standing up with it.)
         if (s.touch.release) api.run(s.touch.release, { down: !s.touch.stand, ...(s.touch.open !== undefined ? { open: s.touch.open } : {}) }, 0, s.touch.look ?? 0); }
       if (s.stroll) {

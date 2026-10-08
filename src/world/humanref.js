@@ -65,6 +65,7 @@ export const REACH = {
   time: [0.5, 0.9],                    // seconds, from the hand setting off to its touching, at arm's length or less
   lift: [0.9, 1.4],                    // seconds to bring a handful up before you
   peak: [33, 50],                      // % of the time at which the wrist is fastest
+  liftPeak: [33, 55],                  // and bringing a handful up: nearer half way (a hand that carries is not hurrying to arrive)
   aperture: [55, 75],                  // % of the time at which the fingers are widest
   speed: [0.6, 1.3],                   // the wrist's top speed, m/s
   accel: 12,                           // and its greatest acceleration, m/s2
