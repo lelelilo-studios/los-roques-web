@@ -652,7 +652,11 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
       // (Squatting: palms down, fingers hanging.)
-      const rest = gait ? [-side * (1 - 0.45 * squat), -0.6 * wade - 0.25 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.85 * squat] : [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat], loose = 0.55 - 0.3 * wade - 0.15 * squat;
+      const rest = gait ? [-side * (1 - 0.45 * squat), -0.6 * wade - 0.25 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.85 * squat] : [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat];
+      // How far the fingers of a hand at rest are curled. A hand hanging at ease is not flat: its fingers curl in,
+      // the little finger most, some thirty degrees at the knuckles and more at the middle joints; at a run it
+      // closes to a loose fist. And your two hands are not held alike: the left a little more closed.
+      const loose = (gait ? 0.86 - 0.05 * side + 0.7 * Math.min(1, Math.max(0, (s - 1.15) / 0.5)) : 0.55) - 0.3 * wade - 0.15 * squat;
       // (Hanging from the knee, the hand points down and a little forward and inward, whatever way the forearm lies.)
       const hang = gait ? unit([fore[0] * (1 - squat) - side * 0.18 * squat, fore[1] * (1 - squat) - 0.9 * squat, fore[2] * (1 - squat) - 0.4 * squat]) : unit([fore[0] * (1 - squat), fore[1] * (1 - squat) - 0.55 * squat, fore[2] * (1 - squat) - 0.83 * squat]);
       const tip = t.hand(wrist, point ? mix(hang, point) : hang, point ? mix(rest, facing) : rest, side, point ? loose + ((work.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (work.spread ?? 0) * reaching : 0, elbow, sleeve);

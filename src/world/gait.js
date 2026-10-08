@@ -226,11 +226,12 @@ export class Gait {
     // and the hips turn with the stride. (An arm goes further back than forward at the shoulder, some twenty
     // degrees against ten walking: it is the elbow, bending as the arm comes forward, that brings the hand up
     // in front of you. Swung as far forward as back, the hand reached out two hand's lengths at every pace.)
+    // (And nobody's two arms swing alike: the left a little less.)
     const reachOf = v => (v > 0 ? 0.62 * v : 1.15 * v);
     const apart = clamp((out[1].ahead - out[0].ahead) / (0.75 * legs), -1, 1), swing = 0.3 * clamp(speed / 1.3, 0, 1.5) ** 0.8 * (1 - 0.75 * crouch);
     // (`beat`: 1 a moment after a foot has come down, as your weight comes on to it, 0 half way between: the hips
     // are lowest at the one, highest at the other. At the footfall itself the knee is nearly straight; it gives
     // as it takes your weight.)
-    return { feet: out, shift: this.shift, arm: [reachOf(apart * swing), reachOf(-apart * swing)], turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase - 0.08) ** 4 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
+    return { feet: out, shift: this.shift, arm: [0.92 * reachOf(apart * swing), reachOf(-apart * swing)], turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase - 0.08) ** 4 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
   }
 }
