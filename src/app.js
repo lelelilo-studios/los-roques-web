@@ -224,8 +224,9 @@ export async function start(canvas, onProgress = () => {}) {
     figure = new Figure(data, tier.fp.shadowTaps || 4, { uBodyWet: u.uBodyWet, uBodySand: u.uBodySand, uHandWet: u.uHandWet, uHandSand: u.uHandSand, uHandWetL: u.uHandWetL, uHandSandL: u.uHandSandL }); figureRig = new FigureRig(data.info);
     const p = figureRig.proportions, was = walker.stand;
     setProportions(p);
-    // (Squatting on her heels, leaning forward a little, her eyes are at about half her height.)
-    Object.assign(walker, { stand: p.stand, crouch: 0.51 * p.stand, sit: 0.095 + 0.985 * p.torso + p.eyeToShoulder, legs: (p.thigh + p.shin) / 0.87 });
+    // (Squatting on her heels, leaning forward a little, her eyes are at a little over half her height: lower, and
+    // the knees have to fold further than knees do, 160 degrees and more.)
+    Object.assign(walker, { stand: p.stand, crouch: 0.54 * p.stand, sit: 0.095 + 0.985 * p.torso + p.eyeToShoulder, legs: (p.thigh + p.shin) / 0.87 });
     gait.prop = { hip: p.hip, ankle: p.ankle, leg: p.thigh + p.shin };
     if (walker.body >= was - 0.01) { walker.eyeY += p.stand - walker.body; walker.body = p.stand; }
     opaque.add(figure.mesh, figure.hair);

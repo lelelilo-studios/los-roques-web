@@ -163,7 +163,8 @@ export class Gait {
         // as it is in people: the heel is hardly off the ground when the other foot lands, a quarter of a
         // metre on, and sixty degrees up as the toes leave. Rising early, it folded the trailing knee to forty
         // degrees where a person's is at ten: tools/gaitcurves.mjs.)
-        f.ahead = (f.x - c.x) * dx + (f.z - c.z) * dz;
+        // (Against the way your body faces now, when the foot was put down facing another way: you have turned since.)
+        { const k = ease(clamp((Math.abs(wrapPi(f.yaw - f.side * TOE_OUT - h)) - 0.15) / 0.5, 0, 1)), own = (f.x - c.x) * dx + (f.z - c.z) * dz, yours = (f.x - c.x) * fx + (f.z - c.z) * fz; f.ahead = own + (yours - own) * k; }
         // (Squatting right down, most people's heels come off the ground: they sit on the balls of their feet.)
         const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2, push = Math.max(PUSH * clamp((-f.ahead - 0.18 * L) / (0.275 * L), 0, 1) ** 1.8, 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)));
         const [a, hgt] = t > 0.002 ? heelUp(t) : ballDown(push);

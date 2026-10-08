@@ -386,7 +386,7 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
       // (The way the elbow bends goes over from the resting arm's to the working arm's as the hand sets out: it does not flip.)
-      { const q = Math.min(1, reaching * 2.5), mixed = (a, b) => a + (b - a) * q; elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [mixed(side * 0.7, side * (0.75 - 0.15 * up)), mixed(0.1, 0.25 - 0.95 * up), mixed(1, 0.6 - 0.25 * up)]); }
+      { const q = Math.min(1, reaching * 1.4), mixed = (a, b) => a + (b - a) * q; elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [mixed(side * 0.7, side * (0.75 - 0.15 * up)), mixed(0.1, 0.25 - 0.95 * up), mixed(1, 0.6 - 0.25 * up)]); }
       point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, touch.dir[1] * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
       facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
     }
@@ -523,7 +523,11 @@ export function reach(hip, target, l1, l2, bend) {
 export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0, pace = null, sink = 0, touch = null, touchL = null, gait = null, dip = 0, turn = 0, carry = null }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   // (You lean into a hill, and back coming down one.)
-  const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
+  const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy));
+  let lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
+  // (Your seat does not go lower than your heels let it: bending lower than a full squat, to reach the sand in
+  // front of you, is leaning further forward. With the hips going down instead, the knees folded past 155 degrees.)
+  if (gait) { const up = eye - PROP.eyeToShoulder - 0.05 * dip - 0.27; if (up < PROP.torso * Math.cos(lean)) lean = Math.acos(Math.min(1, Math.max(0.05, up / PROP.torso))); }
   // (What is above the hips comes down with them, all but a twentieth that the back takes up: now that the hips
   // ride four centimetres, as a person's do, the head rides nearly the same.)
   const sy = eye - PROP.eyeToShoulder + 0.004 * breath - (gait ? 0.95 * dip : 0), shoulder = [0, sy, PROP.back + 0.02 + (gait ? 0.04 : 0.1) * Math.max(0, -Math.sin(look))];
@@ -611,6 +615,10 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       // (The forearm lies along the top of the thigh, the wrist just past the knee and a little inside it, the
       // hand hanging loose in front of the shin; the elbow is down by the thigh, not out to the side.)
       const over = gait ? [knee[0] - side * 0.035, knee[1] + 0.03, knee[2] - 0.075] : [knee[0] + side * 0.012, knee[1] + 0.035, knee[2] - 0.09];
+      // (Leaning low over your knees, the shoulder comes down nearly on to the knee: the forearm then hangs down
+      // in front of the shin, it does not fold up in the gap. Left on the knee, the elbow had nowhere to be and
+      // swung about.)
+      if (gait) { const near = Math.hypot(over[0] - sh[0], over[1] - sh[1], over[2] - sh[2]); if (near < 0.27) { over[1] -= (0.27 - near) * 1.2; over[2] -= (0.27 - near) * 0.5; } }
       for (let i = 0; i < 3; i++) wrist[i] += (over[i] - wrist[i]) * squat;
       // (The elbow goes down and outward: a direction the line from shoulder to wrist, which runs forward, never
       // comes near. Asked to go back as well, it swung round that line whenever the knee came up level with the shoulder.)
@@ -630,7 +638,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
-      { const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up]), q = Math.min(1, reaching * 2.5); elbow = [elbow[0] + (bent[0] - elbow[0]) * q, elbow[1] + (bent[1] - elbow[1]) * q, elbow[2] + (bent[2] - elbow[2]) * q]; }
+      { const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up]), q = Math.min(1, reaching * 1.4); elbow = [elbow[0] + (bent[0] - elbow[0]) * q, elbow[1] + (bent[1] - elbow[1]) * q, elbow[2] + (bent[2] - elbow[2]) * q]; }
       point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, (touch.dir[1]) * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
       facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
     }

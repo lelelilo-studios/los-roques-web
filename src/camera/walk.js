@@ -68,7 +68,7 @@ export class Walker {
   /** How far down you are, 0 standing .. 1 in a full crouch. */
   get crouched() { return Math.min(1, Math.max(0, (this.stand - this.body) / (this.stand - this.crouch))); }
   place({ x, z, yaw = this.yaw, look = this.look, height = this.stand, eye = null }) {
-    Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, seated: 0, bodyV: 0, turnRate: 0, turning: false, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
+    Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, seated: 0, bodyV: 0, turnRate: 0, turning: false, slant: 0, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
     this.body = height; this.bodyTo = height; this.bodyV = 0;
@@ -139,7 +139,12 @@ export class Walker {
       if (!onGround || !this.gaited) this.heading = this.yaw;
       else {
         let rate = 0;
-        if (!low && going > 0.2) rate = Math.max(-4.5, Math.min(4.5, off * 6));
+        // (Going at a slant, forward or back, the body turns most of the way to face along its path and you look
+        // over your shoulder: nobody walks far with every pace half sideways. It turns over a pace or two, the feet
+        // coming round with it as they are put down. Straight sideways you side-step, square.)
+        const slant = Math.abs(input.fwd) > 0.3 && Math.abs(input.right) > 0.3 ? 0.8 * (input.fwd > 0 ? Math.atan2(input.right, input.fwd) : Math.atan2(-input.right, -input.fwd)) : 0;
+        this.slant = (this.slant || 0) + Math.max(-1.3 * dt, Math.min(1.3 * dt, slant - (this.slant || 0)));
+        if (!low && going > 0.2) rate = Math.max(-4.5, Math.min(4.5, (off + this.slant) * 6));
         else if (low) {
           // Seated, you shuffle round in scoots: heels and hand lifted clear of the sand, a quarter turn of the
           // hips... a seventh of a radian, in four tenths of a second; down; and again if you are still turned.
