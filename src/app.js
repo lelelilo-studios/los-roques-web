@@ -312,7 +312,7 @@ export async function start(canvas, onProgress = () => {}) {
   }
 
   // Your footprints: the last 24 paces on sand, left and right of the line walked.
-  let prints = 0, carved = -9;
+  let prints = 0, carved = -9, hidePatch = false;
   // (Where each of those prints is in the world, and whether the patch of real sand has lost it: see the frame.)
   const marks = [];
   const wrap64 = v => ((v % 64) + 64) % 64;
@@ -555,7 +555,7 @@ export async function start(canvas, onProgress = () => {}) {
     // Sitting down and getting up are movements, a second long: from a squat over your feet back on to your
     // seat, a hand going to the sand behind you and your legs out in front; and the same undone. (`seated`: how
     // far along; the two poses are mixed, joint by joint.)
-    const k = walker.seated, eased = k * k * (3 - 2 * k), sit = { sit: true, eye: walker.sit, recline: seated.lean, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: deck ? 0 : 0.008 + sunk, touch: reach, turn, look: walker.look };
+    const k = walker.seated, eased = k * k * (3 - 2 * k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: deck ? 0 : 0.008 + sunk, touch: reach, turn, look: walker.look };
     // (Setting off, the hips come forward over the feet during the first pace, not in the first three frames; and
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
@@ -737,6 +737,8 @@ export async function start(canvas, onProgress = () => {}) {
           sample: (x, z) => { const g = footing.heightAt(x, z); return [g, wetSandAt(x, z, g) ? 1 : 0, surfaceAt(x, z) - g]; } });
         ripples?.update(dt, { x: walker.x, z: walker.z, time: clock.time, flow, meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: crossing }] : [] });
       } else { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
+      // (For tests: drawn as if there were no patch, to see that untouched sand looks the same with it as without.)
+      if (hidePatch) { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
     }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
@@ -887,6 +889,8 @@ export async function start(canvas, onProgress = () => {}) {
     outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false) { rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}) }; },
     /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
     rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
+    /** For tests: draw (or not) what the patch of real sand and the ripple field say; they go on being worked out. */
+    patchShown(on) { hidePatch = !on; },
     /** For tests: the sand round you at a place: [height gained or lost (m), dampness, in transit (m), pressed]. */
     patchAt: (x, z) => (patch ? patch.read(x, z) : null),
     /** For tests: whether you have the real body, and its size. */

@@ -507,7 +507,9 @@ void main() {
     float round_ = 0.25 * (lrPatchHeight(p + vec2(0.012, 0.0)) + lrPatchHeight(p - vec2(0.012, 0.0)) + lrPatchHeight(p + vec2(0.0, 0.012)) + lrPatchHeight(p - vec2(0.0, 0.012)));
     openSky *= mix(1.0, clamp(1.0 + 22.0 * (h - round_), 0.45, 1.1), inPatch);
     // Damp sand is darker; pressed sand a shade darker than loose; sand just turned over, paler.
-    float dry = 1.0 - wetness;
+    // (Where the sea is over it there is no 'damp' and no 'dry': the patch said damp under water, and the bed
+    // inside its four metres was drawn a shade darker than the bed beyond: a dark square in the shallows.)
+    float dry = covered ? 0.0 : 1.0 - wetness;
     float flat_ = min(P.a, 1.0);
     albedo *= 1.0 - inPatch * dry * (0.4 * P.g + 0.07 * flat_);
     albedo *= 1.0 + 0.05 * inPatch * dry * (1.0 - flat_) * smoothstep(0.001, 0.006, abs(h));

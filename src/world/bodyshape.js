@@ -342,8 +342,9 @@ export function footfall(stride) {
  * @param {number} [p.splay]  0 feet a hip's width apart .. 1 wide
  * @param {number} [p.wiggle]  how far the toes are curled up (radians; negative: gripping)
  * @param {object} [p.touch]  the right hand at work, as for poseBody
+ * @param {number} [p.hop]  0..1: heels and hands lifted clear of the sand (a scoot round on your seat)
  */
-export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0, look = 0, recline = null }) {
+export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0, look = 0, recline = null, hop = 0 }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   t.n = 0; h.n = 0;
   // The hip joints stand a hand's breadth over the sand you sit on; the trunk leans back from them as far as
@@ -360,7 +361,8 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     // Legs: out in front, the heels in the sand and the toes up; drawn in, the heels slide back, the knees rise
     // and the feet come flat.
     const hipJ = [side * PROP.hip, hip[1], hip[2]], pitch = 1.1 * (1 - draw) + 0.12;
-    const ankle = [side * (PROP.hip + 0.035 + 0.14 * splay + 0.05 * draw), PROP.ankle + 0.014 * (1 - draw) - sink, hip[2] - leg * (0.985 - 0.5 * draw)];
+    // (`hop`: shuffling round on your seat, heels and hands come up off the sand for the moment of each scoot.)
+    const ankle = [side * (PROP.hip + 0.035 + 0.14 * splay + 0.05 * draw), PROP.ankle + 0.014 * (1 - draw) - sink * (1 - hop) + 0.035 * hop, hip[2] - leg * (0.985 - 0.5 * draw - 0.03 * hop)];
     const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * (0.2 + 0.5 * splay), 1, 0]);
     const hem = lerp3(hipJ, knee, 0.55), calf = lerp3(knee, ankle, 0.35);
     t.tube(hipJ, hem, [0.088, 0.092], [0.08, 0.083], SHORTS);
@@ -372,7 +374,7 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     // Arms: the left hand on the sand behind you, taking some of your weight; the right resting beside your
     // thigh, or at work.
     const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]];
-    const wrist = side < 0 ? [sh[0] - 0.12, 0.03, hip[2] + 0.2] : [sh[0] + 0.1, 0.03, hip[2] - 0.12];
+    const wrist = side < 0 ? [sh[0] - 0.12, 0.03 + 0.03 * hop, hip[2] + 0.2] : [sh[0] + 0.1, 0.03 + 0.03 * hop, hip[2] - 0.12];
     let elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * 0.7, 0.1, 1]);
     const reaching = touch && side > 0 && touch.amount > 0 ? touch.amount * touch.amount * (3 - 2 * touch.amount) : 0;
     let point = null, facing = null;

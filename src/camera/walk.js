@@ -47,6 +47,7 @@ export class Walker {
     this.stand = STAND; this.crouch = CROUCH; this.legs = 1;
     this.sit = 0.83; this.sitting = false;                        // seated eye height; whether you are sitting on the sand
     this.seated = 0;                                              // how far you are on to your seat: 0 on your feet .. 1 sitting (it takes a second)
+    this.scoot = 0; this.scootLeft = 0;                           // shuffling round on your seat: how far heels and hand are lifted (0..1)
     this.eyeY = STAND; this.body = STAND; this.surf = 0; this.vx = 0; this.vz = 0;
     this.diving = false; this.diveTimer = 0; this.phase = 0; this.bob = 0; this.bobAmount = 1;
     this.pinned = false;                                          // a test pose holds the eye where it was put
@@ -139,14 +140,25 @@ export class Walker {
       else {
         let rate = 0;
         if (!low && going > 0.2) rate = Math.max(-4.5, Math.min(4.5, off * 6));
-        else if (low) { if (Math.abs(off) > limit) rate = Math.sign(off) * Math.min((Math.abs(off) - limit) * 10, 0.45); }
+        else if (low) {
+          // Seated, you shuffle round in scoots: heels and hand lifted clear of the sand, a quarter turn of the
+          // hips... a seventh of a radian, in four tenths of a second; down; and again if you are still turned.
+          // (`scoot`: 0 down .. 1 at the top of the lift: the pose lifts heels and hand by it.)
+          const T = 0.42;
+          if (!(this.scootLeft > 0) && Math.abs(off) > limit && this.sitting) { this.scootLeft = T; this.scootWay = Math.sign(off); }
+          if (this.scootLeft > 0) {
+            const e = t => t * t * (3 - 2 * t), t0 = 1 - this.scootLeft / T; this.scootLeft = Math.max(0, this.scootLeft - dt);
+            const t1 = 1 - this.scootLeft / T; rate = dt > 0 ? this.scootWay * 0.24 * (e(t1) - e(t0)) / dt : 0; this.scoot = Math.sin(Math.PI * t1);
+          } else this.scoot = 0;
+        }
         else {
           // (Once your feet have to move, you turn to face what you are looking at, not just far enough.)
           if (Math.abs(off) > limit) this.turning = true; else if (Math.abs(off) < 0.12) this.turning = false;
           if (this.turning) rate = Math.sign(off) * Math.min(Math.max(Math.abs(off) * 5, (Math.abs(off) - limit) * 40), 7);
         }
         // (A body does not start or stop turning at once.)
-        this.turnRate = (this.turnRate || 0) + (rate - (this.turnRate || 0)) * (1 - Math.exp(-dt * 14));
+        // (A scoot has its own easing: it is taken as it is.)
+        this.turnRate = low ? rate : (this.turnRate || 0) + (rate - (this.turnRate || 0)) * (1 - Math.exp(-dt * 14));
         this.heading += this.turnRate * dt;
         // (Your head cannot go further round than your neck lets it. On your feet the body keeps up with any
         // turn you are likely to make, stepping round; on your seat you can only shuffle.)
