@@ -149,7 +149,11 @@ export class FigureRig {
       // The foot keeps level, tipped by the solver (toes up as the heel lands, heel up as you push off); with the
       // heel up the toes stay flat on the ground.
       // (Turned the way it was put down: `out` from straight ahead, where at rest it is turned out by its own share.)
-      const foot = j.feet ? j.feet[i] : { pitch: -0.9 }, Rf = foot.out === undefined ? about([1, 0, 0], foot.pitch) : mul(about([0, 1, 0], -(foot.out - s.side * 0.12)), about([1, 0, 0], foot.pitch));
+      // (Swimming there is no ground to be level with: the foot goes with the shin, pointed along it as the legs
+      // trail and kick, and drawn up square to it as the knees come up for the next kick. It used to be tipped
+      // by a fixed angle from where it is standing: on a swimmer lying flat, that is toes stuck up in the air.)
+      const foot = j.feet ? j.feet[i] : { pitch: -0.9 }, Rf = !j.feet ? mul(about(hinge, 1.1 - 1.25 * (j.drawn || 0)), this.R[s.bone.lowerleg01])
+        : foot.out === undefined ? about([1, 0, 0], foot.pitch) : mul(about([0, 1, 0], -(foot.out - s.side * 0.12)), about([1, 0, 0], foot.pitch));
       this.hinge(s.bone.foot, Rf);
       // (With the heel up the toes stay flat on the ground; otherwise they go with the foot, and can curl up or grip.)
       const Rtoes = foot.pitch < 0 && j.feet ? (foot.out === undefined ? IDENTITY : about([0, 1, 0], -(foot.out - s.side * 0.12))) : foot.toes ? mul(Rf, about([1, 0, 0], foot.toes)) : Rf;

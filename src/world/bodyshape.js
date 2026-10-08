@@ -720,6 +720,7 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
   // How far through each part of the stroke: the pull (hands out and back), the tuck (hands in under the chest,
   // knees drawn up), the reach (hands shoot forward as the legs kick).
   const pull = ease(0.38, 0.68, u), tuck = ease(0.68, 0.84, u), shoot = ease(0.84, 1.0, u), drawn = ease(0.6, 0.84, u) * (1 - ease(0.86, 0.98, u));
+  joints.drawn = drawn;                                                  // (how far the knees are drawn up for the kick: the rig flexes the feet by it)
   for (const side of [-1, 1]) {
     // Arms.
     const sh = [side * PROP.shoulder, chest[1] + 0.02, chest[2]];
