@@ -29,3 +29,46 @@ export function refAt(curve, p) {
   const q = ((p % 100) + 100) % 100 / 10, i = Math.floor(q), k = q - i;
   return curve[i] + (curve[Math.min(i + 1, 10)] - curve[i]) * k;
 }
+
+// How a hand moves, in numbers. What the joints can do is the American Academy of Orthopaedic Surgeons' table of
+// normal ranges (Joint Motion: Method of Measuring and Recording), as textbooks of goniometry repeat it; sources
+// differ by five or ten degrees, and so do people. The limits the hand here is held to (`mcp`, `pip`, ...) are a
+// little inside those: taking up sand, no joint goes to the end of its range.
+//
+// Degrees. A finger's joints: bent towards the palm positive, from the finger straight out along the palm. The
+// wrist: bent towards the palm positive (flexion), back negative (extension); tilted towards the thumb positive.
+// The forearm: 0 with the thumb up, turned palm up positive (supination), palm down negative (pronation).
+// The hand here is not driven by these numbers: tools/handcheck.mjs measures what it does against them.
+export const HAND = {
+  can: { mcp: [-45, 90], pip: [0, 100], dip: [-10, 90] },      // the knuckle at the palm, the middle joint, the end joint
+  mcp: [-10, 85], pip: [0, 90], dip: [-10, 75],
+  dipOverPip: 0.67,                    // the end joint bends with the middle one, about two thirds as far: one tendon works both
+  // A hand hanging at ease (the "cascade": each finger a little more curled than the one before, index to little).
+  rest: { mcp: [30, 33, 36, 39], pip: [33, 33, 33, 33], dip: [20, 20, 20, 20] },
+  speed: 400, thumbSpeed: 300, palmSpeed: 400,                 // the fastest a joint turns in unhurried use, degrees a second (an estimate: a quick grasp closes in a fifth of a second)
+};
+export const WRIST = {
+  can: { flex: [-70, 80], dev: [-30, 20] },
+  flex: [-60, 60], dev: [-25, 15],
+  holdBack: 30,                        // holding something up to look at, the wrist is bent back no further than this
+  speed: 250,
+};
+export const FOREARM = {
+  can: [-80, 80],                      // (other tables give up to 90 palm up)
+  sup: [-75, 85],
+  twistPerFrame: 8,                    // no bone of the forearm turns further about its length in a sixtieth of a second
+};
+// Reaching for something and taking it (Jeannerod, The timing of natural prehension movements, 1984; Flash and
+// Hogan, 1985, on the smooth bell-shaped speed of a reaching hand): the hand speeds up once and slows down once,
+// fastest a third to half way through; the fingers are widest open at 60 to 75 % of the time, on the way down.
+export const REACH = {
+  time: [0.5, 0.9],                    // seconds, from the hand setting off to its touching, at arm's length or less
+  lift: [0.9, 1.4],                    // seconds to bring a handful up before you
+  peak: [33, 50],                      // % of the time at which the wrist is fastest
+  aperture: [55, 75],                  // % of the time at which the fingers are widest
+  speed: [0.6, 1.3],                   // the wrist's top speed, m/s
+  accel: 12,                           // and its greatest acceleration, m/s2
+};
+// A hand held out is never still: it trembles at 8 to 12 times a second (the stretch reflex going round), a
+// fraction of a millimetre at the fingertip (the size is an estimate; it grows with effort and tiredness).
+export const TREMOR = { hz: [8, 12], tip: 0.0006 };

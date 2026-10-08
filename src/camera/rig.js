@@ -22,7 +22,7 @@ export class CameraRig {
     this.frustum = new THREE.Frustum();
     this.eye = { x: 0, y: 1, z: 0 };
     this.own = new THREE.Vector3();                         // your own eye in first person (the same as `eye` unless `outside` is set)
-    this.outside = null;                                    // { angle, dist, height, aim, heading? }: the camera looks at you from outside (tests)
+    this.outside = null;                                    // { angle, dist, height, aim, heading?, about?, fov? }: the camera looks at you from outside (tests)
     this.ground = null;       // data/geoCPU.js Ground, for keeping the eye above the terrain
     this.flight = null;
     this.seaLevel = 0;
@@ -109,13 +109,17 @@ export class CameraRig {
         // metres off, `height` above your feet, aimed at `aim` above them. For judging poses and shadows.
         // (Swimming, 'your feet' are a body's length under your eye: the camera is aimed from there as on land.)
         const o = this.outside, a = (o.heading ?? yaw) + o.angle * DEG, feet = w.afloat || w.diving ? w.eyeY - (o.swim ?? 0.9) : w.eyeY - w.body;
-        eye.x = w.x - Math.sin(a) * o.dist; eye.z = w.z + Math.cos(a) * o.dist; eye.y = feet + o.height;
-        const tx = w.x - eye.x, ty = feet + o.aim - eye.y, tz = w.z - eye.z, tl = Math.hypot(tx, ty, tz) || 1;
+        // (`about`: a point of the world to go round and look at in place of your own axis, your hand say: `height`
+        // and `aim` are then above that point. A function, if the camera is to follow it.)
+        const c = typeof o.about === 'function' ? o.about() : o.about, bx = c ? c[0] : w.x, by = c ? c[1] : feet, bz = c ? c[2] : w.z;
+        eye.x = bx - Math.sin(a) * o.dist; eye.z = bz + Math.cos(a) * o.dist; eye.y = by + o.height;
+        const tx = bx - eye.x, ty = by + o.aim - eye.y, tz = bz - eye.z, tl = Math.hypot(tx, ty, tz) || 1;
         dirX = tx / tl; dirY = ty / tl; dirZ = tz / tl;
       }
       this.focus.x = w.x + sy * 6; this.focus.z = w.z - cy * 6;
       // 65 degrees across the short side of the screen.
-      cam.fov = aspect >= 1 ? 65 : 2 * Math.atan(Math.tan(32.5 * DEG) / aspect) / DEG;
+      // (An outside view may ask for a longer lens, `fov` degrees, to look at a hand from a little way off.)
+      cam.fov = this.outside?.fov || (aspect >= 1 ? 65 : 2 * Math.atan(Math.tan(32.5 * DEG) / aspect) / DEG);
     } else {
       cam.fov = this.fov;
       this.focus.x = this.target.x; this.focus.z = this.target.z;

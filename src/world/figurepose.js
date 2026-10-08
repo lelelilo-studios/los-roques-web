@@ -7,6 +7,7 @@
 // thigh from the hip to the knee, the shin from the knee to the ankle, both turned so that the knee's hinge
 // lies across the plane of the leg; arms likewise, the hand's turn spread up the forearm.
 import { reach } from './bodyshape.js';
+import { fingerAngles, fingerGaps, handBones, thumbAngles, wristAngles } from './handpose.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -78,6 +79,7 @@ export class FigureRig {
         armPlane: unit(cross(sub(E, S), sub(W, E))),
         bone: Object.fromEntries(['upperleg01', 'lowerleg01', 'foot', 'clavicle', 'shoulder01', 'upperarm01', 'lowerarm01', 'lowerarm02', 'wrist'].map(n => [n, this.need(`${n}.${s}`)])),
         toes: this.bones.map((b, j) => (new RegExp(`^toe\\d-1\\.${s}$`).test(b.name) ? j : -1)).filter(j => j >= 0),
+        names: handBones(s), thumbBones: [1, 2, 3].map(j => this.need(`finger1-${j}.${s}`)), planeNow: null,
       };
     });
     this.head = this.need('head'); this.neck = ['neck01', 'neck02', 'neck03'].map(n => this.need(n)); this.trunk = this.need('root');
@@ -125,6 +127,30 @@ export class FigureRig {
     const palm = turn(this.R[s.bone.wrist], s.N), k = dot(palm, f), N = unit([palm[0] - f[0] * k, palm[1] - f[1] * k, palm[2] - f[2] * k]), A = cross(f, N).map(v => v * s.side);
     const centre = [0, 1, 2].map(c => (wrist[c] + knuckles[c]) / 2);
     return { wrist, bases, knuckles, centre, half: len(sub(knuckles, wrist)) / 2, f, N, A, us: bases.map(b => dot(sub(b, centre), A)) };
+  }
+
+  /**
+   * Hand i (0 left, 1 right) as it is posed now, measured as a hand is (handpose.js), in the body's frame: what
+   * hand(i) gives, and { shoulder, elbow; sup, flex, dev: how far the forearm is turned palm up and the wrist bent
+   * towards the palm and towards the thumb; twists: how far each of the two bones of the forearm and the hand
+   * itself are turned about the forearm's line, from the plane of the arm; fingers: for each, index to little,
+   * { mcp, abd, pip, dip, tip }; thumb: { plane, lift, mcp, ip, tip }; and, once `fit` has been given (handpose.js
+   * fitHand, for the left hand and the right), caps: the rods that stand for the skin of the fingers, the thumb
+   * and the palm where they are now, and gaps: the room between each finger and the next }.
+   */
+  handProbe(i) {
+    const s = this.sides[i], h = this.hand(i), head = b => this.carry(b, this.bones[b].head), tail = b => this.carry(b, this.bones[b].tail), dir = b => unit(sub(tail(b), head(b)));
+    const S = head(s.bone.upperarm01), E = head(s.bone.lowerarm01), along = unit(sub(h.wrist, E));
+    const fingers = s.fingers.map(finger => { const [a, b, c] = finger.map(part => part.bone); return { ...fingerAngles(dir(a), dir(b), dir(c), h.f, h.N, h.A), tip: tail(c) }; });
+    const t = s.thumbBones, thumb = { ...thumbAngles(dir(t[0]), dir(t[1]), dir(t[2]), t.map(b => len(sub(this.bones[b].tail, this.bones[b].head))), h.f, h.N, h.A), tip: tail(t[2]) };
+    const plane = s.planeNow || turn(this.R[s.bone.upperarm01], s.armPlane);
+    const twist = b => { const v = turn(this.R[b], s.armPlane), k = dot(v, along), flat = [v[0] - along[0] * k, v[1] - along[1] * k, v[2] - along[2] * k]; return Math.atan2(dot(along, cross(plane, flat)), dot(plane, flat)); };
+    let caps = null;
+    if (this.fit) {
+      const rods = this.fit[i].rods, rod = name => { const b = this.need(name), r = rods[name]; return { a: this.carry(b, r.head), b: this.carry(b, r.tail), r: r.r, w: r.w, t: r.t }; };
+      caps = { fingers: s.names.fingers.map(f => f.map(rod)), thumb: s.names.thumb.map(rod), palm: s.names.palm.map(rod) };
+    }
+    return { ...h, shoulder: S, elbow: E, ...wristAngles(S, E, h.wrist, h.f, h.N, s.side, plane), twists: [twist(s.bone.lowerarm01), twist(s.bone.lowerarm02), twist(s.bone.wrist)], fingers, thumb, caps, gaps: caps ? fingerGaps(caps.fingers) : null };
   }
 
   /**
@@ -177,6 +203,7 @@ export class FigureRig {
       const E = reach(S, wrist, s.upper, s.fore, len(elbowTo) > 1e-4 ? elbowTo : [0, -1, 0.3]);
       let plane = cross(sub(E, S), sub(wrist, E));
       plane = len(plane) > 1e-4 ? unit(plane) : turn(Rt, s.armPlane);
+      s.planeNow = plane;
       // (The cap of the shoulder goes a third of the way round with the upper arm: it does not stay out where the arm was.)
       const Rupper = aim(sub(s.E, s.S), s.armPlane, sub(E, S), plane), Rcap = mul(fraction(mul(Rupper, transpose(Rclav)), 0.35), Rclav);
       this.drive(s.bone.shoulder01, Rcap, add(S, turn(Rcap, sub(this.bones[s.bone.shoulder01].head, s.S))));

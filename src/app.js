@@ -17,6 +17,7 @@ import { Spray } from './world/spray.js';
 import { Hand } from './world/hand.js';
 import { Figure, loadFigure } from './world/figure.js';
 import { FigureRig } from './world/figurepose.js';
+import { clearance, fitHand, handsApart } from './world/handpose.js';
 import { SandPatch } from './sim/patch.js';
 import { Ripples } from './sim/ripples.js';
 import { SkinState } from './sim/skin.js';
@@ -222,6 +223,8 @@ export async function start(canvas, onProgress = () => {}) {
   const figureReady = tierName === 'low' || params.tubes ? Promise.resolve(false) : loadFigure(manifest.compressed === 'gzip').then(data => {
     const u = body.mesh.material.uniforms;
     figure = new Figure(data, tier.fp.shadowTaps || 4, { uBodyWet: u.uBodyWet, uBodySand: u.uBodySand, uHandWet: u.uHandWet, uHandSand: u.uHandSand, uHandWetL: u.uHandWetL, uHandSandL: u.uHandSandL }); figureRig = new FigureRig(data.info);
+    // (The round rods that stand for the skin of her fingers, measured from the mesh: to tell how far apart they are.)
+    figureRig.fit = [fitHand(data.info, data.arrays, 'L'), fitHand(data.info, data.arrays, 'R')];
     const p = figureRig.proportions, was = walker.stand;
     setProportions(p);
     // (Squatting on her heels, leaning forward a little, her eyes are at a little over half her height: lower, and
@@ -1044,6 +1047,15 @@ export async function start(canvas, onProgress = () => {}) {
     requestAnimationFrame(loop);
   }
 
+  // For tests: where hand i (0 left, 1 right) is in the world, the middle of its palm; and where what it pours lands.
+  const handAt = i => {
+    if (!you.on || !body.joints?.wrists?.[i]) return [rig.own.x, rig.own.y - 0.4, rig.own.z];
+    if (figureRig && !you.folded) return toWorld(figureRig.hand(i).centre);
+    const w = body.joints.wrists[i], t = body.joints.fingertips[i] || w;
+    return toWorld([(w[0] + t[0]) / 2, (w[1] + t[1]) / 2, (w[2] + t[2]) / 2]);
+  };
+  const landAt = i => { const p = handAt(i), g = footing.heightAt(p[0], p[2]); return [p[0], Math.max(g, surfaceAt(p[0], p[2])), p[2]]; };
+  let cut = null;
   const api = {
     errors,
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
@@ -1083,7 +1095,47 @@ export async function start(canvas, onProgress = () => {}) {
      * metres off, `height` of the camera above your feet, `aim` the height it looks at. No arguments: back to your own eyes.
      * `fixed`: keep the camera where it is in the world as you turn (else it goes round with you).
      */
-    outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false) { rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}) }; },
+    /**
+     * `about`: what to go round and look at in place of yourself: 'hand' (your right), 'handL', 'land' / 'landL'
+     * (where what that hand pours comes down), 'mid' / 'midL' (half way between the two) or a point [x, y, z] of the
+     * world; `height` and `aim` are then above it. With `fixed` the point is taken once (the camera does not ride
+     * the hand's every movement). `fov`: the lens, in degrees.
+     */
+    outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false, about = null, fov = null) {
+      const left = typeof about === 'string' && about.endsWith('L') ? 0 : 1, kind = typeof about === 'string' ? about.replace(/L$/, '') : null;
+      const point = !about ? null : Array.isArray(about) ? () => about : kind === 'hand' ? () => handAt(left) : kind === 'land' ? () => landAt(left) : () => { const a = handAt(left), b = landAt(left); return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]; };
+      rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}), ...(point ? { about: fixed ? point() : point } : {}), ...(fov ? { fov } : {}) };
+    },
+    /** For tests: where a point of the world is in the picture: [x, y] in pixels of the canvas, and how deep (under 1: before the camera). */
+    project(p) { const v = new THREE.Vector3(p[0] - rig.eye.x, p[1], p[2] - rig.eye.z).project(rig.camera); return [(v.x + 1) / 2 * canvas.width, (1 - v.y) / 2 * canvas.height, v.z]; },
+    /** For tests: the way to the sun (east, up, south), and where the camera is. */
+    sunDir: () => shared.uSunDir.value.toArray(), cameraAt: () => [rig.eye.x, rig.eye.y, rig.eye.z],
+    /** For tests: what a hand holds and its account of what it took and let go (world/hand.js `ledger`, cubic metres): `side` 1 your right, -1 your left. */
+    handful: (side = 1) => { const h = side > 0 ? hand : handL; return { kind: h.kind, amount: h.amount, open: h.open, rates: h.rates.slice(), ...h.ledger, gaps: h.ledger.gaps.slice() }; },
+    /** For tests: chance begins again from `n`: the same doing then gives the same grains and drops. */
+    seed(n = 1) { spray.seed(n); hand.seed(n + 1); handL.seed(n + 2); },
+    /**
+     * For tests: your hands as they are posed now, measured as hands are (world/handpose.js): [left, right], each
+     * { what it is doing: ik, lift, grip, amount, kind, down, open, tipped, rates, ledger (world/hand.js);
+     * where it is in the world: wrist, elbow, shoulder, centre, knuckles, f, N, A; sup, flex, dev, twists (radians);
+     * fingers: [{ mcp, abd, pip, dip, tip }], thumb, caps (the rods of its fingers), gaps (the room between them) }.
+     */
+    handProbe() {
+      if (!you.on || !body.joints?.wrists?.length) return null;
+      const turned = v => [v[0] * you.cy - v[2] * you.sy, v[1], v[0] * you.sy + v[2] * you.cy], rod = r => ({ a: toWorld(r.a), b: toWorld(r.b), r: r.r, w: r.w, t: r.t });
+      const hands = [handL, hand].map((h, i) => {
+        const doing = { side: h.side, ik: h.ik, lift: h.lift, grip: h.grip, amount: h.amount, kind: h.kind, down: h.down, open: h.open, tipped: h.tipped, rates: h.rates.slice(), ledger: { ...h.ledger, gaps: h.ledger.gaps.slice() },
+          pourAt: h.pour?.gaps ? h.pour.gaps.map(q => q.slice()) : null, floor: h.pour ? h.pour.floor : null };
+        if (!figureRig || you.folded) return { ...doing, wrist: toWorld(body.joints.wrists[i]), elbow: toWorld(body.joints.elbows[i]), shoulder: toWorld(body.joints.shoulders[i]), centre: handAt(i) };
+        const p = figureRig.handProbe(i);
+        return { ...doing, wrist: toWorld(p.wrist), elbow: toWorld(p.elbow), shoulder: toWorld(p.shoulder), centre: toWorld(p.centre), knuckles: toWorld(p.knuckles), f: turned(p.f), N: turned(p.N), A: turned(p.A),
+          sup: p.sup, flex: p.flex, dev: p.dev, twists: p.twists, gaps: p.gaps, fingers: p.fingers.map(f => ({ ...f, tip: toWorld(f.tip) })), thumb: { ...p.thumb, tip: toWorld(p.thumb.tip) },
+          caps: p.caps ? { fingers: p.caps.fingers.map(f => f.map(rod)), thumb: p.caps.thumb.map(rod), palm: p.caps.palm.map(rod) } : null, clear: p.caps ? clearance(p.caps) : null };
+      });
+      return { time: clock.time, eye: [rig.own.x, rig.own.y, rig.own.z], yaw: walker.yaw, heading: walker.heading, look: walker.look, feet: you.y, crouched: walker.crouched, seated: walker.seated,
+        knees: body.joints.knees.map(toWorld), ankles: body.joints.ankles.map(toWorld), hips: (body.joints.hips || []).map(toWorld), hands,
+        apart: hands[0].caps && hands[1].caps ? handsApart(hands[0].caps, hands[1].caps) : null };
+    },
     /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
     rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
     /** For tests: whether the sand at a place is sand the sea keeps wet, as everything but the picture has it. */
@@ -1193,13 +1245,15 @@ void main() { outColor = vec4(lrRagged(uPts[int(gl_FragCoord.x)]), 0.0, 0.0, 1.0
      * machine goes: the long-run test (tools/soak.mjs). `turn` (degrees a second) swings your heading as you go,
      * `nod` raises your look.
      */
-    run(seconds, input = {}, turn = 0, nod = 0) {
+    run(seconds, input = {}, turn = 0, nod = 0, { step = 1 / 60, each = null } = {}) {
+      // (`step`: the length of a frame, to see that a faster or a slower display changes nothing; `each(i)`: called
+      // after every frame, to measure as it goes.)
       const gl = renderer.getContext(), px = new Uint8Array(4), held = walkInput;
       walkInput = { read: () => ({ ...NO_INPUT, ...input }) }; paceHold = true;
       try {
-        for (let i = 0, n = Math.round(seconds * 60); i < n; i++) {
-          clock.time += 1 / 60; walker.yaw += turn * Math.PI / 180 / 60; walker.look = Math.min(1.5, Math.max(-1.5, walker.look + nod * Math.PI / 180 / 60));
-          frame(1 / 60);
+        for (let i = 0, n = Math.round(seconds / step); i < n; i++) {
+          clock.time += step; walker.yaw += turn * Math.PI / 180 * step; walker.look = Math.min(1.5, Math.max(-1.5, walker.look + nod * Math.PI / 180 * step));
+          frame(step); each?.(i);
           // (Reading a pixel back makes the GPU catch up, so that the queue of work does not grow without limit.)
           if (i % 20 === 19) { renderer.setRenderTarget(null); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
         }
@@ -1212,8 +1266,17 @@ void main() { outColor = vec4(lrRagged(uPts[int(gl_FragCoord.x)]), 0.0, 0.0, 1.0
     /** Jumps straight to a place's camera shot (no flight). */
     goTo: id => { const p = places.find(q => q.id === id); if (p) { app.setWalk(false); rig.cancelFlight(); rig.set(shotFor(p)); } return !!p; },
     renderOnce(dt = 0) { frame(dt); },
-    /** Renders a frame and returns it as a PNG data URL. */
-    capture() { frame(0); return canvas.toDataURL('image/png'); },
+    /**
+     * Renders a frame and returns it as a PNG data URL: all of it, or the part `crop` = [x, y, width, height] in
+     * pixels, drawn `size` = [width, height] pixels large (as it is, if not given).
+     */
+    capture(crop = null, size = null) {
+      frame(0);
+      if (!crop) return canvas.toDataURL('image/png');
+      const [x, y, w, h] = crop, [ow, oh] = size || [w, h]; cut ??= document.createElement('canvas');
+      cut.width = ow; cut.height = oh; cut.getContext('2d').drawImage(canvas, x, y, w, h, 0, 0, ow, oh);
+      return cut.toDataURL('image/png');
+    },
     /** Average milliseconds per frame over n frames, each finished on the GPU before the next starts. */
     /** Mean milliseconds a frame over n frames. `live`: with time passing (the simulations near you run too: sand, ripples, what you hold). */
     bench(n = 60, live = false) {

@@ -69,6 +69,8 @@ export class Spray {
     this.points.frustumCulled = false;
     let seed = 12345;
     this.random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+    /** For tests: chance starts again from `s`, so that the same doing gives the same grains. */
+    this.seed = s => { seed = s >>> 0; };
   }
 
   /**

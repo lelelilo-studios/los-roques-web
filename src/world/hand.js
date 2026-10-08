@@ -241,6 +241,12 @@ export class Hand {
     this.lying.frustumCulled = false; this.lying.matrixAutoUpdate = false; this.lying.visible = false;
     this.trail = Array.from({ length: GAPS }, () => []);
     this.count = shared.uTouchSeg.value.length;
+    // Each hand has its own chance, begun again whenever the hand is: the same doing gives the same grains.
+    // (Both drew on the one sequence the splashes of your feet draw on, never begun again: what a hand let fall
+    // depended on everything done since the page was opened.)
+    let seed = 0;
+    this.random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+    this.seed = s => { seed = s >>> 0; };
     this.reset();
   }
 
@@ -264,6 +270,12 @@ export class Hand {
     if (this.streams) this.streams.visible = false;
     if (this.lying) this.lying.visible = false;
     this.sim?.empty(); this.open = 0.3; this.real = false;
+    this.seed?.(this.side > 0 ? 24680 : 13579);
+    // The account of what this hand has taken and let go since it was last begun again, in cubic metres: `taken`
+    // from the ground or the sea (in `takes` handfuls); `out` of the hand in all, of which through each of the
+    // three `gaps`, over the `edge`, and `spilt` at once; `sand` handed to the patch of sand to land there, and
+    // `sea` let fall into the sea. (What is still in the hand is `amount` handfuls.)
+    this.ledger = { takes: 0, taken: 0, out: 0, gaps: [0, 0, 0], edge: 0, spilt: 0, sand: 0, sea: 0 };
     // (The marks in the sand are one list for both hands.)
     Hand.marks = 0; shared.uTouchCount.value = 0; if (this.side > 0) shared.uLeg.value[2].z = 0;
     if (this.mesh) this.mesh.visible = false;
@@ -390,6 +402,7 @@ export class Hand {
   /** What the hand held is let fall at once (it was sent down again). */
   spill(time) {
     if (this.pour) this.release(this.amount, time, 0.25);
+    this.ledger.out += this.amount * HANDFUL; this.ledger.spilt += this.amount * HANDFUL;
     this.amount = 0; this.sim.empty();
   }
 
@@ -432,6 +445,7 @@ export class Hand {
       if (this.grip >= 1 && !this.took) {
         this.took = true; this.amount = 1; this.owed = 0; this.empty = 0; this.heap = this.spot = null; this.epoch = time;
         this.sim.shape(0.5, 0); this.sim.fill(this.kind);
+        this.ledger.takes++; this.ledger.taken += HANDFUL;
         this.sound.touch(this.kind, 'take');
         if (sandy && this.mark >= 0 && info[this.mark].y > 0.5) { info[this.mark].set(time, 4, c.yaw, this.kind === 'dry' ? 1 : 0.7); this.mark = -1; }
         if (!sandy) this.ring(tip[0], tip[2], time, 0.3);
@@ -494,7 +508,7 @@ export class Hand {
           const rate = stuff.rate * (0.3 + 0.7 * Math.sqrt(this.amount)) * (c.want && !c.canReach ? 3 : 1), gone = Math.min(this.amount, rate * dt);
           running = Math.min(1, rate / stuff.rate);
           this.release(gone, time, dt);
-          this.amount -= gone;
+          this.amount -= gone; this.ledger.out += gone * HANDFUL; this.ledger[this.pour.sea ? 'sea' : 'sand'] += gone * HANDFUL;
           if (this.amount <= Math.max(stuff.left, 0.004)) { this.amount = 0; this.empty = 0; this.sound.touch(this.kind, 'up'); }
           if (sandy) this.sand = Math.min(1, Math.max(this.sand, this.kind === 'wet' ? 0.7 : 0.3)); else this.wet = 1;
           if (time - this.spoke > 0.085) { this.sound.touch(this.kind, 'pour', rate / stuff.rate); this.spoke = time; }
@@ -532,12 +546,14 @@ export class Hand {
     if (dt > 0 && this.lift > 0.8 && this.amount > 0.002) {
       const out = sim.step(dt, [A[1], f[1], N[1]]), through = out.gaps[0] + out.gaps[1] + out.gaps[2], gone = (through + out.edge) / HANDFUL;
       this.amount = sim.amount;
+      for (let g = 0; g < 3; g++) this.ledger.gaps[g] += out.gaps[g];
+      this.ledger.edge += out.edge; this.ledger.out += through + out.edge; this.ledger[sea ? 'sea' : 'sand'] += through + out.edge;
       // How hard each gap is running (a stream at full strength carries a twentieth of a handful a second).
       for (let g = 0; g < 3; g++) this.rates[g] += (clamp01(out.gaps[g] / dt / (HANDFUL * 0.05)) - this.rates[g]) * (1 - Math.exp(-dt * 14));
       running = Math.max(...this.rates);
       if (gone > 0) {
         // Where it lands: under the gaps it fell through, a third of a second later.
-        const fall = Math.sqrt(Math.max(K[1] - floor, 0.01) / 4.9), r = this.spray.random, patch = this.patch(), blown = this.carried(fall, c);
+        const fall = Math.sqrt(Math.max(K[1] - floor, 0.01) / 4.9), r = this.random, patch = this.patch(), blown = this.carried(fall, c);
         for (let g = 0; g < 3; g++) if (out.gaps[g] > 0) {
           const p = [this.pour.gaps[g][0] + blown[0], this.pour.gaps[g][1], this.pour.gaps[g][2] + blown[1]];
           if (sea) continue;
@@ -606,7 +622,7 @@ export class Hand {
   }
 
   flow(dt, c, pour, running) {
-    const time = c.time, eye = c.eye, water = this.kind === 'water', r = this.spray.random, wind = c.wind || [0, 0];
+    const time = c.time, eye = c.eye, water = this.kind === 'water', r = this.random, wind = c.wind || [0, 0];
     if (pour && dt > 0 && time - this.pushed >= 1 / 75) {
       this.pushed = time;
       for (let i = 0; i < GAPS; i++) {
@@ -675,7 +691,7 @@ export class Hand {
    * edges of the palm, each grain or drop falling to what is below, and what comes of it there.
    */
   release(gone, time, over) {
-    const p = this.pour, stuff = STUFF[this.kind], r = this.spray.random, water = this.kind === 'water';
+    const p = this.pour, stuff = STUFF[this.kind], r = this.random, water = this.kind === 'water';
     if (!p) return;
     this.owed += gone * stuff.things;
     const n = Math.floor(this.owed);
