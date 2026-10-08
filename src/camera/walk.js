@@ -126,7 +126,7 @@ export class Walker {
     // (Against the way your body faces, that is: going diagonally you turn towards where you are going, and walk.)
     if (onGround && wl > 0.01) {
       const hx = Math.sin(this.gaited ? this.heading : this.yaw), hz = -Math.cos(this.gaited ? this.heading : this.yaw), n = Math.hypot(wx, wz) || 1, a = (wx * hx + wz * hz) / n, r = (wx * -hz + wz * hx) / n;
-      speed *= (a * a * (a < 0 ? 0.55 : 1) + r * r * 0.42) / (a * a + r * r || 1);
+      speed *= (a * a * (a < 0 ? 0.55 : 1) + r * r * 0.33) / (a * a + r * r || 1);
     }
     if (this.sitting || this.seated > 0.02) speed = 0;  // (seated, the same keys move your legs: see app.js)
     // (You do not start or stop at once: the first pace takes you up to speed, the last one brings you to rest.)

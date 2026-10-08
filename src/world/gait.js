@@ -18,14 +18,14 @@ export const PUSH = 1.05, TOE_OUT = 0.12;
 
 /**
  * Length of a pace (m) at a speed (m/s), walking the way `along` (1 forward, -1 back) and `across` (1 sideways)
- * say: 0.72 m forward at a walk, lengthening to 1.05 m at a run; six tenths of that backward; a quarter of a
- * metre sideways, where the feet may not cross. Slow paces are short ones. `legs`: yours against 0.87 m.
+ * say: 0.72 m forward at a walk, lengthening to 1.05 m at a run; six tenths of that backward; a hand and a half
+ * sideways, where the feet may not cross. Slow paces are short ones. `legs`: yours against 0.87 m.
  */
 export function paceFor(speed, along = 1, across = 0, crouch = 0, legs = 1) {
   const k = clamp((speed - 1.6) / 1.2, 0, 1), fwd = (0.72 + 0.33 * k * k * (3 - 2 * k)) * (0.55 + 0.45 * clamp(speed / 1.1, 0, 1));
   // (Going at a slant, the sideways share of each pace is held to what a side-step is: the pace is as long as fits
   // inside an ellipse whose axes are the forward pace and the side-step.)
-  const ahead = fwd * (along < 0 ? 0.62 : 1), slant = 1 / Math.sqrt((along / ahead) ** 2 + (across / 0.26) ** 2 || 1);
+  const ahead = fwd * (along < 0 ? 0.62 : 1), slant = 1 / Math.sqrt((along / ahead) ** 2 + (across / 0.17) ** 2 || 1);
   return slant * (1 - 0.45 * crouch) * legs;
 }
 
@@ -70,8 +70,10 @@ export class Gait {
     // the length of a pace does not jump as you come to rest.)
     const going = speed > 1e-3, along = going ? (c.vx * fx + c.vz * fz) / speed : 1, across = going ? (c.vx * rx + c.vz * rz) / speed : 0;
     const run = ease(clamp((speed * Math.max(along, 0) - 1.6) / 1.2, 0, 1)), stance = Math.PI * (1.2 - 0.5 * run), pace = Math.max(paceFor(speed, along, across, crouch, legs), 0.05);
-    // (Sideways you stand wider: the feet close up and part again, and may not cross.)
-    const half = prop.hip + 0.025 + 0.05 * across * across;
+    // (Sideways the feet close up and part again, and may not cross: the trailing foot comes in to a hand's breadth
+    // from the other, the leading one steps out to half a metre from it. Standing wider and stepping further, as
+    // it was, the legs were astride by two thirds of a metre at every step.)
+    const half = prop.hip + 0.025 - 0.022 * across * across;
     this.events.length = 0;
     const airborne = () => feet.some(f => !f.down);
     if (dt > 0 && !c.hold) {
