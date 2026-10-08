@@ -256,8 +256,13 @@ export class FrameGraph {
     this.clearValue = new Float32Array([0, 0, 0, -1000]);
   }
 
-  /** @param {THREE.Object3D} opaque  @param {THREE.Object3D} water  @param {THREE.Camera} camera  @param {Clouds} clouds */
-  render(opaque, water, camera, clouds = null) {
+  /**
+   * @param {THREE.Object3D} opaque  @param {THREE.Object3D} water  @param {THREE.Camera} camera  @param {Clouds} clouds
+   * @param {THREE.Object3D | null} overlay  what is laid over the finished scene, each thing with its own share of
+   *   cover: the grains that fall from your hand (world/falling.js). After the water, because the water pass makes
+   *   up what lies under it afresh; and before the sky is put in, so against the sky nothing of it shows.
+   */
+  render(opaque, water, camera, clouds = null, overlay = null) {
     const { renderer, targets, size } = this.R;
     shared.uInvResolution.value.set(1 / size.width, 1 / size.height);
     renderer.info.reset();
@@ -273,6 +278,7 @@ export class FrameGraph {
 
     renderer.setRenderTarget(targets.scene);
     renderer.render(water, camera);
+    if (overlay) renderer.render(overlay, camera);
 
     const cu = this.composite.material.uniforms;
     cu.uCloudOn.value = clouds?.render(targets.scene.depthTexture, size.width, size.height) ? 1 : 0;

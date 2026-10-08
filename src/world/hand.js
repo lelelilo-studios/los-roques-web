@@ -13,6 +13,7 @@ import { shadowGLSL } from './shadow.js';
 import { CELL, NU, NV, Palm, U0, V0 } from '../sim/palm.js';
 import { POSE_LENGTH, mixPose } from './handpose.js';
 import { HandMotion } from './handact.js';
+import { grainTau } from '../sim/fall.js';
 
 const clamp01 = v => Math.min(1, Math.max(0, v));
 const wrap64 = v => ((v % 64) + 64) % 64;
@@ -194,8 +195,10 @@ export class Hand {
    * @param {number} o.shadowTaps
    */
   /** @param {object} o  ...; side: 1 your right hand (the default), -1 your left */
-  constructor({ spray, sound, ring, shadowTaps = 8, patch = null, side = 1 }) {
+  constructor({ spray, sound, ring, shadowTaps = 8, patch = null, side = 1, falling = null }) {
     this.side = side;
+    /** world/falling.js: what falls from this hand is let go into it grain by grain (without it: ribbons). */
+    this.falling = falling; this.slots = [null, null, null]; this.owing = [0, 0, 0, 0];
     /** `patch`: () => the sand round you as real sand (sim/patch.js), or null: then what the hand does is drawn as stamps. */
     Object.assign(this, { spray, sound, ring, patch: patch || (() => null) });
     // What is in the palm: a low dome, sized and laid in the hand every frame.
@@ -379,8 +382,13 @@ export class Hand {
     // (`together`: both your hands hold something. Then they come together before you, side by side, little
     // fingers almost touching, the palms turned a little towards each other: one bowl of two hands.)
     const tog = c.together || 0, real = !!this.model;
-    const up = real ? [eye[0] + this.side * (0.085 - 0.03 * low) * (1 - tog) + this.side * 0.062 * tog, eye[1] - 0.34 - 0.01 * low + raise * (1 - 0.5 * low), eye[2] - 0.24 + 0.03 * low]
+    // (And it lies across you, the wrist out to its own side and the fingers pointing in towards your other hand:
+    // what falls between the fingers then falls clear of the forearm, where you can see it. Held straight out
+    // from the elbow, the forearm lay between your eye and all that fell.)
+    const up = real ? [eye[0] + this.side * (0.13 - 0.03 * low) * (1 - tog) + this.side * 0.062 * tog, eye[1] - 0.34 + 0.04 * low + raise * (1 - 0.5 * low), eye[2] - 0.22 - 0.02 * low]
       : [eye[0] + this.side * (0.13 + 0.03 * low - 0.072 * tog), eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low - 0.03 * tog];
+    // (For tests: a place and a turn to try, in place of the squatting one: Hand.tune = { x, y, z, inward }.)
+    if (real && Hand.tune) { up[0] = eye[0] + this.side * Hand.tune.x; up[1] = eye[1] + Hand.tune.y; up[2] = eye[2] + Hand.tune.z; }
     const down = real ? [eye[0] + this.side * (0.27 - 0.2 * tog), eye[1] - 0.4 + raise, eye[2] - 0.2 - 0.1 * tog] : [eye[0] + this.side * (0.27 - 0.208 * tog), eye[1] - 0.36 + raise, eye[2] - 0.15 - 0.15 * tog];
     const wrist = [0, 1, 2].map(i => up[i] + (down[i] - up[i]) * seated);
     // (Held up, it comes most of the way round with your look: you hold a handful where you can watch it. Less
@@ -408,8 +416,9 @@ export class Hand {
       // other way, outward: turned further than a forearm goes.) Together, the fingers of both point straight
       // ahead (they do not cross) and the palms lean more towards each other: one bowl.
       // (Seated, it is out beside your thigh: the forearm lies outward and the fingers with it.)
-      const inward = ((0.22 - 0.1 * low) * (1 - seated) - 0.25 * seated) * (1 - tog), lean = 0.17 + 0.17 * tog;
-      dir = [-Math.sin(inward) * this.side * ct, -st, -Math.cos(inward) * ct];
+      const inward = (0.6 * (1 - seated) - 0.25 * seated) * (1 - tog), lean = 0.17 + 0.17 * tog;
+      const turnIn = Hand.tune ? Hand.tune.inward : inward;
+      dir = [-Math.sin(turnIn) * this.side * ct, -st, -Math.cos(turnIn) * ct];
       const k = dir[1], n0 = (v => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; })([-dir[0] * k, 1 - dir[1] * k, -dir[2] * k]);
       const a0 = [(dir[1] * n0[2] - dir[2] * n0[1]) * this.side, (dir[2] * n0[0] - dir[0] * n0[2]) * this.side, (dir[0] * n0[1] - dir[1] * n0[0]) * this.side];      // (across the palm, towards the thumb)
       palm = [0, 1, 2].map(i => n0[i] * Math.cos(lean) - a0[i] * Math.sin(lean)); cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
@@ -576,7 +585,9 @@ export class Hand {
         }
       } else if (dt > 0) this.empty += dt;
     }
-    this.flow(dt, c, running > 0 && this.kind !== 'wet' ? this.pour : null, running);
+    // (Her own hand lets sand go grain by grain, world/falling.js; ribbons are for the figure of tubes, and for water still.)
+    const grains = this.falling && this.real && this.kind !== 'water';
+    this.flow(dt, c, !grains && running > 0 && this.kind !== 'wet' ? this.pour : null, running);
     // (A wet hand dries in a minute or so in this sun and wind; dry sand falls off it sooner.)
     if (dt > 0 && !this.down && this.amount < 0.02) { this.wet = Math.max(0, this.wet - dt / 70); this.sand = Math.max(0, this.sand - dt / (this.wet > 0.3 ? 60 : 6)); }
     const which = this.side > 0 ? 1 : 0, wrist = c.joints.wrists[which], end = c.joints.fingertips[which], u = c.material.uniforms;
@@ -609,8 +620,12 @@ export class Hand {
     this.pour = { K, f, N, A, floor, sea, ground, v, wetGround: !sea && c.wetAt(K[0], K[2], ground), gaps: [under(0), under(1), under(2)] };
     let running = 0;
     if (dt > 0 && this.lift > 0.8 && this.amount > 0.002) {
-      const out = sim.step(dt, [A[1], f[1], N[1]]), through = out.gaps[0] + out.gaps[1] + out.gaps[2], gone = (through + out.edge) / HANDFUL;
+      // (Worked, what lies in the hollow of the palm is rocked towards the fingers: the sim takes the palm as tipped a
+      // little further than it is drawn. A level palm keeps the last third of a handful in its hollow for good.)
+      const rock = 0.32 * (this.worked || 0), lie = [A[1], f[1] - rock, N[1]], ll = Math.hypot(lie[0], lie[1], lie[2]) || 1;
+      const out = sim.step(dt, [lie[0] / ll, lie[1] / ll, lie[2] / ll]), through = out.gaps[0] + out.gaps[1] + out.gaps[2], gone = (through + out.edge) / HANDFUL;
       this.amount = sim.amount;
+      if (this.falling && sandy) this.emit(dt, c, out, at, v, floor);
       for (let g = 0; g < 3; g++) this.ledger.gaps[g] += out.gaps[g];
       this.ledger.edge += out.edge; this.ledger.out += through + out.edge; this.ledger[sea ? 'sea' : 'sand'] += through + out.edge;
       // How hard each gap is running (a stream at full strength carries a twentieth of a handful a second).
@@ -630,7 +645,7 @@ export class Hand {
           const p = at(out.at[0], out.at[1], 0);
           if (!sea) { if (sandy) patch?.pour(p[0], p[2], 0.02, out.edge, 0, fall, time); else patch?.pour(p[0], p[2], 0.04, 0, out.edge / HANDFUL * 7, fall, time); }
           // (What goes over the edge of the hand goes as loose grains, or drops.)
-          this.owed += out.edge / HANDFUL * stuff.things;
+          if (!(this.falling && sandy)) this.owed += out.edge / HANDFUL * stuff.things;
           for (; this.owed >= 1; this.owed--) this.spray.put(wrap64(p[0] + (r() - 0.5) * 0.02), p[1], wrap64(p[2] + (r() - 0.5) * 0.02), floor, time + dt * r(), [v[0] + (r() - 0.5) * 0.08, -0.05 - 0.2 * r(), v[2] + (r() - 0.5) * 0.08], stuff.size[0] + (stuff.size[1] - stuff.size[0]) * r() * r(), !sandy);
         }
         if (sea && time - this.ringed > (sandy ? 0.3 : 0.16)) { const p = this.pour.gaps[1]; this.ring(p[0] + (r() - 0.5) * 0.05, p[2] + (r() - 0.5) * 0.05, time + fall, sandy ? 0.1 : 0.2); this.ringed = time; }
@@ -660,6 +675,56 @@ export class Hand {
       this.lying.visible = true;
     }
     return running;
+  }
+
+  /**
+   * What ran out of the hand this frame (`out`: sim/palm.js step), let go as grains (world/falling.js). Through
+   * each gap it falls as a curtain: along the gap between two fingers, a couple of centimetres of it, and as
+   * thin as the gap is wide; every grain with the hand's own motion and a little of its own, born somewhere
+   * within the frame at where the gap was then, so that a moving hand leaves no steps in what it pours. Dry sand
+   * is twelve thousand grains to the cubic centimetre, each drawn (or one in four, standing for four); wet sand
+   * goes in clots. `at(u, v, w)`: a place on the palm in the world; `v`: the hand's velocity; `floor`: where it lands.
+   */
+  emit(dt, c, out, at, v, floor) {
+    const F = this.falling, r = this.random, time = c.time, dry = this.kind === 'dry', sim = this.sim, share = dry ? F.share : 1, per = (dry ? 1.2e10 : 4e7) * share;
+    const lerp = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+    const one = (p, dense, weight) => {
+      let size, tau, kind = 3;
+      if (dry) {
+        // (Grains of all sizes about four tenths of a millimetre; three in a hundred are flakes of shell, two are dark.)
+        const g = r() + r() + r() - 1.5, q = r();
+        size = Math.min(0.0016, Math.max(0.00015, 0.0004 * Math.exp(0.9 * g))); kind = q < 0.03 ? 1 : q < 0.05 ? 2 : 0;
+        // (In the thick of a stream the grains carry the air down with them, and it hardly slows them.)
+        tau = kind === 1 ? 0.3 : grainTau(size) * (1 + 2 * dense);
+        if (kind === 1) size *= 1.7;
+      } else { size = 0.002 + 0.003 * r() * r(); tau = 0.9; }
+      F.put(p[0], p[1], p[2], v[0] + (r() - 0.5) * 0.07, v[1] - 0.05 - 0.1 * r(), v[2] + (r() - 0.5) * 0.07, time - r() * dt, floor, size, tau, weight, kind, dense);
+    };
+    for (let g = 0; g < 3; g++) {
+      if (!(out.gaps[g] > 0)) { this.slots[g] = null; continue; }
+      // The slot: from just beyond the knuckles along the gap, under the fingers, which rise from the palm as they are cupped.
+      const q = sim.gapAt(g), k0 = sim.knuckle + 0.003, wide = 0.0006 + 0.0022 * this.open;
+      const end = s => at(q[0], k0 + s * 0.014, -0.013 + s * 0.007), now = [end(0), end(1)], was = this.slots[g] || now;
+      this.owing[g] += out.gaps[g] * per;
+      let n = Math.floor(this.owing[g]);
+      this.owing[g] -= n;
+      // (No more than four hundred from a gap in a frame: beyond that each stands for more.)
+      const weight = (n > 400 ? n / 400 : 1) / share; n = Math.min(n, 400);
+      for (let k = 0; k < n; k++) {
+        const s = r(), back = r(), p = lerp(lerp(now[0], now[1], s), lerp(was[0], was[1], s), back), a = (r() - 0.5) * wide, A = this.pour.A;
+        one([p[0] + A[0] * a, p[1] + A[1] * a, p[2] + A[2] * a], this.rates[g], weight);
+      }
+      this.slots[g] = now;
+    }
+    if (out.edge > 0) {
+      // (What goes over the edge of the hand goes as loose grains, from where it went over.)
+      const p = at(out.at[0], out.at[1], 0);
+      this.owing[3] += out.edge * per;
+      let n = Math.floor(this.owing[3]);
+      this.owing[3] -= n;
+      const weight = (n > 300 ? n / 300 : 1) / share; n = Math.min(n, 300);
+      for (let k = 0; k < n; k++) one([p[0] + (r() - 0.5) * 0.016, p[1] + (r() - 0.5) * 0.004, p[2] + (r() - 0.5) * 0.016], 0.2, weight);
+    }
   }
 
   /** Where the stream from gap i (0 between the first two fingers .. 2) leaves the hand. */

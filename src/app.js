@@ -14,6 +14,7 @@ import { Walker, attachWalkInput, buildingBlocker } from './camera/walk.js';
 import { proportions, setProportions } from './world/bodyshape.js';
 import { Gait } from './world/gait.js';
 import { Spray } from './world/spray.js';
+import { Falling } from './world/falling.js';
 import { Hand } from './world/hand.js';
 import { Figure, loadFigure } from './world/figure.js';
 import { FigureRig } from './world/figurepose.js';
@@ -243,6 +244,10 @@ export async function start(canvas, onProgress = () => {}) {
     return true;
   }).catch(e => { note(`the body model did not load: ${e?.message || e}`); return false; });
   const spray = new Spray();
+  // What falls from your hands, grain by grain, laid over the finished picture (world/falling.js).
+  const falling = tier.fp.grains ? new Falling(tier.fp.grains, tier.fp.grainShare) : null, overlay = new THREE.Scene();
+  overlay.matrixWorldAutoUpdate = false;
+  if (falling) overlay.add(falling.mesh);
   // Whether the sand at (x, z), ground height g, is wet from the waves: under the height the swash reaches there.
   // (As lr_shore's lrBeach has it, without the ragged edge: on a beach face the waves climb to their run-up; over
   // flat sand a sheet runs on a few metres and dies, so the middle of a wide bar is dry though it is low.)
@@ -258,7 +263,7 @@ export async function start(canvas, onProgress = () => {}) {
     return a < (R * (1 + 0.05 * noiseTile(px * (445 / 1024), pz * (445 / 1024), 445)) + 0.02) * ease(0, 0.01, R);
   };
   // Your right hand, taking up sand and water and letting them run out between the fingers (world/hand.js).
-  const handParts = { spray, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch,
+  const handParts = { spray, falling, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch,
     ring: (x, z, when, strength) => (ripples ? ripples.drop(x, z, when, strength, 0.022) : shared.uRing.value[rings++ % 6].set(wrap64(x), wrap64(z), when, strength)) };
   // (Your right hand: the mouse button. Your left: the other button, or F. Each takes, holds and pours its own.)
   const hand = new Hand(handParts), handL = new Hand({ ...handParts, side: -1, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed, -1) } });
@@ -818,6 +823,7 @@ export async function start(canvas, onProgress = () => {}) {
       // (And it comes in gusts: a few seconds of more, a few of less, never the same for long.)
       const gust = 0.85 + 0.4 * Math.sin(clock.time * 0.71) * Math.sin(clock.time * 0.23 + 1) + 0.15 * Math.sin(clock.time * 2.3 + 2);
       const breeze = shared.uWind.value, lee = 0.2 * breeze.z * (1 - 0.45 * walker.crouched) * gust;
+      you.air = [breeze.x * lee, breeze.y * lee];
       if (figure) {
         // The tail of her hair (figure.js swing): where it is tied to her head, a hand's breadth behind the eye,
         // in the world; how that place is accelerating; and the breeze up there, stronger than at the hand.
@@ -945,7 +951,8 @@ export async function start(canvas, onProgress = () => {}) {
       const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
       shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
-    graph.render(opaque, water.mesh, rig.camera, clouds);
+    falling?.update(clock.time, dt, you.air || [0, 0]);
+    graph.render(opaque, water.mesh, rig.camera, clouds, falling ? overlay : null);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
   }
 
@@ -1118,7 +1125,11 @@ export async function start(canvas, onProgress = () => {}) {
     /** For tests: what a hand holds and its account of what it took and let go (world/hand.js `ledger`, cubic metres): `side` 1 your right, -1 your left. */
     handful: (side = 1) => { const h = side > 0 ? hand : handL; return { kind: h.kind, amount: h.amount, open: h.open, rates: h.rates.slice(), ...h.ledger, gaps: h.ledger.gaps.slice() }; },
     /** For tests: chance begins again from `n`: the same doing then gives the same grains and drops. */
-    seed(n = 1) { spray.seed(n); hand.seed(n + 1); handL.seed(n + 2); },
+    seed(n = 1) { spray.seed(n); hand.seed(n + 1); handL.seed(n + 2); falling?.seed(n + 3); },
+    /** For tests: a place to hold a handful (from the eye: x to the hand's own side, y up, z back; metres) and how far the fingers point inward (radians), to try; null: as it is. */
+    holdAt(tune = null) { Hand.tune = tune; },
+    /** For tests: how many grains are in the air now, and how many were written over while still falling. */
+    grains: () => (falling ? falling.inAir(clock.time) : null),
     /**
      * For tests: your hands as they are posed now, measured as hands are (world/handpose.js): [left, right], each
      * { what it is doing: ik, lift, grip, amount, kind, down, open, tipped, rates, ledger (world/hand.js);
