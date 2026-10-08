@@ -565,11 +565,16 @@ void main() {
     // not threads. Drawn two centimetres wide and dead straight, as they were, they crossed the sand at your
     // feet like scratches, or the track of a wheel.)
     q.y += 0.22 * sin(q.x * 0.9 + 4.0 * lrNoise(vec2(q.x * 0.11 - uTime * 0.5, q.y * 0.4)));
+    // (And they have no edges: the pattern is pulled about by a second one a step across, so that no side of a
+    // veil runs straight. A streamer with a straight side, even a soft one, read as a path worn across the sand.)
+    q += 0.5 * (vec2(lrNoise(q * 0.8 + vec2(-uTime * 1.4, 3.0)), lrNoise(q.yx * 0.8 + vec2(9.0, -uTime * 0.9))) - 0.5);
     float streak = lrNoise(vec2(q.x * 0.5 - uTime * 3.2, q.y * 2.4)) * lrNoise(vec2(q.x * 0.13 - uTime * 1.1, q.y * 0.9) + 7.0)
                  + 0.3 * lrNoise(vec2(q.x * 1.7 - uTime * 6.0, q.y * 6.0) + 3.0);
     // (Sand in the air is a pale veil, a quarter brighter than the beach, that half hides the ground's own
-    // shading under it; in your shadow it is in shadow too.)
-    col = mix(col, albedo * (uSunE * lrSaturate(uSunDir.y) * shade + uSkyE) / PI * 1.25, min(0.7, 1.3 * sqrt(blowing)) * smoothstep(0.38, 0.9, streak));
+    // shading under it; in your shadow it is in shadow too. It is a thin layer: you see it looking along the
+    // beach, through a long reach of it, and hardly at all looking straight down at your feet.)
+    float through = min(1.0, 0.2 / max(V.y, 0.05));
+    col = mix(col, albedo * (uSunE * lrSaturate(uSunDir.y) * shade + uSkyE) / PI * 1.25, min(0.7, 1.3 * sqrt(blowing)) * through * smoothstep(0.32, 1.0, streak));
   }
   if (wetAll > 0.0) {
     // Wet sand is darker by exactly what the water model gives for water of no depth. On top lies the film the
