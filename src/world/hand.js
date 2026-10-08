@@ -436,7 +436,9 @@ export class Hand {
         if (sandy && this.mark >= 0 && info[this.mark].y > 0.5) { info[this.mark].set(time, 4, c.yaw, this.kind === 'dry' ? 1 : 0.7); this.mark = -1; }
         if (!sandy) this.ring(tip[0], tip[2], time, 0.3);
         // (Out of real sand: the handful's volume, from under the palm and the fingers.)
-        if (sandy) { const w = c.world(touching.wrist); this.patch()?.move((tip[0] + w[0]) / 2, (tip[2] + w[2]) / 2, 0.042, -HANDFUL * (this.kind === 'dry' ? 1 : 0.75), 0.12); }
+        // (The furrows the fingers draw as they close, running back from where their tips went in to a bowl
+        // under the palm: one mark, as a hand makes it.)
+        if (sandy) { const w = c.world(touching.wrist), long = Math.hypot(tip[0] - w[0], tip[2] - w[2]) || 1; this.patch()?.scoop(tip[0], tip[2], (tip[0] - w[0]) / long, (tip[2] - w[2]) / long, this.side, -HANDFUL * (this.kind === 'dry' ? 1 : 0.75), 0.12); }
       }
       if (this.speed > 0.06 && time - this.spoke > 0.13) { this.sound.touch(this.kind, 'drag', this.speed); this.spoke = time; }
       if (!sandy && this.speed > 0.12 && time - this.ringed > 0.28) { this.ring(tip[0], tip[2], time, 0.3); this.ringed = time; }

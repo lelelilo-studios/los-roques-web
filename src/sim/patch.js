@@ -21,6 +21,18 @@ import { skinningGLSL } from '../world/figure.js';
 
 export const PATCH_LENGTH = 4;                     // metres across (64 / 16)
 const GRID = 13, EVENTS = 4;
+/** lrScoop on the CPU (see the shader), and the area it is worth: a depth times this is the volume taken. */
+export function scoopShape(lx, ly) {
+  const cx = lx + 0.085, cy = ly - 0.01, ease = t => (t = Math.min(Math.max(t / 0.5, 0), 1), t * t * (3 - 2 * t));
+  let k = Math.exp(-2 * (cx * cx / 0.003025 + cy * cy / 0.002025));
+  for (const tip of [[-0.008, -0.024], [-0.012, 0.016], [-0.028, 0.044], [-0.056, 0.06]]) {
+    const ax = -0.07 - tip[0], ay = 0.01 + 0.5 * (tip[1] - 0.01) - tip[1], t = Math.min(Math.max(((lx - tip[0]) * ax + (ly - tip[1]) * ay) / (ax * ax + ay * ay), 0), 1);
+    const far = Math.hypot(lx - tip[0] - ax * t, ly - tip[1] - ay * t);
+    k = Math.max(k, 0.6 * Math.exp(-2 * far * far / 0.00017) * ease(t));
+  }
+  return k;
+}
+const SCOOP_AREA = (() => { let sum = 0; for (let x = -0.25; x < 0.1; x += 0.002) for (let y = -0.15; y < 0.17; y += 0.002) sum += scoopShape(x, y) * 4e-6; return sum; })();
 
 const simFragment = /* glsl */`
 precision highp float;
@@ -31,7 +43,7 @@ uniform vec2 uCentre;         // where the window's middle is (detail coordinate
 uniform float uL, uN, uDt, uFeetWet;
 uniform vec2 uHop;            // this frame's hop for sand in transit (texels): a new length and direction every frame
 uniform vec4 uDrop[${EVENTS}];        // sand arriving (or taken): where (detail coordinates), over what radius (m), how fast at its middle (m/s)
-uniform vec4 uDropWet[${EVENTS}];     // x: dampness arriving per second; y: 1 = a right foot's print pressed in, 2 = a left foot's, pointing the way zw says
+uniform vec4 uDropWet[${EVENTS}];     // x: dampness arriving per second; y: 1 = a right foot's print pressed in, 2 = a left foot's, 3 = a right hand's scoop, 4 = a left hand's, pointing the way zw says
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 // The print of a bare foot 22 cm long, about its middle (p: along it, and across it towards its outside; metres):
@@ -44,6 +56,22 @@ float lrSole(vec2 p) {
   float k = max(max(lrPad(p, vec2(-0.078, 0.0), vec2(0.03)), 0.9 * edge), lrPad(p, vec2(0.036, 0.0), vec2(0.04, 0.044)));
   k = max(k, 0.85 * lrPad(p, vec2(0.092, -0.027), vec2(0.0145)));
   k = max(k, 0.7 * max(max(lrPad(p, vec2(0.099, -0.008), vec2(0.0105)), lrPad(p, vec2(0.096, 0.007), vec2(0.0095))), max(lrPad(p, vec2(0.089, 0.02), vec2(0.009)), lrPad(p, vec2(0.079, 0.031), vec2(0.0085)))));
+  return k;
+}
+// The mark a hand leaves taking a handful: the furrows its fingers draw from where their tips went in, back to a
+// bowl scooped from under the palm. (l: along the hand from between the first two fingertips, towards them
+// positive; across it, the little finger's side positive. Where the tips went in they have already pressed their
+// pits: each furrow begins at nothing there and deepens towards the palm. Taken as a round hole under the palm
+// alone, it left the four pits standing apart in front of it: the print of an animal's paw.)
+float lrScoop(vec2 l) {
+  vec2 c = l - vec2(-0.085, 0.01);
+  float k = exp(-2.0 * (c.x * c.x / 0.003025 + c.y * c.y / 0.002025));
+  for (int i = 0; i < 4; i++) {
+    vec2 tip = i == 0 ? vec2(-0.008, -0.024) : i == 1 ? vec2(-0.012, 0.016) : i == 2 ? vec2(-0.028, 0.044) : vec2(-0.056, 0.06);
+    vec2 ab = vec2(-0.07, 0.01 + 0.5 * (tip.y - 0.01)) - tip;
+    float t = clamp(dot(l - tip, ab) / dot(ab, ab), 0.0, 1.0), far = length(l - tip - ab * t);
+    k = max(k, 0.6 * exp(-2.0 * far * far / 0.00017) * smoothstep(0.0, 0.5, t));
+  }
   return k;
 }
 // (The steepest slope sand stands at between two neighbours: 33 degrees dry, 56 damp, almost flat under water.
@@ -118,7 +146,11 @@ void main() {
     // (A print pressed in again has a flat floor and a steep side, which then slumps as dry sand does; what is
     // poured or scooped is a soft mound or bowl.)
     float o2 = dot(o, o) / (uDrop[i].z * uDrop[i].z), k = exp(-2.0 * o2);
-    if (uDropWet[i].y > 0.5) {
+    if (uDropWet[i].y > 2.5) {
+      // (A hand's scoop: along the hand and across it; 4 marks a left hand.)
+      vec2 f = uDropWet[i].zw;
+      k = lrScoop(vec2(dot(o, f), dot(o, vec2(-f.y, f.x)) * (uDropWet[i].y > 3.5 ? -1.0 : 1.0)));
+    } else if (uDropWet[i].y > 0.5) {
       // (Along the foot and across it, the outside of the foot positive: 2 marks a left foot.)
       vec2 f = uDropWet[i].zw, l = vec2(dot(o, f), dot(o, vec2(-f.y, f.x)) * (uDropWet[i].y > 1.5 ? -1.0 : 1.0));
       k = lrSole(l);
@@ -244,6 +276,14 @@ export class SandPatch {
    * lands in the same frame is set down together.
    */
   pour(x, z, r, volume, wet, fall, time) { this.falling.push({ x, z, r, volume, wet, at: time + fall }); }
+  /**
+   * A handful taken by a hand whose first fingertips are at (x, z) and which points along (fx, fz), `side` > 0 the
+   * right hand: `volume` cubic metres (negative: dug out) over `seconds`, in the shape lrScoop gives it.
+   */
+  scoop(x, z, fx, fz, side, volume, seconds) {
+    if (this.events.length >= EVENTS) this.events.shift();
+    this.events.push({ x, z, r: 0.2, rate: volume / SCOOP_AREA / seconds, wet: 0, foot: [fx, fz, side], hand: true, left: seconds });
+  }
   /** `volume` cubic metres of sand set down round (x, z) over `seconds` (a negative volume: dug out). */
   move(x, z, r, volume, seconds, wet = 0) { this.drop(x, z, r, volume / (Math.PI * r * r / 2) / seconds, seconds, wet); }
 
@@ -293,7 +333,7 @@ export class SandPatch {
     { const k = this.tick = ((this.tick || 0) + 1) % 4093, r = [2.6, 5.3, 3.7, 6.9, 4.4, 8.1, 3.1][k % 7] * this.size / 2048 + 0.5, a = k * 2.399963; u.uHop.value.set(r * Math.cos(a), r * Math.sin(a)); }
     for (let i = 0; i < EVENTS; i++) {
       const e = this.events[i];
-      if (e) { u.uDrop.value[i].set(wrap(e.x), wrap(e.z), e.r, e.rate); u.uDropWet.value[i].set(e.wet, e.foot ? (e.foot[2] < 0 ? 2 : 1) : 0, e.foot ? e.foot[0] : 0, e.foot ? e.foot[1] : 0); e.left -= dt; } else u.uDrop.value[i].set(0, 0, 0, 0);
+      if (e) { u.uDrop.value[i].set(wrap(e.x), wrap(e.z), e.r, e.rate); u.uDropWet.value[i].set(e.wet, e.foot ? (e.foot[2] < 0 ? 2 : 1) + (e.hand ? 2 : 0) : 0, e.foot ? e.foot[0] : 0, e.foot ? e.foot[1] : 0); e.left -= dt; } else u.uDrop.value[i].set(0, 0, 0, 0);
     }
     this.events = this.events.filter(e => e.left > 0);
     this.now = 1 - this.now;

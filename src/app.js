@@ -1040,7 +1040,7 @@ void main() { outColor = vec4(lrRagged(uPts[int(gl_FragCoord.x)]), 0.0, 0.0, 1.0
     figure: () => (figure ? { vertices: figure.info.vertices, eyeHeight: figure.info.eyeHeight, stand: walker.stand, crouch: walker.crouch } : null),
     /** For tests: what your hand is doing (see world/hand.js). */
     handL: () => ({ ik: handL.ik, lift: handL.lift, amount: handL.amount, kind: handL.kind, down: handL.down, wet: handL.wet, sand: handL.sand }),
-    hand: () => ({ rest: hand.rest, rake: hand.rake, speed: hand.speed, took: hand.took, ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, open: hand.open, rates: hand.rates.slice(), kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
+    hand: () => ({ tip: hand.tip, wrist: body.joints.touching ? toWorld(body.joints.touching.wrist) : null, rest: hand.rest, rake: hand.rake, speed: hand.speed, took: hand.took, ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, open: hand.open, rates: hand.rates.slice(), kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
       stamps: shared.uTouchInfo.value.slice(0, shared.uTouchCount.value).map((v, i) => ({ kind: v.y, a: v.z, b: v.w, age: clock.time - v.x, x: shared.uTouchSeg.value[i].x, z: shared.uTouchSeg.value[i].y })) }),
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */
