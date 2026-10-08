@@ -413,7 +413,7 @@ void main() {
   // (The patch is read at the level that suits the pixel, so it can be shown as far as it reaches: what you
   // pressed two metres off is still there, soft, not gone at the first low angle.)
   lrPatchLod = max(0.0, log2(pxLong * float(textureSize(tPatch, 0).x) / uPatch.z) - 0.5);
-  float inPatch = pxLong < 0.07 && sand > 0.5 ? lrPatchIn(d) * (1.0 - smoothstep(0.03, 0.07, pxLong)) : 0.0, patchSteep = 0.0;
+  float inPatch = pxLong < 0.07 && sand > 0.5 ? lrPatchIn(d) * (1.0 - smoothstep(0.03, 0.07, pxLong)) : 0.0, patchSteep = 0.0, patchDrained = 0.0, patchPool = 0.0;
   if (inPatch > 0.0) lumpy *= 1.0 - inPatch * min(lrPatch(d).a, 1.0);
   vec2 at = d;                                              // where on the sand this pixel lands, once its relief is counted
   float hollow = 0.0;                                       // how far down in a hollow of trodden ground (0..1)
@@ -493,6 +493,10 @@ void main() {
     vec2 grad = vec2(lrPatchHeight(p + vec2(e2, 0.0)) - lrPatchHeight(p - vec2(e2, 0.0)), lrPatchHeight(p + vec2(0.0, e2)) - lrPatchHeight(p - vec2(0.0, e2))) / (2.0 * e2) * inPatch;
     n = normalize(vec3(n.x - grad.x, n.y, n.z - grad.y));
     patchSteep = smoothstep(0.08, 0.35, length(grad));
+    // (On wet sand: where a foot has squeezed the water out, and, once it is back, the print it stands in.)
+    if (wetness > 0.0) { patchDrained = inPatch * min(P.a, 1.0); patchPool = inPatch * smoothstep(0.0015, 0.005, -h) * (1.0 - patchDrained); }
+    // (Soaked sand was darkened above; drained, it is three quarters of the way back to its dry colour.)
+    if (patchDrained > 0.0 && !covered) albedo *= mix(1.0, LR_SOAKED, fine * wetness * (1.0 - 0.75 * patchDrained)) / mix(1.0, LR_SOAKED, fine * wetness);
     // Its own shadows: a rim shades the print beside it, a heap its far side.
     if (uSunDir.y > 0.02) {
       vec2 s = normalize(uSunDir.xz + 1e-5);
@@ -582,6 +586,9 @@ void main() {
     // (The wall of a print is not a mirror: a film does not stand on a slope. Without this the side of every
     // hollow in wet sand flashed white with the sun.)
     gloss *= 1.0 - patchSteep;
+    // Your feet on wet sand. Under a foot and round it the water is squeezed out: no film, for as long as the foot
+    // presses and a second more. Then the print, lower than the sand about it, fills: a film stands in it.
+    gloss = max(gloss * (1.0 - patchDrained), 0.85 * patchPool * smoothstep(0.3, 0.8, wetAll));
     // (Rain: a film in patches while it falls, a dull damp surface after.)
     gloss = max(gloss, uWet * (0.12 + 0.5 * uRain) * patchy * sand);
     // Puddles: on the hard-trodden streets of the village the rain stands in the hollows (beach sand drinks it).
@@ -594,7 +601,8 @@ void main() {
     float fresnel = lrMeanFresnel(max(dot(nf, V), 0.0), sqrt(rough));
     vec3 mirror = reflect(-V, nf);
     mirror.y = abs(mirror.y) + 0.01;
-    col *= mix(vec3(1.0), lrWetSand(albedo * light / lit), wetAll) * mix(1.0, (1.0 - fresnel) / 0.979, gloss);
+    // (Drained sand is paler: most of the way back to dry.)
+    col *= mix(vec3(1.0), lrWetSand(albedo * light / lit), wetAll * (1.0 - 0.8 * patchDrained)) * mix(1.0, (1.0 - fresnel) / 0.979, gloss);
     col += gloss * (fresnel * lrEnv(normalize(mirror), rough) + uSunE * min(lrSunGlitter(V, nf, uSunDir, vec2(rough)), 400.0) * step(0.0, uSunDir.y) * shade);
     // What the sheet leaves behind: its last bubbles, bursting within a second or so, and a line of them at the
     // top of each wave's run (this wave's, and fainter the one before).
