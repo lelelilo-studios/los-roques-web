@@ -312,7 +312,9 @@ export async function start(canvas, onProgress = () => {}) {
   }
 
   // Your footprints: the last 24 paces on sand, left and right of the line walked.
-  let prints = 0;
+  let prints = 0, carved = -9;
+  // (Where each of those prints is in the world, and whether the patch of real sand has lost it: see the frame.)
+  const marks = [];
   const wrap64 = v => ((v % 64) + 64) % 64;
   let rings = 0;
   /** Whether your feet are wet (from the water you stood in a little while ago). */
@@ -345,6 +347,7 @@ export async function start(canvas, onProgress = () => {}) {
       spray.burst(wrap64(wx), ground.heightAt(wx, wz), wrap64(wz), clock.time + 0.1 / Math.max(pace, 0.5), [-sy, cy], Math.round(3 + 8 * pace), false, 0.45 + 0.55 * pace);
     }
     shared.uFoot.value[prints % 24].set(wrap64(px), wrap64(pz), Math.atan2(sy, cy) + (feetWet() ? 64 : 0), clock.time);
+    marks[prints % 24] = { x: px, z: pz, yaw: Math.atan2(sy, cy), wet: wetSand, away: false };
     shared.uFootCount.value = Math.min(++prints, 24);
   }
   // Walls, and the umbrella poles on the beaches (a coarse grid of small circles).
@@ -704,6 +707,21 @@ export async function start(canvas, onProgress = () => {}) {
     // The sand round you moves on: pressed by your body where you stand on it, planed by the sea where that runs.
     if (patch) {
       if (walking && !onDeck(walker.x, walker.z)) {
+        // Prints you left and walked away from. The patch holds only the four metres round you, and forgot each
+        // as it left that square; a stamped print stands for it out there. Coming back, it is pressed into the
+        // patch again as it comes within reach: a plain print the shape of a sole (the stamp is
+        // not drawn inside the patch: without this your own trail vanished as you walked back along it).
+        for (const m of marks) {
+          if (!m) continue;
+          const far = Math.max(Math.abs(m.x - walker.x), Math.abs(m.z - walker.z));
+          if (far > 1.9) m.away = true;
+          else if (far < 1.7 && m.away && clock.time - carved > 0.12 && dt > 0) {
+            m.away = false; carved = clock.time;
+            if (surfaceAt(m.x, m.z) - footing.heightAt(m.x, m.z) > 0.005) continue;       // (the sea is over it: gone)
+            const fx = Math.sin(m.yaw), fz = -Math.cos(m.yaw), deep = m.wet ? 0.005 : 0.013;
+            patch.drop(m.x, m.z, 0.13, -deep / 0.1, 0.1, 0, [fx, fz]);
+          }
+        }
         patch.update(dt, { x: walker.x, z: walker.z, cam: rig.eye, base: footing.heightAt(walker.x, walker.z), time: clock.time, feetWet: feetWet() ? 0.8 : 0,
           meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: pressing }] : [],
           sample: (x, z) => { const g = footing.heightAt(x, z); return [g, wetSandAt(x, z, g) ? 1 : 0, surfaceAt(x, z) - g]; } });
