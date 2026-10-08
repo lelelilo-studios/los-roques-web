@@ -43,7 +43,7 @@ export class Body {
    * `yaw` is the walker's heading (radians).
    */
   /** Stands the body with its feet at height y, heading `yaw`. `side`: how far the eye has swung to its right of the body's own line (the head sways over each foot; the feet do not). */
-  place(y, yaw, pitch = 0, side = 0) {
-    for (const m of [this.mesh, this.headMesh]) { m.position.set(-Math.cos(yaw) * side, y, -Math.sin(yaw) * side); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix); }
+  place(x, y, z, yaw, pitch = 0) {
+    for (const m of [this.mesh, this.headMesh]) { m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix); }
   }
 }

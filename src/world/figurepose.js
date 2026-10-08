@@ -134,10 +134,11 @@ export class FigureRig {
       this.hinge(s.bone.lowerleg01, aim(sub(s.A, s.K), [-1, 0, 0], sub(ankle, this.carry(s.bone.upperleg01, s.K)), hinge));
       // The foot keeps level, tipped by the solver (toes up as the heel lands, heel up as you push off); with the
       // heel up the toes stay flat on the ground.
-      const foot = j.feet ? j.feet[i] : { pitch: -0.9 }, Rf = about([1, 0, 0], foot.pitch);
+      // (Turned the way it was put down: `out` from straight ahead, where at rest it is turned out by its own share.)
+      const foot = j.feet ? j.feet[i] : { pitch: -0.9 }, Rf = foot.out === undefined ? about([1, 0, 0], foot.pitch) : mul(about([0, 1, 0], -(foot.out - s.side * 0.12)), about([1, 0, 0], foot.pitch));
       this.hinge(s.bone.foot, Rf);
       // (With the heel up the toes stay flat on the ground; otherwise they go with the foot, and can curl up or grip.)
-      const Rtoes = foot.pitch < 0 && j.feet ? IDENTITY : foot.toes ? mul(Rf, about([1, 0, 0], foot.toes)) : Rf;
+      const Rtoes = foot.pitch < 0 && j.feet ? (foot.out === undefined ? IDENTITY : about([0, 1, 0], -(foot.out - s.side * 0.12))) : foot.toes ? mul(Rf, about([1, 0, 0], foot.toes)) : Rf;
       for (const t of s.toes) this.hinge(t, Rtoes);
 
       // The arm: the shoulder joint goes where the solver has it (it comes forward when you reach).
@@ -166,7 +167,7 @@ export class FigureRig {
       });
     }
     // The head stays on the eye (the camera is between its eyes), upright; the neck goes between it and the trunk.
-    const lift = [0, eye - this.eye, 0];
+    const lift = j.eye ? [j.eye[0], j.eye[1] - this.eye, j.eye[2]] : [0, eye - this.eye, 0];
     this.drive(this.head, IDENTITY, add(this.bones[this.head].head, lift));
     const top = this.neck[2];
     this.drive(top, IDENTITY, add(this.bones[top].head, lift));

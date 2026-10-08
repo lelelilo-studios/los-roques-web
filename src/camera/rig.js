@@ -21,6 +21,8 @@ export class CameraRig {
     this.limits = { minDist: 1, maxDist: 60000, minPitch: 0.01 * DEG, maxPitch: 89.9 * DEG };
     this.frustum = new THREE.Frustum();
     this.eye = { x: 0, y: 1, z: 0 };
+    this.own = new THREE.Vector3();                         // your own eye in first person (the same as `eye` unless `outside` is set)
+    this.outside = null;                                    // { angle, dist, height, aim, heading? }: the camera looks at you from outside (tests)
     this.ground = null;       // data/geoCPU.js Ground, for keeping the eye above the terrain
     this.flight = null;
     this.seaLevel = 0;
@@ -89,12 +91,27 @@ export class CameraRig {
     let dirX, dirY, dirZ;
     if (walking) {
       // First person: the walker owns the eye. The ground detail is centred a few metres ahead of the feet.
-      // (A heel coming down drops the eye half a centimetre and nods it a third of a degree, for an instant.)
-      const w = this.walker, jolt = (w.thud || 0) * (w.bobAmount ?? 1), look = w.look - 0.006 * jolt, cl = Math.cos(look);
+      // (A heel coming down on sand is felt in the head as hardly more than a tremor: a millimetre or two, and
+      // a tenth of a degree of nod, coming on over a couple of frames.)
+      const w = this.walker, hit = (w.thud || 0) * (w.bobAmount ?? 1);
+      this.jolt = (this.jolt || 0) + (hit - (this.jolt || 0)) * 0.45;
+      const jolt = this.jolt * 0.3, look = w.look - 0.006 * jolt, cl = Math.cos(look);
       // (The head sways over each planted foot, and goes forward over the feet as you look down or squat.)
-      eye.x = w.x + cy * w.sway + sy * (w.ahead || 0); eye.z = w.z + sy * w.sway - cy * (w.ahead || 0); eye.y = w.eyeY + w.bob - 0.005 * jolt;
+      // (Standing on the ground your eye is the posed body's: app.js works out where that is.)
+      if (w.head) { eye.x = w.head.x; eye.z = w.head.z; eye.y = w.head.y - 0.005 * jolt; }
+      else { eye.x = w.x + cy * w.sway + sy * (w.ahead || 0); eye.z = w.z + sy * w.sway - cy * (w.ahead || 0); eye.y = w.eyeY + w.bob - 0.005 * jolt; }
       this.target.x = w.x; this.target.z = w.z; this.target.y = eye.y;
       dirX = sy * cl; dirY = Math.sin(look); dirZ = -cy * cl;
+      // (Where your own eye is, whatever the camera does.)
+      this.own.x = eye.x; this.own.y = eye.y; this.own.z = eye.z;
+      if (this.outside) {
+        // Looking at you from outside: `angle` round you from behind (0) by the left to in front (180), `dist`
+        // metres off, `height` above your feet, aimed at `aim` above them. For judging poses and shadows.
+        const o = this.outside, a = (o.heading ?? yaw) + o.angle * DEG, feet = w.eyeY - w.body;
+        eye.x = w.x - Math.sin(a) * o.dist; eye.z = w.z + Math.cos(a) * o.dist; eye.y = feet + o.height;
+        const tx = w.x - eye.x, ty = feet + o.aim - eye.y, tz = w.z - eye.z, tl = Math.hypot(tx, ty, tz) || 1;
+        dirX = tx / tl; dirY = ty / tl; dirZ = tz / tl;
+      }
       this.focus.x = w.x + sy * 6; this.focus.z = w.z - cy * 6;
       // 65 degrees across the short side of the screen.
       cam.fov = aspect >= 1 ? 65 : 2 * Math.atan(Math.tan(32.5 * DEG) / aspect) / DEG;
@@ -120,7 +137,7 @@ export class CameraRig {
     cam.position.set(0, eye.y, 0);
     // An up vector square to the view direction: well defined even looking straight down.
     const h = Math.hypot(dirX, dirZ), roll = walking ? this.walker.roll || 0 : 0, cr = Math.cos(roll), sr = Math.sin(roll);
-    cam.up.set(-sy * dirY * cr + cy * sr, h * cr, cy * dirY * cr + sy * sr);
+    if (walking && this.outside) cam.up.set(0, 1, 0); else cam.up.set(-sy * dirY * cr + cy * sr, h * cr, cy * dirY * cr + sy * sr);
     _look.set(dirX, eye.y + dirY, dirZ);
     cam.lookAt(_look);
     cam.updateProjectionMatrix();

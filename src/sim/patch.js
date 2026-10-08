@@ -27,7 +27,8 @@ uniform sampler2D tPrev;
 uniform sampler2D tTool;      // the lowest skin over each point of the window, above uBase (m); 1 where there is none
 uniform sampler2D tGround;    // over the window: r = the ground above uBase (m), g = sand the sea keeps wet (0..1), b = depth of water over it now (m)
 uniform vec2 uCentre;         // where the window's middle is (detail coordinates)
-uniform float uL, uN, uDt, uFeetWet, uStride;
+uniform float uL, uN, uDt, uFeetWet;
+uniform vec2 uHop;            // this frame's hop for sand in transit (texels): a new length and direction every frame
 uniform vec4 uDrop[${EVENTS}];        // sand arriving (or taken): where (detail coordinates), over what radius (m), how fast at its middle (m/s)
 uniform vec4 uDropWet[${EVENTS}];     // x: dampness arriving per second
 in vec2 vUv;
@@ -59,10 +60,13 @@ void main() {
   }
   h -= 0.16 * give;
 
-  // What your body has pushed out from under itself travels, a centimetre a frame, until there is room for it.
-  // (A different stride every frame: with one stride the sand that came back lay in rows that far apart.)
-  float stride = uStride * e;
-  float moving = 0.25 * (texture(tPrev, vUv + vec2(stride, 0.0)).b + texture(tPrev, vUv - vec2(stride, 0.0)).b + texture(tPrev, vUv + vec2(0.0, stride)).b + texture(tPrev, vUv - vec2(0.0, stride)).b);
+  // What your body has pushed out from under itself travels until there is room for it: a hop of a centimetre
+  // or so each frame, a new length and a new direction every frame (uHop), to four sides at once. So it leaves
+  // the print by the nearest way and comes down within a finger's width of the edge, at every distance from it:
+  // a rounded rim. (Hops along the texture's axes, of a few fixed lengths, set it down in rows that far apart:
+  // a tread like a tyre's along everything dragged through the sand.)
+  vec2 hop = uHop * e, side = vec2(-hop.y, hop.x);
+  float moving = 0.25 * (texture(tPrev, vUv + hop).b + texture(tPrev, vUv - hop).b + texture(tPrev, vUv + side).b + texture(tPrev, vUv - side).b);
 
   // The sea over it: the sheet planes the sand flat and leaves it wet.
   if (under > 0.0) {
@@ -88,7 +92,8 @@ void main() {
     h -= push; moving += push * mix(0.16, 0.04, smoothstep(0.15, 0.6, wet));
     pressed = 2.0; damp = max(damp, uFeetWet * (1.0 - step(0.5, g.g)));          // (2: skin is on it now)
   } else {
-    float room = tool - surface, settle = min(moving, room > 0.5 ? moving : 0.5 * room);
+    // (Half of what is passing over free sand comes down each frame; the rest goes on a little further.)
+    float room = tool - surface, settle = min(0.5 * moving, 0.5 * room);
     h += settle; moving -= settle;
     pressed *= 1.0 - min(1.0, settle * 400.0);
   }
@@ -148,7 +153,7 @@ export class SandPatch {
     this.events = []; this.falling = [];
     this.pass = new FullscreenPass(simFragment, {
       tPrev: { value: null }, tTool: { value: this.tool.texture }, tGround: { value: this.grid }, uCentre: { value: new THREE.Vector2() }, uL: { value: this.L }, uN: { value: size },
-      uDt: { value: 0 }, uFeetWet: { value: 0 }, uStride: { value: 5 }, uDrop: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) }, uDropWet: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) },
+      uDt: { value: 0 }, uFeetWet: { value: 0 }, uHop: { value: new THREE.Vector2(4, 0) }, uDrop: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) }, uDropWet: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) },
     });
     /** (Shared with sim/ripples.js: the window's middle relative to the camera, the base height, half its length.) */
     this.toolUniforms = { uToolC: { value: new THREE.Vector3() }, uToolHalf: { value: this.L / 2 } };
@@ -231,7 +236,9 @@ export class SandPatch {
     }
     // (2) The patch moves on.
     const u = this.pass.material.uniforms;
-    u.tPrev.value = this.targets[this.now].texture; u.uCentre.value.set(wrap(c.x), wrap(c.z)); u.uDt.value = Math.min(dt, 0.05); u.uFeetWet.value = c.feetWet || 0; u.uStride.value = [3, 7, 2, 5, 8, 4][this.tick = ((this.tick || 0) + 1) % 6];
+    u.tPrev.value = this.targets[this.now].texture; u.uCentre.value.set(wrap(c.x), wrap(c.z)); u.uDt.value = Math.min(dt, 0.05); u.uFeetWet.value = c.feetWet || 0; 
+    // (The hop: lengths between half a centimetre and a centimetre and a half, turned by the golden angle each frame.)
+    { const k = this.tick = ((this.tick || 0) + 1) % 4093, r = [2.6, 5.3, 3.7, 6.9, 4.4, 8.1, 3.1][k % 7] * this.size / 2048 + 0.5, a = k * 2.399963; u.uHop.value.set(r * Math.cos(a), r * Math.sin(a)); }
     for (let i = 0; i < EVENTS; i++) {
       const e = this.events[i];
       if (e) { u.uDrop.value[i].set(wrap(e.x), wrap(e.z), e.r, e.rate); u.uDropWet.value[i].set(e.wet, 0, 0, 0); e.left -= dt; } else u.uDrop.value[i].set(0, 0, 0, 0);

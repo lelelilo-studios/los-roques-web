@@ -60,6 +60,7 @@ ${shadowGLSL}
 uniform sampler2D tSkin;
 uniform vec3 uTone;         // what the skin's own colour is multiplied by: her tan
 uniform vec3 uClothColour;
+uniform float uShowHead;    // 1 = draw the head too (you are being looked at from outside)
 // (Until the skin has a map of its own for what is on it: wet as far up as the sea has stood round you, the hand
 // that went into it, sand on wet feet and on the hand. The same numbers the figure of tubes shows.)
 uniform vec4 uBodyWet;      // wet up to this height (x) by this much (y, drying); and to z by w: the water you stand in now
@@ -77,7 +78,7 @@ in float vPart;
 layout(location = 0) out vec4 outColor;
 void main() {
   // (The head is not drawn: you look out of it. It is still there for the shadow.)
-  if (vPart > 0.001) discard;
+  if (vPart > 0.001 && uShowHead < 0.5) discard;
   vec3 n = normalize(vNormal), V = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
   // The grain of the skin, seen from near: it breaks up the sheen (a hand at arm's length; it fades with distance).
   // (Only where a pixel is much smaller than the grain: nearer the limit it showed as stubble.)
@@ -180,7 +181,7 @@ export class Figure {
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.FrontSide, defines: { LR_SHADOW_TAPS: shadowTaps },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
         uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, ...state,
-        ...own, tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
+        uShowHead: { value: 0 }, ...own, tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
     // Her hair, tied back: you never see it, only its outline in your shadow (a knot at the back of the crown).

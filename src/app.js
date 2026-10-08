@@ -10,8 +10,9 @@ import { loadData } from './data/loader.js';
 import { Ground } from './data/geoCPU.js';
 import { CameraRig, attachOrbitInput } from './camera/rig.js';
 import { OVERVIEW, shotFor, walkSpotFor } from './camera/bookmarks.js';
-import { Walker, attachWalkInput, buildingBlocker, paceLength } from './camera/walk.js';
-import { eyeAhead, footfall, setProportions } from './world/bodyshape.js';
+import { Walker, attachWalkInput, buildingBlocker } from './camera/walk.js';
+import { proportions, setProportions } from './world/bodyshape.js';
+import { Gait } from './world/gait.js';
 import { Spray } from './world/spray.js';
 import { Hand } from './world/hand.js';
 import { Figure, loadFigure } from './world/figure.js';
@@ -224,6 +225,7 @@ export async function start(canvas, onProgress = () => {}) {
     setProportions(p);
     // (Squatting on her heels, leaning forward a little, her eyes are at about half her height.)
     Object.assign(walker, { stand: p.stand, crouch: 0.51 * p.stand, sit: 0.095 + 0.985 * p.torso + p.eyeToShoulder, legs: (p.thigh + p.shin) / 0.87 });
+    gait.prop = { hip: p.hip, ankle: p.ankle, leg: p.thigh + p.shin };
     if (walker.body >= was - 0.01) { walker.eyeY += p.stand - walker.body; walker.body = p.stand; }
     opaque.add(figure.mesh);
     // The sand round you as real sand: your body presses into it (sim/patch.js).
@@ -326,9 +328,9 @@ export async function start(canvas, onProgress = () => {}) {
     // Where that foot came down: under the foot itself as it was posed a moment ago (the middle of the sole is
     // 6 cm ahead of the ankle), or, when nothing is being drawn (a test walking on fast), a hip's width to the
     // side and ahead of you by the reach of the pace.
-    const fresh = frames - posedAt <= 1 ? body.joints?.ankles : null, landed = fresh?.[step.side], cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
-    const side = landed ? landed[0] + (step.side ? 0.007 : -0.007) : step.side ? 0.1 : -0.1, ahead = landed ? 0.06 - landed[2] + walker.ahead : footfall(step.stride ?? 1);
-    const px = step.x + cy * side + sy * ahead, pz = step.z + sy * side - cy * ahead, pace = Math.min(step.stride ?? 1, 1.6);
+    // (A footfall from the gait is the middle of that sole, where it is.)
+    const fresh = frames - posedAt <= 1 ? body.joints?.ankles : null, cy = Math.cos(step.yaw), sy = Math.sin(step.yaw);
+    const px = step.x, pz = step.z, pace = Math.min(step.stride ?? 1, 1.6);
     if (step.depth > 0.03) {
       // Wading: each pace sends a ring out over the water, and throws up drops where the foot goes in.
       if (ripples) ripples.drop(px, pz, clock.time, Math.min(1.6, 0.7 + step.depth * 3), 0.07);
@@ -337,12 +339,12 @@ export async function start(canvas, onProgress = () => {}) {
       return;
     }
     // On dry sand the other foot, pushing off a tenth of a second from now, flicks grains back from under its toes.
-    const pushing = fresh?.[1 - step.side];
-    if (pushing && !wetSand) {
-      const tx = pushing[0], tz = pushing[2] - 0.13, wx = step.x + cy * tx - sy * tz, wz = step.z + sy * tx + cy * tz;
+    const pushing = fresh ? gait.feet[1 - step.side] : null;
+    if (pushing && !wetSand && pace > 0.5) {
+      const wx = pushing.x + Math.sin(pushing.yaw) * 0.13, wz = pushing.z - Math.cos(pushing.yaw) * 0.13;
       spray.burst(wrap64(wx), ground.heightAt(wx, wz), wrap64(wz), clock.time + 0.1 / Math.max(pace, 0.5), [-sy, cy], Math.round(3 + 8 * pace), false, 0.45 + 0.55 * pace);
     }
-    shared.uFoot.value[prints % 24].set(wrap64(step.x + cy * side + sy * ahead), wrap64(step.z + sy * side - cy * ahead), Math.atan2(Math.sin(step.yaw), Math.cos(step.yaw)) + (step.side ? 0.12 : -0.12) + (feetWet() ? 64 : 0), clock.time);
+    shared.uFoot.value[prints % 24].set(wrap64(px), wrap64(pz), Math.atan2(sy, cy) + (feetWet() ? 64 : 0), clock.time);
     shared.uFootCount.value = Math.min(++prints, 24);
   }
   // Walls, and the umbrella poles on the beaches (a coarse grid of small circles).
@@ -366,6 +368,14 @@ export async function start(canvas, onProgress = () => {}) {
   const walker = new Walker({ ground: footing, surfaceAt, blocked, rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
   rig.walker = walker;
+  // Your feet (world/gait.js): each planted where it was put, or on its way to the next place. And you, as last
+  // posed: where the body's own frame stands in the world (x, z, the height of the ground it stands on), which
+  // way it faces, how far the hips are down for the legs to reach (`dip`), where the ground under your weight
+  // is in that frame (`home`). `on`: on your feet or seated, as against swimming.
+  walker.gaited = true;
+  const gait = new Gait((p => ({ hip: p.hip, ankle: p.ankle, leg: p.thigh + p.shin }))(proportions()));
+  const you = { on: false, was: '', x: 0, y: 0, z: 0, cy: 1, sy: 0, heading: 0, dip: 0, home: [0, 0, 0.08], folded: false, eyeUp: 1.5, reachable: null };
+  const toWorld = q => [you.x + q[0] * you.cy - q[2] * you.sy, you.y + q[1], you.z + q[0] * you.sy + q[2] * you.cy];
   /**
    * Where the site opens: standing on the sandbar of Cayo de Agua, near its narrow end by the main cay,
    * looking down its length between the two seas to West Cay and its lighthouse.
@@ -505,6 +515,64 @@ export async function start(canvas, onProgress = () => {}) {
   addEventListener('resize', resize);
   resize();
 
+  /**
+   * You move on by dt: the walker (where you are going), your feet (the gait), and your body posed over them.
+   * It is done before the camera is set, because your eye is the posed body's eye.
+   */
+  function advance(dt, input) {
+    walker.step(dt, input);          // (its own footfalls are not used: the gait says when a foot comes down)
+    walker.head = null;
+    if (walker.afloat || walker.diving) { you.on = false; return; }
+    const heading = walker.heading, cy = Math.cos(heading), sy = Math.sin(heading), feetY = walker.eyeY - walker.body, deck = onDeck(walker.x, walker.z);
+    const turn = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), state = walker.sitting ? 'sit' : 'stand';
+    // (Put down somewhere, come out of the water, sat down or got up: your feet are under you.)
+    if (!you.on || you.was !== state || walker.placed) { gait.reset(walker.x, walker.z, heading); you.dip = you.deep = you.deepK = you.shallow = 0; }
+    you.was = state; walker.placed = false;
+    // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
+    // or seated, on sand or in water no deeper than your knee. (Its frame is the body's, as last posed.)
+    const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
+    const reachable = { want: !!input.hand, open: input.open ?? 0.3, sitting: walker.sitting, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
+      x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
+    const reach = hand.plan(dt, reachable);
+    // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
+    const firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5, sink = deck ? 0 : (firm ? 0.005 : patch ? 0.018 : 0.011) + sunk;
+    const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting });
+    // (A test may put the eye lower than anyone can squat, to look at the sand: the body is then posed in its
+    // deepest squat, for the shadow, and left out of the picture: it would be folded through the camera.)
+    const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02, breath = Math.sin(clock.time * 1.45);
+    if (walker.sitting) {
+      // Seated, the keys that walk you move your legs: S draws them up and W stretches them out, A / D bring your
+      // feet together and apart, Space curls your toes.
+      if (dt > 0) {
+        seated.draw = Math.min(1, Math.max(0, seated.draw + input.fwd * -dt * 0.9)); seated.splay = Math.min(1, Math.max(0, seated.splay + input.right * dt * 0.9));
+        seated.wiggle += ((input.up ? 0.45 * Math.sin(clock.time * 9) - 0.15 : 0) - seated.wiggle) * (1 - Math.exp(-dt * 12));
+      }
+      body.pose({ sit: true, eye: Math.max(walker.body, walker.sit - 0.08), draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: deck ? 0 : 0.008 + sunk, touch: reach, turn });
+    } else body.pose({ gait: g, dip: you.dip, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach });
+    const j = body.joints;
+    // The hips ride down to each footfall and up over the standing leg, smoothly: as far down as the legs have
+    // needed lately (`deep`), in time with the feet. (Left to the legs alone they came down all at once as the
+    // heel reached out: five centimetres in four frames, a stamp at every pace.)
+    if (dt > 0) {
+      // (The most they need goes as the square of the pace: remembered as that, it is right for the next pace
+      // even when you slow down or speed up.)
+      const need = j.dipWant ?? 0, span = (g.pace || 0.3) ** 2; you.deepK = Math.max((you.deepK || 0) * Math.exp(-dt / 20), need / span); you.deep = you.deepK * span;
+      // (`shallow`: the least they have needed lately, as you pass over the standing leg.)
+      you.shallow = need < (you.shallow || 0) ? need : (you.shallow || 0) + (need - (you.shallow || 0)) * Math.min(1, dt / 0.6);
+      const want = j.dipWant === undefined ? 0 : Math.max(need, you.shallow + (you.deep - you.shallow) * (1 - (1 - (g.beat || 0)) ** 2));      // (down a moment before the heel, and still down just after)
+      you.dip += (want - you.dip) * (1 - Math.exp(-dt * (want > you.dip ? 45 : 25)));
+    }
+    // Where that leaves the body's frame in the world, and your eye. (Your weight is where the walker is.)
+    Object.assign(you, { on: true, home: j.home, x: walker.x - (j.home[0] * cy - j.home[2] * sy), y: feetY, z: walker.z - (j.home[0] * sy + j.home[2] * cy), cy, sy, heading, folded, eyeUp, reachable });
+    // (Asked for less movement: your eye keeps its height and its line; the body under it still walks.)
+    const calm = 1 - walker.bobAmount, ex = j.eye[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = j.eye[1] + calm * 0.72 * you.dip, ez = j.eye[2];
+    if (!folded) walker.head = { x: you.x + ex * cy - ez * sy, y: feetY + ey, z: you.z + ex * sy + ez * cy };
+    walker.roll = walker.sitting ? 0 : 0.22 * g.shift * walker.bobAmount;
+    posedAt = frames;
+    // Each foot that came down: its sound, its splash or its grains, where it is.
+    for (const e of g.landed) { walker.thud = Math.min(1.4, 0.4 + e.stride); stamp({ ...e, depth: Math.max(walker.surf - footing.heightAt(e.x, e.z), 0) }); }
+  }
+
   let adapt = 1;                                            // how far the eye has opened up for a cloud's shade (1 in the sun)
   let inspected = null;                                     // (the body model put out to be looked at: tests only)
   let frames = 0, posedAt = -9, lastInput = NO_INPUT, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
@@ -521,8 +589,7 @@ export async function start(canvas, onProgress = () => {}) {
     if (rig.mode === 'walk') {
       const moved = walker.x + walker.z + walker.yaw;
       lastInput = walkInput ? walkInput.read() : NO_INPUT;
-      for (const step of walker.step(dt, lastInput)) stamp(step);
-      walker.ahead = walker.afloat || walker.diving ? 0 : walker.sitting ? walker.ahead * Math.exp(-dt * 6) : eyeAhead({ look: walker.look, eye: Math.max(walker.body, walker.crouch - 0.13), stride: Math.max(walker.stride, walker.turned) });
+      advance(dt, lastInput);
       sound.update(dt, soundScene(dt));
       if (moved !== walker.x + walker.z + walker.yaw) saveHash();
     }
@@ -566,56 +633,31 @@ export async function start(canvas, onProgress = () => {}) {
     // Your body: walking on the bottom, or swimming where the water carries you (tipped along your look when dived).
     body.mesh.visible = walking && !figure;
     if (figure) figure.mesh.visible = walking;
-    if (standing) {
-      // (The ground's rise under your feet, forward and to the right, so each foot is set down on it; and in
-      // water to the chest, arms up and out.)
-      const fx = Math.sin(walker.yaw), fz = -Math.cos(walker.yaw), g = (dx, dz) => footing.heightAt(walker.x + dx, walker.z + dz);
-      const slope = [(g(fx * 0.3, fz * 0.3) - g(-fx * 0.3, -fz * 0.3)) / 0.6, (g(-fz * 0.2, fx * 0.2) - g(fz * 0.2, -fx * 0.2)) / 0.4];
-      const wade = Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4));
-      // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
-      // on sand or in water no deeper than your knee.
-      const cyw = Math.cos(walker.yaw), syw = Math.sin(walker.yaw), feet = walker.eyeY - walker.body, low = walker.crouched;
-      const reachable = { want: !!lastInput.hand, open: lastInput.open ?? 0.3, sitting: walker.sitting, canReach: (low > 0.8 || walker.sitting) && walker.depth < 0.5 && !onDeck(walker.x, walker.z), time: clock.time, look: walker.look, body: walker.body, feet,
-        x: walker.x + syw * walker.ahead, z: walker.z - cyw * walker.ahead, yaw: walker.yaw, cy: cyw, sy: syw, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z),
-        wetAt: wetSandAt };
-      const reach = hand.plan(dt, reachable);
-      // (The planted foot goes back under you at exactly the rate you travel, so it stays where it was put; your
-      // weight presses it a centimetre into dry sand, less into wet; turning on the spot you shift your feet.)
-      const speed = Math.hypot(walker.vx, walker.vz), firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5;
-      // (A test may put the eye lower than anyone can squat, to look at the sand: the body is then posed in its
-      // deepest squat, for the shadow, and left out of the picture: it would be folded through the camera.)
-      const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02;
-      if (walker.sitting) {
-        // Seated, the keys that walk you move your legs: S draws them up and W stretches them out, A / D bring your
-        // feet together and apart, Space curls your toes.
-        if (dt > 0) {
-          seated.draw = Math.min(1, Math.max(0, seated.draw + lastInput.fwd * -dt * 0.9)); seated.splay = Math.min(1, Math.max(0, seated.splay + lastInput.right * dt * 0.9));
-          seated.wiggle += ((lastInput.up ? 0.45 * Math.sin(clock.time * 9) - 0.15 : 0) - seated.wiggle) * (1 - Math.exp(-dt * 12));
-        }
-        body.pose({ sit: true, eye: Math.max(walker.body, walker.sit - 0.08), draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath: Math.sin(clock.time * 1.45), sink: onDeck(walker.x, walker.z) ? 0 : 0.008 + sunk, touch: reach });
-      } else       body.pose({ phase: walker.phase, stride: Math.max(walker.stride, walker.turned), eye: eyeUp, look: walker.look, slope, wade, breath: Math.sin(clock.time * 1.45),
-        pace: speed > 0.3 ? paceLength(speed, walker.crouched, walker.legs) : null, sink: onDeck(walker.x, walker.z) ? 0 : (firm ? 0.005 : patch ? 0.018 : 0.011) + sunk, touch: reach });
-      posedAt = frames; body.place(walker.eyeY - walker.body, walker.yaw, 0, walker.sway);
+    if (standing && you.on) {
+      // You were posed before the camera was set (advance): now everything of you is put where it stands,
+      // relative to the camera. (Looked at from outside, the camera is not at your eye.)
+      const { cy, sy } = you, offX = you.x - rig.eye.x, offZ = you.z - rig.eye.z;
+      body.place(offX, you.y, offZ, you.heading);
       if (figure) {
         // What of her rests on the sand or hangs just over it (for the soft dark under it: terrain.js).
-        const cy = Math.cos(walker.yaw), sy = Math.sin(walker.yaw), base = walker.eyeY - walker.body, list = shared.uContact.value;
-        const put = (i, q, r) => list[i].set(q[0] * cy - q[2] * sy - cy * walker.sway, base + q[1], q[0] * sy + q[2] * cy - sy * walker.sway, r);
-        body.joints.ankles.forEach((a, i) => { put(i * 2, [a[0], a[1] - 0.025, a[2] + 0.02], 0.05); put(i * 2 + 1, [a[0], Math.max(a[1] - 0.05, 0.02), a[2] - 0.11], 0.045); });
+        const list = shared.uContact.value;
+        const put = (i, q, r) => list[i].set(offX + q[0] * cy - q[2] * sy, you.y + q[1], offZ + q[0] * sy + q[2] * cy, r);
+        body.joints.ankles.forEach((a, i) => { const o = body.joints.feet[i]?.out || 0, fx = Math.sin(o), fz = -Math.cos(o); put(i * 2, [a[0] - fx * 0.02, a[1] - 0.025, a[2] - fz * 0.02], 0.05); put(i * 2 + 1, [a[0] + fx * 0.11, Math.max(a[1] - 0.05, 0.02), a[2] + fz * 0.11], 0.045); });
         body.joints.wrists.forEach((w, i) => { const t = body.joints.fingertips[i] || w; put(4 + i, [(w[0] + t[0]) / 2, (w[1] + t[1]) / 2, (w[2] + t[2]) / 2], 0.05); });
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
+        figure.mesh.visible = !you.folded; figure.setPose(figureRig.pose(body.joints, you.eyeUp), body.joints.eye ? body.joints.eye[1] : you.eyeUp); figure.place(offX, you.y, offZ, you.heading);
+        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0;
+        // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
+        if (body.joints.touching && !you.folded) body.joints.touching.palm = figureRig.hand(1);
       }
-      if (figure) { figure.mesh.visible = !folded; figure.setPose(figureRig.pose(body.joints, eyeUp), eyeUp); figure.place(-Math.cos(walker.yaw) * walker.sway, walker.eyeY - walker.body, -Math.sin(walker.yaw) * walker.sway, walker.yaw); }
-      // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
-      if (figure && body.joints.touching && !folded) body.joints.touching.palm = figureRig.hand(1);
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
-      hand.act(dt, { ...reachable, joints: body.joints, eye: rig.eye, material: body.mesh.material,
-        world: q => [reachable.x + q[0] * cyw - q[2] * syw, feet + q[1], reachable.z + q[0] * syw + q[2] * cyw], turn: v => [v[0] * cyw - v[2] * syw, v[1], v[0] * syw + v[2] * cyw] });
+      hand.act(dt, { ...you.reachable, joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] });
     }
     else if (walking) {
       if (hand.ik > 0 || hand.amount > 0) hand.reset();          // (swimming: the hand has other work)
       for (const c of shared.uContact.value) c.w = 0;
       const under = walker.diving ? 1 : 0;
-      body.pose({ swim: true, stroke: walker.stroke, under }); body.place(walker.eyeY + walker.bob, walker.yaw, under * walker.look);
+      body.pose({ swim: true, stroke: walker.stroke, under }); body.place(0, walker.eyeY + walker.bob, 0, walker.yaw, under * walker.look);
       if (figure) { figure.setPose(figureRig.pose(body.joints, 0), 0); figure.place(0, walker.eyeY + walker.bob, 0, walker.yaw, under * walker.look); }
     }
     if (walking) {
@@ -628,8 +670,8 @@ export async function start(canvas, onProgress = () => {}) {
       if (dt > 0) soak.sand = Math.max(0, soak.sand - dt * (walker.depth > 0.03 || !standing ? 2.5 : 1 / 300));       // washed off in the sea; otherwise it dries and drops off in minutes
       body.mesh.material.uniforms.uBodySand.value = standing ? soak.sand : 0;
       // Where your shins stand in the water (for the ripples round them): the body's ankles, turned to your heading.
-      const inWater = standing && walker.depth > 0.012 ? 1 : 0, cy = Math.cos(walker.yaw), sy = Math.sin(walker.yaw), speed = Math.hypot(walker.vx, walker.vz);
-      (body.joints?.ankles || []).forEach((a, i) => shared.uLeg.value[i].set(wrap64(rig.eye.x + a[0] * cy - a[2] * sy), wrap64(rig.eye.z + a[0] * sy + a[2] * cy), inWater, speed));
+      const inWater = standing && walker.depth > 0.012 ? 1 : 0, speed = Math.hypot(walker.vx, walker.vz);
+      (body.joints?.ankles || []).forEach((a, i) => { const w = toWorld(a); shared.uLeg.value[i].set(wrap64(w[0]), wrap64(w[2]), inWater, speed); });
     } else {
       for (const c of shared.uContact.value) c.w = 0;
       shared.uLeg.value[0].z = shared.uLeg.value[1].z = 0;
@@ -664,7 +706,7 @@ export async function start(canvas, onProgress = () => {}) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
-      const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: 0, y: walker.eyeY - walker.body + 0.9, z: 0 } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
+      const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
       shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
@@ -797,7 +839,16 @@ export async function start(canvas, onProgress = () => {}) {
       return { vertices: inspected.info.vertices, bones: inspected.bones.length, eyeHeight: inspected.info.eyeHeight };
     },
     /** For tests: where the body's own frame stands in the world (x, z): under the eye, less the head's sway. */
-    eyeXZ: () => [rig.eye.x - Math.cos(walker.yaw) * walker.sway, rig.eye.z - Math.sin(walker.yaw) * walker.sway],
+    eyeXZ: () => (you.on ? [you.x, you.z] : [rig.own.x, rig.own.z]),
+    /** For tests: your feet as the gait has them (world), the joints as last posed (the body's frame), and where that frame stands. */
+    gait: () => ({ feet: gait.feet.map(f => ({ x: f.x, z: f.z, yaw: f.yaw, down: f.down, pitch: f.pitch, ankle: f.ankle.slice() })), heading: walker.heading, yaw: walker.yaw, at: [walker.x, walker.z], you: { x: you.x, y: you.y, z: you.z, heading: you.heading, dip: you.dip }, eye: [rig.own.x, rig.own.y, rig.own.z] }),
+    joints: () => (you.on ? JSON.parse(JSON.stringify(body.joints)) : null),
+    /**
+     * For tests: look at yourself from outside. `angle` degrees round you from behind (0) to in front (180), `dist`
+     * metres off, `height` of the camera above your feet, `aim` the height it looks at. No arguments: back to your own eyes.
+     * `fixed`: keep the camera where it is in the world as you turn (else it goes round with you).
+     */
+    outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false) { rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}) }; },
     /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
     rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
     /** For tests: the sand round you at a place: [height gained or lost (m), dampness, in transit (m), pressed]. */
@@ -895,7 +946,7 @@ export async function start(canvas, onProgress = () => {}) {
       return frames;
     },
     /** Advances first person by `seconds` with a fixed input ({ fwd, right, run, down, up }), in 1/60 s steps: for tests. */
-    walkFor(seconds, input = {}) { for (let t = 0; t < seconds; t += 1 / 60) { clock.time += 1 / 60; for (const step of walker.step(1 / 60, { ...NO_INPUT, ...input })) stamp(step); } },
+    walkFor(seconds, input = {}) { for (let t = 0; t < seconds; t += 1 / 60) { clock.time += 1 / 60; advance(1 / 60, { ...NO_INPUT, ...input }); } },
     flyTo: id => { const p = places.find(q => q.id === id); if (p) app.flyToPlace(p); return !!p; },
     /** Jumps straight to a place's camera shot (no flight). */
     goTo: id => { const p = places.find(q => q.id === id); if (p) { app.setWalk(false); rig.cancelFlight(); rig.set(shotFor(p)); } return !!p; },

@@ -37,6 +37,12 @@ export class Walker {
   constructor({ ground, surfaceAt, blocked = () => false, rect = null }) {
     Object.assign(this, { ground, surfaceAt, blocked, rect });
     this.x = 0; this.z = 0; this.yaw = 0; this.look = 0;       // radians; yaw clockwise from north, look above the horizon
+    // Which way your body faces. Your head turns on it (yaw is where you look): standing or crouched by fifty
+    // degrees either way, seated by eighty; past that the body comes round. Walking, it comes round to where you look.
+    this.heading = 0;
+    this.gaited = false;                                          // your feet are placed by a gait (world/gait.js): no pace clock, bob or sway from here
+    this.head = null;                                             // { x, y, z }: where the posed body's eye is (app.js), when it has one
+    this.placed = false;                                          // put down somewhere at once since anyone last looked
     // (How high your eyes are standing and crouched, and your legs against the 0.87 m the paces are for: your body's, see app.js.)
     this.stand = STAND; this.crouch = CROUCH; this.legs = 1;
     this.sit = 0.83; this.sitting = false;                        // seated eye height; whether you are sitting on the sand
@@ -60,7 +66,7 @@ export class Walker {
   /** How far down you are, 0 standing .. 1 in a full crouch. */
   get crouched() { return Math.min(1, Math.max(0, (this.stand - this.body) / (this.stand - this.crouch))); }
   place({ x, z, yaw = this.yaw, look = this.look, height = this.stand, eye = null }) {
-    Object.assign(this, { x, z, yaw, look, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
+    Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
     this.body = height;
@@ -114,9 +120,33 @@ export class Walker {
     // (Crouched you shuffle along at less than half the pace.)
     const crouch = this.crouched;
     if (onGround) speed *= 1 - 0.55 * crouch;
+    // (Backwards you go at little more than half your pace, sideways at less: the feet cannot cross.)
+    if (onGround && wl > 0.01) { const a = input.fwd / Math.max(wl, 1), r = input.right / Math.max(wl, 1); speed *= (a * a * (a < 0 ? 0.55 : 1) + r * r * 0.42) / (a * a + r * r); }
     if (this.sitting) speed = 0;                       // (seated, the same keys move your legs: see app.js)
-    const k = 1 - Math.exp(-dt * (onGround ? 9 : 3.5));
+    // (You do not start or stop at once: the first pace takes you up to speed, the last one brings you to rest.)
+    const faster = wx * speed * this.vx + wz * speed * this.vz > this.vx * this.vx + this.vz * this.vz, k = 1 - Math.exp(-dt * (onGround ? (this.gaited ? (faster ? 4.2 : 6) : 9) : 3.5));
     this.vx += (wx * speed - this.vx) * k; this.vz += (wz * speed - this.vz) * k;
+    // Your body's heading. Going anywhere, it comes round to where you look; standing, it stays, and only
+    // follows when your head has turned as far as it goes (seated: slowly, shuffling round on your seat).
+    {
+      const off = Math.atan2(Math.sin(this.yaw - this.heading), Math.cos(this.yaw - this.heading)), limit = this.sitting ? 1.4 : 0.87, going = Math.hypot(this.vx, this.vz);
+      if (!onGround || !this.gaited) this.heading = this.yaw;
+      else {
+        let rate = 0;
+        if (!this.sitting && going > 0.2) rate = Math.max(-4.5, Math.min(4.5, off * 6));
+        else if (this.sitting) { if (Math.abs(off) > limit) rate = Math.sign(off) * Math.min((Math.abs(off) - limit) * 10, 0.45); }
+        else {
+          // (Once your feet have to move, you turn to face what you are looking at, not just far enough.)
+          if (Math.abs(off) > limit) this.turning = true; else if (Math.abs(off) < 0.12) this.turning = false;
+          if (this.turning) rate = Math.sign(off) * Math.min(Math.max(Math.abs(off) * 5, (Math.abs(off) - limit) * 40), 7);
+        }
+        this.heading += rate * dt;
+        // (Your head cannot go further round than your neck lets it. On your feet the body keeps up with any
+        // turn you are likely to make, stepping round; on your seat you can only shuffle.)
+        const over = Math.atan2(Math.sin(this.yaw - this.heading), Math.cos(this.yaw - this.heading)), most = limit + (this.sitting ? 0.045 : 0.5);
+        if (Math.abs(over) > most) this.yaw = this.heading + Math.sign(over) * most;
+      }
+    }
 
     // Move, sliding along walls and refusing slopes steeper than 39 degrees.
     let nx = this.x + this.vx * dt, nz = this.z + this.vz * dt;
@@ -157,7 +187,7 @@ export class Walker {
     }
 
     // Steps: the head bobs once per pace of 0.72 m (shorter crouched), and each pace is reported.
-    if (onGround && travelled > 0) {
+    if (onGround && travelled > 0 && !this.gaited) {
       const before = Math.floor(this.phase / Math.PI);
       this.phase += travelled / paceLength(travelled / dt, crouch, this.legs) * Math.PI;
       const after = Math.floor(this.phase / Math.PI);
@@ -167,7 +197,7 @@ export class Walker {
     const swung = Math.abs(Math.atan2(Math.sin(this.yaw - (this.lastYaw ?? this.yaw)), Math.cos(this.yaw - (this.lastYaw ?? this.yaw))));
     this.lastYaw = this.yaw;
     this.turned += ((onGround && dt > 0 ? Math.min(0.42, swung / dt * 0.16) : 0) - this.turned) * (1 - Math.exp(-dt * 6));
-    if (onGround && travelled < 0.2 * dt) this.phase += swung * 1.6;
+    if (onGround && travelled < 0.2 * dt && !this.gaited) this.phase += swung * 1.6;
     const stride = onGround ? Math.min(1, Math.hypot(this.vx, this.vz) / 1.2) : 0;
     // Afloat: a stroke every second and a half when swimming along, a slow scull when lying still.
     if (!onGround) this.stroke += (0.22 + 0.45 * Math.min(1, Math.hypot(this.vx, this.vz) / 0.7)) * dt * 2 * Math.PI;
@@ -175,9 +205,13 @@ export class Walker {
     // The head rises as you pass over the planted leg and is lowest as the next heel comes down (three and a half
     // centimetres at a walk); your weight goes over each foot in turn, the head swinging two centimetres to that
     // side and leaning a quarter of a degree; and each heel lands with a small jolt.
-    this.bob += (0.035 * this.bobAmount * stride * Math.abs(Math.sin(this.phase)) - this.bob) * (1 - Math.exp(-dt * 14));
-    this.sway += (0.02 * this.bobAmount * stride * Math.sin(this.phase) - this.sway) * (1 - Math.exp(-dt * 10));
-    this.roll += (0.0045 * this.bobAmount * stride * Math.sin(this.phase) - this.roll) * (1 - Math.exp(-dt * 10));
+    // (With a gait, the head rides on the body the gait carries: nothing is added here.)
+    if (this.gaited && onGround) this.bob = this.sway = 0;
+    else {
+      this.bob += (0.035 * this.bobAmount * stride * Math.abs(Math.sin(this.phase)) - this.bob) * (1 - Math.exp(-dt * 14));
+      this.sway += (0.02 * this.bobAmount * stride * Math.sin(this.phase) - this.sway) * (1 - Math.exp(-dt * 10));
+      this.roll += (0.0045 * this.bobAmount * stride * Math.sin(this.phase) - this.roll) * (1 - Math.exp(-dt * 10));
+    }
     this.thud *= Math.exp(-dt * 9);
     // (Whatever happened above, you are somewhere. A position that is not a number would stay one, and black
     // the picture out for good: go back to the last place that was.)
