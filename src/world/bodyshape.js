@@ -705,8 +705,9 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   h.tube([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.078, 0.098], [0.062, 0.08], HAIR);
   h.cap([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.062, 0.08], HAIR, 0.55);
   // (The eye: down with the hips; and on the neck as the head turns and nods.)
+  // (And with your breath: your head rises two millimetres as your chest fills.)
   const head = headOn(turn, gait ? look : 0);
-  return { ...joints, hip, shoulder, home, pelvis: gait ? gait.turn : 0, headTurn: head.turn, headNod: head.nod, eye: [head.eye[0], eye - (gait ? 0.92 * dip : 0) + head.eye[1], head.eye[2]] };
+  return { ...joints, hip, shoulder, home, pelvis: gait ? gait.turn : 0, headTurn: head.turn, headNod: head.nod, eye: [head.eye[0], eye - (gait ? 0.92 * dip : 0) + head.eye[1] + (gait ? 0.002 * breath : 0), head.eye[2]] };
 }
 
 const HAND = 0.19;

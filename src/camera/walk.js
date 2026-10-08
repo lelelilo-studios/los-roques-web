@@ -70,7 +70,7 @@ export class Walker {
   place({ x, z, yaw = this.yaw, look = this.look, height = this.stand, eye = null }) {
     Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, seated: 0, bodyV: 0, turnRate: 0, turning: false, slant: 0, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
     const g = this.ground.heightAt(x, z);
-    this.surf = this.surfaceAt(x, z);
+    this.surf = this.surfaceAt(x, z); this.surfMean = this.surf;
     this.body = height; this.bodyTo = height; this.bodyV = 0;
     this.pinned = eye !== null; this.under0 = g; this.onFeet = false;
     this.eyeY = eye !== null ? Math.max(this.surf + eye, g + 0.2) : Math.max(g + height, this.surf + FLOAT);
@@ -96,6 +96,8 @@ export class Walker {
 
     const g = this.ground.heightAt(this.x, this.z);
     this.surf += (this.surfaceAt(this.x, this.z) - this.surf) * (1 - Math.exp(-dt / 0.25));
+    // (And the sea's level here over the last second or two, the waves averaged out: see `afloat` below.)
+    this.surfMean = (this.surfMean ?? this.surf) + (this.surf - (this.surfMean ?? this.surf)) * (1 - Math.exp(-dt / 1.6));
     const d = Math.max(this.surf - g, 0);
     this.depth = d;
 
@@ -211,7 +213,9 @@ export class Walker {
     // (Lifted off your feet when the water would float you four centimetres clear of them, and set down again
     // only when it is six short of that: at just the depth where you float, every wave no longer takes you off
     // your feet and puts you back.)
-    { const lift = this.surf + FLOAT - (g2 + this.body); this.afloat = this.afloat ? lift > -0.06 : lift > 0.04; }
+    // By the sea's mean level, not by each wave: standing chin-deep you are not swimming at every crest and
+    // standing again in every trough (ten times in the 25 seconds it takes to swim in to where you can stand).
+    { const lift = this.surfMean + FLOAT - (g2 + this.body); this.afloat = this.afloat ? lift > -0.06 : lift > 0.04; }
     if (!this.diving) {
       const target = Math.max(g2 + this.body, this.surf + FLOAT);
       // (On your feet with a gait, your eye is exactly your own height over the ground you stand on, the ground
@@ -221,7 +225,9 @@ export class Walker {
       // (Whatever your eye is off that by when you come on to your feet, set down by the sea or put down by a
       // test, is given up over a fifth of a second: not all at once, which was a jolt of several centimetres.)
       if (this.gaited && !this.afloat) {
-        const want = this.under0 + this.body;
+        // (Standing chin-deep, a crest lifts you off your toes for a moment: your eyes stay a hand's breadth out
+        // of the water, and your feet come down again as it passes.)
+        const stood = this.under0 + this.body, floated = this.surf + FLOAT, want = floated < stood - 0.2 ? stood : 0.5 * (stood + floated + Math.sqrt((stood - floated) ** 2 + 0.0016));       // (the greater of the two, the corner between them rounded)
         this.eyeOff = (this.onFeet ? this.eyeOff || 0 : this.eyeY - want) * Math.exp(-dt * 10);
         this.eyeY = want + this.eyeOff; this.onFeet = true;
       } else { this.onFeet = false; this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 9 : 10))); }
