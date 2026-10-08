@@ -105,7 +105,7 @@ export class Ambience {
   burst(colour, type, freq, q, gain, attack, decay, pan = 0, delay = 0) {
     const { ctx } = this, t = ctx.currentTime + delay, src = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), g = ctx.createGain(), p = ctx.createStereoPanner();
     src.buffer = this.buffers[colour];
-    filter.type = type; filter.frequency.value = freq; filter.Q.value = q; p.pan.value = pan;
+    filter.type = type; filter.frequency.value = freq; filter.Q.value = q; p.pan.value = pan * (this.side ?? 1);      // (side: -1 while your left hand is what sounds)
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + attack); g.gain.exponentialRampToValueAtTime(1e-4, t + attack + decay);
     src.connect(filter).connect(g).connect(p).connect(this.out);
     src.start(t, this.rnd() * 4, attack + decay + 0.05);
@@ -138,9 +138,10 @@ export class Ambience {
    * Your hand on the sand or in the water. `kind`: 'dry', 'wet' or 'water'; `how`: 'down' as it lands, 'drag' as
    * it is drawn along (called a few times a second while it moves), 'take' as the fingers close on a handful,
    * 'pour' as that runs out between them (called many times a second; `speed` is then how fast, 0..1), 'up' as it
-   * leaves or is empty; `speed` in m/s.
+   * leaves or is empty; `speed` in m/s. `side`: 1 your right hand (heard a little to the right), -1 your left.
    */
-  touch(kind, how, speed = 0) {
+  touch(kind, how, speed = 0, side = 1) { this.side = side; try { this.touching(kind, how, speed); } finally { this.side = 1; } }
+  touching(kind, how, speed) {
     const k = clamp01(speed / 0.6);
     if (how === 'take') {
       if (kind === 'water') this.burst('pink', 'bandpass', 700, 0.8, 0.07, 0.03, 0.14, 0.1);                 // water closing over the hand
@@ -170,6 +171,20 @@ export class Ambience {
       else if (how === 'drag') this.burst('white', 'highpass', 2600 + 1400 * k, 0.5, 0.03 + 0.07 * k, 0.025, 0.12, 0.1);                                                    // the hiss of dry grains
       else this.burst('white', 'highpass', 4200, 0.5, 0.025, 0.02, 0.3, 0.1, 0.05);                                                                                         // grains trickling off the hand
     }
+  }
+
+  /**
+   * Your body on the sand: 'down' as you sit (your weight coming on to it, and the sand giving under you), 'up'
+   * as you push yourself off it, 'scoot' as you shuffle round on your seat. `wet` 0..1: on the wet sand by the water.
+   */
+  seat(how, wet = 0) {
+    if (how === 'down') {
+      this.burst('brown', 'lowpass', 150, 0.8, 0.5, 0.02, 0.16);                                                   // the soft thump of it
+      if (wet > 0.5) this.burst('pink', 'lowpass', 600, 0.8, 0.1, 0.01, 0.09, 0, 0.02);
+      else this.burst('white', 'bandpass', 1400 + 300 * this.rnd(), 0.6, 0.09, 0.04, 0.3, 0, 0.04);              // dry sand shifting under you
+    } else if (how === 'scoot') {
+      this.burst(wet > 0.5 ? 'pink' : 'white', 'bandpass', wet > 0.5 ? 900 : 1700, 0.6, 0.06, 0.05, 0.28);
+    } else this.burst('white', 'highpass', 3600, 0.5, 0.03, 0.03, 0.4, 0, 0.1);                                    // sand falling from you as you get up
   }
 
   /** The laugh of a laughing gull: a run of short notes falling in pitch, slowing at the end. */
@@ -214,7 +229,8 @@ export class Sound {
   // (A fault in the sound must never stop the picture: it is noted, once, and that moment of sound is skipped.)
   update(dt, scene) { if (this.on && this.ctx.state === 'running') try { this.ambience.update(dt, scene); } catch (e) { this.error ??= String(e?.message || e); } }
   step(info) { if (this.on && this.ctx.state === 'running') try { this.ambience.step(info); } catch (e) { this.error ??= String(e?.message || e); } }
-  touch(kind, how, speed) { if (this.on && this.ctx.state === 'running') try { this.ambience.touch(kind, how, speed); } catch (e) { this.error ??= String(e?.message || e); } }
+  seat(how, wet) { if (this.on && this.ctx.state === 'running') try { this.ambience.seat(how, wet); } catch (e) { this.error ??= String(e?.message || e); } }
+  touch(kind, how, speed, side = 1) { if (this.on && this.ctx.state === 'running') try { this.ambience.touch(kind, how, speed, side); } catch (e) { this.error ??= String(e?.message || e); } }
 }
 
 /**

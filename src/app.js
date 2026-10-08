@@ -252,7 +252,7 @@ export async function start(canvas, onProgress = () => {}) {
   const handParts = { spray, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch,
     ring: (x, z, when, strength) => (ripples ? ripples.drop(x, z, when, strength, 0.022) : shared.uRing.value[rings++ % 6].set(wrap64(x), wrap64(z), when, strength)) };
   // (Your right hand: the mouse button. Your left: the other button, or F. Each takes, holds and pours its own.)
-  const hand = new Hand(handParts), handL = new Hand({ ...handParts, side: -1 });
+  const hand = new Hand(handParts), handL = new Hand({ ...handParts, side: -1, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed, -1) } });
   // How wet you are: `high` is as far up as the sea has stood round you lately (drying), `now` the water you stand in.
   const soak = { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 };
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
@@ -597,6 +597,15 @@ export async function start(canvas, onProgress = () => {}) {
     // (A test may put the eye lower than anyone can squat, to look at the sand: the body is then posed in its
     // deepest squat, for the shadow, and left out of the picture: it would be folded through the camera.)
     const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02, breath = Math.sin(clock.time * 1.45);
+    // What sitting sounds like: the thump of your seat coming on to the sand, a shuffle as you scoot round, sand
+    // falling from you as you get up.
+    if (dt > 0) {
+      const wet = wetSandAt(walker.x, walker.z, footing.heightAt(walker.x, walker.z)) ? 1 : 0, was = you.seatWas ?? 0, scooting = (walker.scootLeft || 0) > 0;
+      if (was < 0.6 && walker.seated >= 0.6 && walker.sitting) sound.seat('down', wet);
+      if (was > 0.85 && walker.seated <= 0.85 && !walker.sitting) sound.seat('up', wet);
+      if (scooting && !you.scooting) sound.seat('scoot', wet);
+      you.seatWas = walker.seated; you.scooting = scooting;
+    }
     // Seated, the keys that walk you move your legs: S draws them up and W stretches them out, A / D bring your
     // feet together and apart, Space curls your toes.
     // (You sit leaning back a little on your hand; reaching for the sand beside you, you lean forward over it.)

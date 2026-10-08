@@ -367,8 +367,11 @@ void main() {
     float tilt = length(bedSlope);
     vec2 uphill = tilt > 1e-4 ? bedSlope / tilt : vec2(0.0);
     vec2 f = lrFoam(spot + uCamMod.xy - uphill * lrSwashCarry(sw.behind + aboveStill, tilt), swash, px, gx, gy);
-    // (Not quite white: the raft has bubbles and thin places in it, and at 0.85 they were all lost in the glare.)
-    col = mix(col, 0.74 * f.y * lit / PI, f.x);
+    // (Not quite white: the raft has bubbles and thin places in it, and at 0.85 they were all lost in the glare.
+    // From where you stand it is froth: thicker and thinner in patches a hand across, and grained with its bubbles.)
+    float froth = 1.0;
+    if (px < 0.02) { vec2 fp = spot + uCamMod.xy - uphill * lrSwashCarry(sw.behind + aboveStill, tilt); froth += (1.0 - smoothstep(0.006, 0.02, px)) * (0.26 * (lrNoiseTile(fp * 28.0, 1792.0) - 0.5) + 0.14 * (lrNoiseTile(fp * 190.0, 12160.0) - 0.5)); }
+    col = mix(col, 0.74 * f.y * froth * lit / PI, f.x);
   }
   if (uDebug.x > 0.5) {
     // Debug views: 1 = what the bed lookup found (red: bent ray, green: straight through, blue: nothing),
