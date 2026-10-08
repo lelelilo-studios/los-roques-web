@@ -15,6 +15,7 @@ export const shared = {
   uDetailMean: { value: [new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5), new THREE.Vector4(0.5, 0.5, 0.5, 0.5)] },
   uFoot: { value: Array.from({ length: 24 }, () => new THREE.Vector4(0, 0, 0, -1e9)) },   // your footprints: x, z (wrapped to 64 m), heading, time made
   uFootCount: { value: 0 },
+  uStream: { value: Array.from({ length: 6 }, () => new THREE.Vector4()) },                              // what falls from your hands, three streams a hand: where each lands (x, z wrapped to 64 m), how far it falls (m), how thick it is (0..1)
   uLeg: { value: [new THREE.Vector4(), new THREE.Vector4(), new THREE.Vector4()] },                        // your two shins where they stand in the water: x, z (wrapped to 64 m), 1 if in water, how fast you move (m/s)
   // What your hand has drawn or pressed in the sand: strokes from (x, z) to (x, z), wrapped to 64 m; and for each its time, kind (0 fingers drawn along, 1 a hand pressed flat), heading of a press (radians).
   uTouchSeg: { value: Array.from({ length: 24 }, () => new THREE.Vector4()) }, uTouchInfo: { value: Array.from({ length: 24 }, () => new THREE.Vector4(-1e9, 0, 0, 0)) }, uTouchCount: { value: 0 },

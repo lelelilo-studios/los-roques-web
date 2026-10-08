@@ -77,6 +77,7 @@ uniform int uTouchCount;
 ${patchGLSL}
 ${ripplesGLSL}
 uniform vec4 uContact[8];    // the parts of you on or just over the ground: where (x, z relative to the camera; y absolute) and how big (m)
+uniform vec4 uStream[6];     // sand falling from your hands: where each stream lands (detail coordinates), how far it falls (m), how thick it is
 uniform vec4 uLeg[3];        // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform float uWet;           // how wet the rain has left things (it lags the rain: quick to wet, slow to dry)
 uniform vec4 uFoot[24];       // your footprints: x, z (detail coordinates, wrapped to 64 m), heading, time made
@@ -551,6 +552,15 @@ void main() {
   vec3 sunIn = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
   shade = water > 0.0 ? lrSunThrough(shade, vec3(vRel.x, uSeaLevel, vRel.z) - vec3(sunIn.x, 0.0, sunIn.z) * (water / max(-sunIn.y, 0.3)), vec3(0.0, 1.0, 0.0))
                       : lrSunThrough(shade, vec3(vRel.x, ground, vRel.z), nG);
+  // The sand falling from your hands has its shade: a thin line on the ground from where each stream lands, out
+  // away from the sun, as long as the stream is tall, soft at its far end (which is the stream's top). (The map of
+  // shadows is far too coarse for a stream three millimetres thick: it is worked out here.)
+  if (water <= 0.0 && uSunDir.y > 0.05) for (int i = 0; i < 6; i++) {
+    if (uStream[i].w <= 0.0) continue;
+    vec2 q = mod(vRel.xz + uCamMod.xy - uStream[i].xy + 32.0, 64.0) - 32.0, away = -uSunDir.xz / max(uSunDir.y, 0.15);
+    float up = clamp(dot(q, away) / max(dot(away, away), 1e-4), 0.0, uStream[i].z), off = length(q - away * up);
+    shade *= 1.0 - uStream[i].w * (1.0 - smoothstep(0.0015, 0.006 + 0.012 * up, off)) * (1.0 - 0.5 * up / max(uStream[i].z, 0.05));
+  }
   // Dry sand is rough: it sends light back towards the sun and less of it on, away from the sun (the
   // Oren-Nayar lobe, scaled so that seen from above at noon it is as before).
   float nl = lrSaturate(dot(n, uSunDir)), nv = lrSaturate(dot(n, V)), back = dot(uSunDir, V) - nl * nv;
@@ -674,7 +684,7 @@ export class Terrain {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4, ...(tier.fp.sand === 'full' ? { LR_SAND_FULL: 1 } : {}) },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg', ...CHUNK_UNIFORMS.touch, ...CHUNK_UNIFORMS.patch, ...CHUNK_UNIFORMS.ripple]),
+        'uFocusRel', 'tAlbedo', 'tSatellite', 'tBenthic', 'tLand', 'uCompareX', 'uRain', 'uWet', 'uTreesNear', 'uLeg', 'uStream', ...CHUNK_UNIFORMS.touch, ...CHUNK_UNIFORMS.patch, ...CHUNK_UNIFORMS.ripple]),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

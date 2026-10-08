@@ -25,7 +25,7 @@ uniform sampler2D tPrev;
 uniform sampler2D tGround;    // over the sand patch's window: r = the ground above the base (m), g = sand the sea keeps wet
 uniform sampler2D tPatch;     // the patch itself: r = what the sand has gained or lost there (m), g = dampness added
 uniform vec3 uToolC;          // the window's middle relative to the camera (x, z) and the base height (y)
-uniform float uToolHalf, uPatchL, uWaterY, uDt;
+uniform float uToolHalf, uPatchL, uWaterY, uDt, uTick;
 uniform vec2 uCamDetail;      // the camera in detail coordinates (wrapped to 64 m)
 in vec3 vAt;
 in vec2 vUv;
@@ -47,7 +47,10 @@ void main() {
   }
   // (Under water it washes off in half a second; on wet skin it stays; on dry skin it drops off in a few seconds.)
   sand *= under > 0.5 ? exp(-uDt * 2.2) : exp(-uDt / mix(7.0, 240.0, smoothstep(0.15, 0.5, wet)));
-  outColor = vec4(clamp(wet, 0.0, 1.0), clamp(sand, 0.0, 1.0), 0.0, 1.0);
+  // (Kept in 256 steps: a little less each frame rounded back to what it was, and at sixty frames a second wet
+  // skin never dried and the last of the sand never dropped off. Rounded up or down by chance, in proportion.)
+  vec2 r = fract(sin(vec2(dot(gl_FragCoord.xy + uTick * vec2(0.731, 1.913), vec2(12.9898, 78.233)), dot(gl_FragCoord.xy + uTick * vec2(1.377, 0.619), vec2(39.346, 11.135)))) * 43758.5453);
+  outColor = vec4(floor(clamp(wet, 0.0, 1.0) * 255.0 + r.x) / 255.0, floor(clamp(sand, 0.0, 1.0) * 255.0 + r.y) / 255.0, 0.0, 1.0);
 }`;
 
 export class SkinState {
@@ -63,7 +66,7 @@ export class SkinState {
     this.targets = [target(), target()]; this.now = 0;
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: vertex, fragmentShader: fragment, side: THREE.DoubleSide, depthTest: false, depthWrite: false,
-      uniforms: { tBones, tPrev: { value: null }, tGround: { value: patch.grid }, tPatch: { value: null }, ...patch.toolUniforms, uPatchL: { value: patch.L }, uWaterY: { value: -1e9 }, uDt: { value: 0 }, uCamDetail: { value: new THREE.Vector2() } },
+      uniforms: { tBones, tPrev: { value: null }, tGround: { value: patch.grid }, tPatch: { value: null }, ...patch.toolUniforms, uTick: { value: 0 }, uPatchL: { value: patch.L }, uWaterY: { value: -1e9 }, uDt: { value: 0 }, uCamDetail: { value: new THREE.Vector2() } },
     });
     /** The uniform the figure reads the map through. */
     this.uniform = { value: this.targets[0].texture };
@@ -88,7 +91,7 @@ export class SkinState {
     if (!(dt > 0)) return;
     const { renderer } = this, u = this.material.uniforms, previous = renderer.getRenderTarget(), auto = renderer.autoClear, wrap = v => ((v % 64) + 64) % 64;
     u.tPrev.value = this.targets[this.now].texture; u.tPatch.value = this.patch.targets[this.patch.now].texture;
-    u.uWaterY.value = waterY; u.uDt.value = Math.min(dt, 0.05); u.uCamDetail.value.set(wrap(cam.x), wrap(cam.z));
+    u.uWaterY.value = waterY; u.uDt.value = Math.min(dt, 0.05); if (dt > 0) u.uTick.value = this.tick = ((this.tick || 0) + 1) % 1024; u.uCamDetail.value.set(wrap(cam.x), wrap(cam.z));
     this.now = 1 - this.now;
     const own = mesh.material, parent = mesh.parent, seen = mesh.visible;
     if (parent) parent.remove(mesh);

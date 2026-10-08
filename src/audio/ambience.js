@@ -149,6 +149,11 @@ export class Ambience {
       else this.burst('white', 'bandpass', 3000, 0.5, 0.09, 0.05, 0.22, 0.1);                               // dry sand crunching as the fingers close through it
       return;
     }
+    if (how === 'drop') {
+      // One drop landing, `speed` seconds from now: its own small note, no two alike.
+      this.burst('white', 'bandpass', 1900 + 3100 * this.rnd(), 7, 0.03 + 0.02 * this.rnd(), 0.002, 0.04, 0.1 + 0.3 * (this.rnd() - 0.5), Math.max(0, speed));
+      return;
+    }
     if (how === 'pour') {
       // What runs out between the fingers: the steady whisper of dry grains landing; the patter of clots of
       // wet sand; the trickle of water, each drop its own small note.

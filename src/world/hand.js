@@ -658,6 +658,8 @@ export class Hand {
     if (!palm || this.lift <= 0.25) this.lastK = null;
     this.real = !!palm?.us || (this.real && !palm);
     this.lying.visible = false; this.pool.visible = false;
+    // (A frame drawn without time passing, for a picture, keeps the shade the streams had.)
+    if (dt > 0) for (let g = 0; g < 3; g++) shared.uStream.value[(this.side > 0 ? 0 : 3) + g].w = 0;
     // (Water is in the hand from the moment it is taken: it is seen as the hand comes up through the surface.)
     if (palm?.us && (this.lift > 0.25 || (!sandy && this.motion.took && (this.fresh || this.amount > 0.002)))) running = this.hold(dt, c, palm);
     else if (palm && this.lift > 0.25) {
@@ -787,6 +789,8 @@ export class Hand {
       // How hard each gap is running (a stream at full strength carries a twentieth of a handful a second).
       for (let g = 0; g < 3; g++) this.rates[g] += (clamp01(out.gaps[g] / dt / (HANDFUL * 0.05)) - this.rates[g]) * (1 - Math.exp(-dt * 14));
       running = Math.max(...this.rates);
+      // (Each stream's shade on the ground: terrain.js. Sand: a few drops of water cast none worth drawing.)
+      if (sandy && !sea) for (let g = 0; g < 3; g++) { const p = this.pour.gaps[g]; shared.uStream.value[(this.side > 0 ? 0 : 3) + g].set(wrap64(p[0]), wrap64(p[2]), Math.max(p[1] - floor, 0.02), 0.34 * Math.sqrt(this.rates[g])); }
       { const stalled = this.open > 0.05 && this.kind !== 'water' && gone * HANDFUL / dt < 3.5e-6 * (0.4 + 2 * this.open); this.worked = this.dumping ? 1 : clamp01((this.worked || 0) + (stalled ? dt / 1.2 : -dt / 5)); }
       if (gone > 0) {
         // Where it lands: under the gaps it fell through, a third of a second later.
@@ -806,7 +810,8 @@ export class Hand {
         }
         if (sea && (sandy || !this.falling) && time - this.ringed > (sandy ? 0.3 : 0.16)) { const p = this.pour.gaps[1]; this.ring(p[0] + (r() - 0.5) * 0.05, p[2] + (r() - 0.5) * 0.05, time + fall, sandy ? 0.1 : 0.2); this.ringed = time; }
         if (sandy) this.sand = Math.min(1, Math.max(this.sand, this.kind === 'wet' ? 0.7 : 0.3)); else this.wet = 1;
-        if (time - this.spoke > 0.085) { this.sound.touch(this.kind, 'pour', clamp01(gone / dt / 0.2)); this.spoke = time; }
+        // (Water that leaves as drops is heard drop by drop, as each lands: drip().)
+        if (time - this.spoke > 0.085 && (sandy || !this.falling)) { this.sound.touch(this.kind, 'pour', clamp01(gone / dt / 0.2)); this.spoke = time; }
       }
       // (The last of it stays on the skin: the account has it as `stuck`.)
       // (And when the last of it has stopped running, a dusting or a wet palm, that is the end of it: the hand was
@@ -875,6 +880,7 @@ export class Hand {
       if (sea) this.ring(x, z, time + land, Math.min(0.45, 0.06 + 2.2 * Math.sqrt(volume * 1e6 * speed) * 0.1));
       else this.patch()?.pour(x, z, 0.005 + size, 0, Math.min(1.2, volume / 4.5e-8 * 0.8), land, time);
       this.drops = (this.drops || 0) + 1; this.lastDrop = { x, z, when: time + land, volume, sea };
+      if (volume > 6e-9 && time - (this.plinked || -1) > 0.045) { this.sound.touch('water', 'drop', land); this.plinked = time; }
     };
     const site = (i, inflow, p) => {
       if (!(inflow > 0) && hang[i] <= 0) return;
