@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { CHUNK_UNIFORMS, shared, uniformsFor } from '../core/uniforms.js';
 import { shadowGLSL } from './shadow.js';
 import { CELL, NU, NV, Palm, U0, V0 } from '../sim/palm.js';
+import { POSE_LENGTH, mixPose } from './handpose.js';
 
 const clamp01 = v => Math.min(1, Math.max(0, v));
 const wrap64 = v => ((v % 64) + 64) % 64;
@@ -241,6 +242,8 @@ export class Hand {
     this.lying.frustumCulled = false; this.lying.matrixAutoUpdate = false; this.lying.visible = false;
     this.trail = Array.from({ length: GAPS }, () => []);
     this.count = shared.uTouchSeg.value.length;
+    /** Her own hand (handpose.js HandModel), once the body has come: this hand then holds itself by every joint. */
+    this.model = null; this.poses = [0, 1, 2].map(() => new Array(POSE_LENGTH));
     // Each hand has its own chance, begun again whenever the hand is: the same doing gives the same grains.
     // (Both drew on the one sequence the splashes of your feet draw on, never begun again: what a hand let fall
     // depended on everything done since the page was opened.)
@@ -390,7 +393,18 @@ export class Hand {
     }
     const full = this.grip;
     this.cupped = cupped;
+    // Her own hand, joint by joint (handpose.js). On the ground the pads come down a little apart and the fingers
+    // close on what they take (in water, a flat hand cups); drawn along, they are bent like the tines of a rake.
+    // Held up it is a bowl, the fingers together and the thumb along the first of them; parted as you part them.
+    let fingers = null;
+    if (this.model?.poses) {
+      const P = this.model.poses, water = this.kind === 'water', o = this.open, [a, b, c] = this.poses;
+      mixPose(mixPose(water ? P.flat : P.contact, water ? P.cupWater : P.closed, full, a), P.rake, rake * (1 - full), a);
+      if (o < 0.3) mixPose(water ? P.cupWater : P.cup, P.sift, o / 0.3, b); else mixPose(P.sift, P.siftWide, (o - 0.3) / 0.7, b);
+      fingers = mixPose(a, b, this.lift * this.lift * (3 - 2 * this.lift), c);
+    }
     return {
+      fingers,
       // (`settle`: how far your shoulders still have to come down: the solver puts the hand over the place it will
       // reach when they have, so it comes down on that place and does not slide to it through the sand.)
       at: [lx, y - c.feet, lz], settle: c.settling || 0, amount: this.ik, lift: this.lift, wrist, dir: round_(dir), palm: round_(palm),
@@ -417,8 +431,10 @@ export class Hand {
     if (tip && dt > 0) this.speed = this.tip ? Math.hypot(tip[0] - this.tip[0], tip[2] - this.tip[2]) / dt : 0;
     // (A frame drawn without time passing, for a picture, changes nothing in what the hand is doing.)
     const pressing = (c.want && c.canReach) || (dt === 0 && this.down);
-    // (It has landed when the wrist is within a hand's breadth of the ground it is reaching for; in water, at once.)
-    const reached = this.down || !sandy || !touching || !this.at || touching.wrist[1] - (this.at.ground - c.feet) < 0.085;
+    // (It has landed when the tip of the middle finger is within two fingers' breadth of the ground it is reaching
+    // for; in water, at once. It used to go by the wrist, a hand's breadth up: but how far the wrist is above the
+    // fingertip depends on how the hand is held, and her own hand, its knuckles bent, holds it higher.)
+    const reached = this.down || !sandy || !touching || !this.at || touching.tip[1] - (this.at.ground - c.feet) < 0.046;
     if (tip && this.ik >= 1 && this.lift <= 0 && pressing && reached) {
       const seg = shared.uTouchSeg.value, info = shared.uTouchInfo.value;
       if (!this.down) {

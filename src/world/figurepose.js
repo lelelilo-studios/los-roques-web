@@ -7,7 +7,7 @@
 // thigh from the hip to the knee, the shin from the knee to the ankle, both turned so that the knee's hinge
 // lies across the plane of the leg; arms likewise, the hand's turn spread up the forearm.
 import { reach } from './bodyshape.js';
-import { fingerAngles, fingerGaps, handBones, thumbAngles, wristAngles } from './handpose.js';
+import { HandModel, POSE_LENGTH, fingerAngles, fingerGaps, fitHand, handBones, thumbAngles, wristAngles } from './handpose.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -49,7 +49,10 @@ function fraction(R, k) {
 export class FigureRig {
   /** @param {{bones: {name: string, parent: number, head: number[], tail: number[]}[], eyeHeight: number}} info  body.json */
   constructor(info) {
-    this.bones = info.bones; this.eye = info.eyeHeight;
+    this.bones = info.bones; this.eye = info.eyeHeight; this.info = info;
+    // Her hands (handpose.js): [left, right]. Where a pose puts each bone of a hand is theirs to say.
+    this.models = ['L', 'R'].map(s => new HandModel(info.bones, s)); this.fit = null;
+    this.solved = this.models.map(m => m.blank()); this.posed = [new Array(POSE_LENGTH), new Array(POSE_LENGTH)];
     this.id = new Map(info.bones.map((b, i) => [b.name, i]));
     this.matrices = new Float32Array(info.bones.length * 12);
     this.R = info.bones.map(() => IDENTITY);
@@ -86,6 +89,11 @@ export class FigureRig {
     this.spine = ['spine05', 'spine04', 'spine03', 'spine02', 'spine01'].map(n => this.need(n));        // from the hips up to the chest
   }
   need(name) { const i = this.id.get(name); if (i === undefined) throw new Error(`the body has no bone ${name}`); return i; }
+  /**
+   * Measures her fingers from the mesh (`arrays`: { position, joints, weights } of body.bin): the rods that stand
+   * for their skin. With them the hands know how to lie with their fingers together, and how far apart they are.
+   */
+  fitHands(arrays) { this.fit = ['L', 'R'].map(s => fitHand(this.info, arrays, s)); this.models.forEach((m, i) => { m.fit = this.fit[i]; m.learn(); }); return this; }
 
   /** What the solver should take this body's proportions to be (bodyshape.js: setProportions). */
   get proportions() {
@@ -150,7 +158,7 @@ export class FigureRig {
       const rods = this.fit[i].rods, rod = name => { const b = this.need(name), r = rods[name]; return { a: this.carry(b, r.head), b: this.carry(b, r.tail), r: r.r, w: r.w, t: r.t }; };
       caps = { fingers: s.names.fingers.map(f => f.map(rod)), thumb: s.names.thumb.map(rod), palm: s.names.palm.map(rod) };
     }
-    return { ...h, shoulder: S, elbow: E, ...wristAngles(S, E, h.wrist, h.f, h.N, s.side, plane), twists: [twist(s.bone.lowerarm01), twist(s.bone.lowerarm02), twist(s.bone.wrist)], fingers, thumb, caps, gaps: caps ? fingerGaps(caps.fingers) : null };
+    return { ...h, shoulder: S, elbow: E, ...wristAngles(S, E, h.wrist, h.f, h.N, s.side, plane), twists: [twist(s.bone.lowerarm01), twist(s.bone.lowerarm02), twist(s.bone.wrist)], fingers, thumb, caps, gaps: caps ? fingerGaps(caps.fingers, h.A, h.f) : null };
   }
 
   /**
@@ -211,7 +219,9 @@ export class FigureRig {
       const Rfore = aim(sub(s.W, s.E), s.armPlane, sub(wrist, this.carry(s.bone.upperarm01, s.E)), plane);
       // The hand: the way the solver holds it; without that (swimming), flat along the forearm, palm down.
       const along = unit(sub(wrist, E)), h = j.hands?.[i] || { f: along, N: frame(along, [0, -1, 0])[2], curl: 0.1, spread: 0 };
-      const rest = [s.f, s.N, cross(s.f, s.N).map(v => v * s.side)], held = [unit(h.f), h.N, cross(unit(h.f), h.N).map(v => v * s.side)];
+      // (The way the palm faces is made square to the way the hand points: two directions mixed from two poses are not.)
+      const hf = unit(h.f), hk = dot(h.N, hf), hN = unit([h.N[0] - hf[0] * hk, h.N[1] - hf[1] * hk, h.N[2] - hf[2] * hk]);
+      const rest = [s.f, s.N, cross(s.f, s.N).map(v => v * s.side)], held = [hf, hN, cross(hf, hN).map(v => v * s.side)];
       const Rhand = between(rest, held);
       // (The hand's turn about the forearm is shared up the forearm, as the two bones in it do: none at the elbow.)
       const Q = mul(Rhand, [Rfore[0], Rfore[3], Rfore[6], Rfore[1], Rfore[4], Rfore[7], Rfore[2], Rfore[5], Rfore[8]]), v = plane, w = turn(Q, v);
@@ -219,14 +229,10 @@ export class FigureRig {
       this.hinge(s.bone.lowerarm01, mul(about(along, 0.15 * twist), Rfore));
       this.hinge(s.bone.lowerarm02, mul(about(along, 0.6 * twist), Rfore));
       this.hinge(s.bone.wrist, Rhand);
-      // (The thumb lies in beside the first finger; it comes away a little as the fingers part.)
-      this.hinge(s.thumb.bone, mul(Rhand, about(s.thumb.axis, s.thumb.angle * (0.85 - 0.4 * (h.spread || 0)))));
-      // Fingers: each bone curled towards the palm as far as the solver's hand is, and fanned apart.
-      const axis = s.Ax.map(c => c * s.side);
-      s.fingers.forEach((finger, n) => {
-        const c1 = h.curl * (0.4 + 0.1 * n), want = [c1, c1 + h.curl * 0.7, c1 + h.curl * 1.25], fan = about(s.N.map(c => -c * s.side), (1.5 - n) * 0.13 * (h.spread || 0));
-        finger.forEach((part, q) => this.hinge(part.bone, mul(Rhand, mul(about(axis, want[q] - part.curl), fan))));
-      });
+      // Fingers, thumb and the bones of the palm: as the hand's pose has them (handpose.js). A pose is twenty-one
+      // angles (`fingers`); a hand given only the old `curl` and `spread` takes the pose those stand for.
+      const model = this.models[i], pose = h.fingers || model.fromCurl(h.curl ?? 0.1, h.spread || 0, this.posed[i]);
+      for (const [b, R] of model.solve(pose, this.solved[i]).rot) this.hinge(b, mul(Rhand, R));
     }
     // The head stays on the eye (the camera is between its eyes), upright; the neck goes between it and the trunk.
     if (j.eye) {

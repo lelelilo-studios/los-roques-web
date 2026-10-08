@@ -17,7 +17,7 @@ import { Spray } from './world/spray.js';
 import { Hand } from './world/hand.js';
 import { Figure, loadFigure } from './world/figure.js';
 import { FigureRig } from './world/figurepose.js';
-import { clearance, fitHand, handsApart } from './world/handpose.js';
+import { clearance, handsApart, mixPose, slerpFrame } from './world/handpose.js';
 import { SandPatch } from './sim/patch.js';
 import { Ripples } from './sim/ripples.js';
 import { SkinState } from './sim/skin.js';
@@ -224,9 +224,11 @@ export async function start(canvas, onProgress = () => {}) {
     const u = body.mesh.material.uniforms;
     figure = new Figure(data, tier.fp.shadowTaps || 4, { uBodyWet: u.uBodyWet, uBodySand: u.uBodySand, uHandWet: u.uHandWet, uHandSand: u.uHandSand, uHandWetL: u.uHandWetL, uHandSandL: u.uHandSandL }); figureRig = new FigureRig(data.info);
     // (The round rods that stand for the skin of her fingers, measured from the mesh: to tell how far apart they are.)
-    figureRig.fit = [fitHand(data.info, data.arrays, 'L'), fitHand(data.info, data.arrays, 'R')];
+    figureRig.fitHands(data.arrays);
     const p = figureRig.proportions, was = walker.stand;
-    setProportions(p);
+    // (The solver is given her hands with her proportions: a hand's pose is then every joint of it. And each
+    // of your hands is given its own, to hold itself by.)
+    setProportions({ ...p, hands: figureRig.models }); hand.model = figureRig.models[1]; handL.model = figureRig.models[0];
     // (Squatting on her heels, leaning forward a little, her eyes are at a little over half her height: lower, and
     // the knees have to fold further than knees do, 160 degrees and more.)
     Object.assign(walker, { stand: p.stand, crouch: 0.54 * p.stand, sit: 0.095 + 0.985 * p.torso + p.eyeToShoulder, legs: (p.thigh + p.shin) / 0.87 });
@@ -579,7 +581,10 @@ export async function start(canvas, onProgress = () => {}) {
     const mix = (q, r) => [q[0] + (r[0] - q[0]) * k, q[1] + (r[1] - q[1]) * k, q[2] + (r[2] - q[2]) * k], num = (q, r) => q + (r - q) * k, near = k < 0.5 ? a : b;
     const out = { hip: mix(a.hip, b.hip), shoulder: mix(a.shoulder, b.shoulder), eye: mix(a.eye, b.eye), pelvis: num(a.pelvis, b.pelvis), headTurn: num(a.headTurn, b.headTurn), headNod: num(a.headNod, b.headNod), feet: near.feet, drawn: near.drawn };
     for (const name of LIMBS) out[name] = a[name].map((q, i) => mix(q, b[name][i]));
-    out.hands = a.hands.map((h, i) => { const g = b.hands[i]; return { ...(k < 0.5 ? h : g), f: unitOf(mix(h.f, g.f)), N: unitOf(mix(h.N, g.N)), curl: num(h.curl ?? 0.1, g.curl ?? 0.1), spread: num(h.spread || 0, g.spread || 0) }; });
+    // (A hand goes from the one way of holding it to the other by one turn, and its joints each by their own way:
+    // a swimmer's hand has no pose of its own, only how far it is curled, and takes the pose that stands for.)
+    const jointsOf = (h, i) => h.fingers || (figureRig ? figureRig.models[i].fromCurl(h.curl ?? 0.1, h.spread || 0) : null);
+    out.hands = a.hands.map((h, i) => { const g = b.hands[i], [f, N] = slerpFrame(h.f, h.N, g.f, g.N, k), hf = jointsOf(h, i), gf = jointsOf(g, i); return { ...(k < 0.5 ? h : g), f, N, curl: num(h.curl ?? 0.1, g.curl ?? 0.1), spread: num(h.spread || 0, g.spread || 0), ...(hf && gf ? { fingers: mixPose(hf, gf, k) } : {}) }; });
     return out;
   }
   /**
