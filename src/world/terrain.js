@@ -327,7 +327,13 @@ void main() {
     // (The edge is taken as a distance on the ground, the height difference over its own gradient: as crisp on a
     // flat bar, where a centimetre of height is metres of sand, as on a steep face. The halo is half a metre wide.)
     float above = -water - sw.top, beyond = above / max(length(vec2(dFdx(above), dFdy(above))) / max(px, 1e-4), 2e-4);
-    wetLine = 1.0 - smoothstep(-1.0, 1.0, beyond / max(px, 0.004));
+    // (Sand dries over a finger's breadth, not along a hairline; and the line wanders by a few centimetres from
+    // one hand's breadth to the next. The outline of the sand left dry on the bar was a smooth curve cut with
+    // scissors. The wander is added to the distance, not to the height the sea reached: the damp halo above
+    // the line is measured by that height's own slope, which fine noise would make a mottle of.)
+    vec2 dw = vRel.xz + uCamMod.xy;
+    float wander = fine * (0.07 * (lrNoiseTile(dw * 12.0 + 5.0, 768.0) - 0.5) + 0.024 * (lrNoiseTile(dw * 35.0 + 11.0, 2240.0) - 0.5));
+    wetLine = 1.0 - smoothstep(-1.0, 1.0, (beyond + wander) / max(px, 0.012));
     wetness = max(wetLine, 0.35 * (1.0 - smoothstep(0.0, 0.5, beyond)) * lrSaturate(sw.top * 40.0));
   }
   // 'wetness' is the sea's doing (it also smooths the sand); rain wets everything it falls on, as it lies.

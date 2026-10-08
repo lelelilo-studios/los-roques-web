@@ -87,6 +87,10 @@ LrSwash lrBeach(vec2 rel, float shore, float hs, float a, float fine) {
   // (And from one step to the next along the shore the front is a moment earlier or later: as it runs up the
   // sand it is a wavering line with tongues in it, not a ruled one.)
   c -= fine * (0.024 * lrNoiseTile(pw * (1138.0 / 1024.0) + 7.0, 1138.0) + 0.011 * lrNoiseTile(pw * (3103.0 / 1024.0) + 3.0, 3103.0));
+  // (And from a hand's breadth to the next, and a finger's: sand is not level to the millimetre, and the water
+  // runs on a little sooner where it is a grain lower. From where you sit with the wash coming up to your
+  // knees, its edge was still drawn with a ruler.)
+  c -= fine * (0.006 * lrNoiseTile(pw * 12.0 + 5.0, 12288.0) + 0.0025 * lrNoiseTile(pw * 35.0 + 11.0, 35840.0));
   // (From the air there is no swash to draw, only the waves coming in, which need the place in the cycle.)
   if (R <= 0.0) { s.p = fract(c); s.age = a <= 0.0 ? 0.0 : 1000.0; return s; }
   // (Over sand within a few centimetres of still water the sheet runs on four times as far: as the tide comes
@@ -109,8 +113,9 @@ LrSwash lrBeach(vec2 rel, float shore, float hs, float a, float fine) {
   // seen from where you stand was a ruled line.)
   if (fine > 0.0) {
     vec2 q1 = pw * (1138.0 / 1024.0), q2 = pw * (3103.0 / 1024.0);
-    s.reach *= 1.0 - fine * (0.09 * lrNoiseTile(q1 + mod(n, 64.0) * hop, 1138.0) + 0.045 * lrNoiseTile(q2 + mod(n, 64.0) * hop.yx, 3103.0));
-    s.last *= 1.0 - fine * (0.09 * lrNoiseTile(q1 + mod(n - 1.0, 64.0) * hop, 1138.0) + 0.045 * lrNoiseTile(q2 + mod(n - 1.0, 64.0) * hop.yx, 3103.0));
+    vec2 q3 = pw * 12.0;
+    s.reach *= 1.0 - fine * (0.09 * lrNoiseTile(q1 + mod(n, 64.0) * hop, 1138.0) + 0.045 * lrNoiseTile(q2 + mod(n, 64.0) * hop.yx, 3103.0) + 0.03 * lrNoiseTile(q3 + mod(n, 64.0) * hop, 12288.0));
+    s.last *= 1.0 - fine * (0.09 * lrNoiseTile(q1 + mod(n - 1.0, 64.0) * hop, 1138.0) + 0.045 * lrNoiseTile(q2 + mod(n - 1.0, 64.0) * hop.yx, 3103.0) + 0.03 * lrNoiseTile(q3 + mod(n - 1.0, 64.0) * hop, 12288.0));
   }
   // (The sand above the last wave is still wet from bigger ones.)
   s.top = (R * (1.0 + 0.05 * lrNoiseTile(pw * (445.0 / 1024.0), 445.0)) + 0.02 * fine) * smoothstep(0.0, 0.01, R);
