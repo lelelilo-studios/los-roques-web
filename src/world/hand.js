@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { CHUNK_UNIFORMS, shared, uniformsFor } from '../core/uniforms.js';
 import { shadowGLSL } from './shadow.js';
 import { CELL, NU, NV, Palm, U0, V0 } from '../sim/palm.js';
-import { MCP, PIP, POSE_LENGTH, mixPose } from './handpose.js';
+import { DIP, MCP, PIP, POSE_LENGTH, mixPose } from './handpose.js';
 import { HandMotion } from './handact.js';
 import { grainTau } from '../sim/fall.js';
 
@@ -541,8 +541,8 @@ export class Hand {
         const t = c.time, work = (this.worked || 0) * (water ? 0 : 1), live = clamp01(this.lift * 2 - 1);
         fingers = fingers.slice();
         for (let n = 0; n < 4; n++) {
-          const drift = 1.2 * Math.sin(t * (0.9 + 0.31 * n) + 1.7 * n + this.side) + 0.7 * Math.sin(t * (2.3 + 0.4 * n) + n), ply = 3.2 * work * Math.sin(2 * Math.PI * 2.1 * t + n * Math.PI);
-          fingers[MCP + n] += (drift + ply) * live * Math.PI / 180; fingers[PIP + n] += (0.5 * drift - 0.6 * ply) * live * Math.PI / 180;
+          const drift = 1.2 * Math.sin(t * (0.9 + 0.31 * n) + 1.7 * n + this.side) + 0.7 * Math.sin(t * (2.3 + 0.4 * n) + n) + 0.7 * Math.sin(t * (5.1 + 0.7 * n) + 2.3 * n + this.side), ply = 3.2 * work * Math.sin(2 * Math.PI * 2.1 * t + n * Math.PI);
+          fingers[MCP + n] += (drift + ply) * live * Math.PI / 180; fingers[PIP + n] += (0.5 * drift - 0.6 * ply) * live * Math.PI / 180; fingers[DIP + n] += 0.3 * drift * live * Math.PI / 180;
         }
       }
     }
