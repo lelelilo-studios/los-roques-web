@@ -46,8 +46,10 @@ float lrSole(vec2 p) {
   k = max(k, 0.7 * max(max(lrPad(p, vec2(0.099, -0.008), vec2(0.0105)), lrPad(p, vec2(0.096, 0.007), vec2(0.0095))), max(lrPad(p, vec2(0.089, 0.02), vec2(0.009)), lrPad(p, vec2(0.079, 0.031), vec2(0.0085)))));
   return k;
 }
-// (The steepest slope sand stands at between two neighbours: 33 degrees dry, nearly a wall damp, almost flat under water.)
-float talus(float wet, float under) { return mix(mix(0.65, 3.5, smoothstep(0.15, 0.6, wet)), 0.18, under); }
+// (The steepest slope sand stands at between two neighbours: 33 degrees dry, 56 damp, almost flat under water.
+// Damp sand was let stand as a wall, 74 degrees: a finger drawn through it, which is pressed in where it is
+// frame by frame, left a string of beads with black sides. At 56 the beads slump into a groove.)
+float talus(float wet, float under) { return mix(mix(0.65, 1.5, smoothstep(0.15, 0.6, wet)), 0.18, under); }
 void main() {
   vec2 d = vUv * uL, q = mod(d - uCentre + 0.5 * uL, uL) - 0.5 * uL;
   float cell = uL / uN, e = 1.0 / uN;

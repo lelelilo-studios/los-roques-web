@@ -505,7 +505,9 @@ void main() {
         float t = 0.0035 * float(i) * (1.0 + 0.25 * float(i));
         lit = min(lit, 1.0 - lrSaturate((lrPatchHeight(p + s * t) - h - rise * t) / (0.25 * rise * t + 0.0006)));
       }
-      sunCut *= mix(1.0, lit, inPatch);
+      // (What the sun does not reach directly in a hollow a few centimetres across it reaches off the sunlit wall
+      // opposite: a fifth of it. With none, the bottom of a finger's furrow in wet sand was ink.)
+      sunCut *= mix(1.0, 0.2 + 0.8 * lit, inPatch);
     }
     // A hollow sees less of the sky than the open beach; the top of a heap, all of it.
     float round_ = 0.25 * (lrPatchHeight(p + vec2(0.012, 0.0)) + lrPatchHeight(p - vec2(0.012, 0.0)) + lrPatchHeight(p + vec2(0.0, 0.012)) + lrPatchHeight(p - vec2(0.0, 0.012)));
