@@ -548,6 +548,7 @@ export async function start(canvas, onProgress = () => {}) {
     const heading = walker.heading, cy = Math.cos(heading), sy = Math.sin(heading), feetY = walker.eyeY - walker.body, deck = onDeck(walker.x, walker.z);
     const turn = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), state = walker.sitting ? 'sit' : 'stand';
     // (Put down somewhere, come out of the water, sat down or got up: your feet are under you.)
+    if (!you.on || walker.placed) you.tie = null;
     if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand')) { gait.reset(walker.x, walker.z, heading); you.dip = you.dipV = you.deep = you.deepS = you.peak = you.shallow = 0; }
     you.was = state; walker.placed = false;
     // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
@@ -691,7 +692,21 @@ export async function start(canvas, onProgress = () => {}) {
       }
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
       // (The breeze where your hand is: a fifth of what blows at mast height, less down near the sand in your own lee.)
-      const breeze = shared.uWind.value, lee = 0.2 * breeze.z * (1 - 0.45 * walker.crouched);
+      // (And it comes in gusts: a few seconds of more, a few of less, never the same for long.)
+      const gust = 0.85 + 0.4 * Math.sin(clock.time * 0.71) * Math.sin(clock.time * 0.23 + 1) + 0.15 * Math.sin(clock.time * 2.3 + 2);
+      const breeze = shared.uWind.value, lee = 0.2 * breeze.z * (1 - 0.45 * walker.crouched) * gust;
+      if (figure) {
+        // The tail of her hair (figure.js swing): where it is tied to her head, a hand's breadth behind the eye,
+        // in the world; how that place is accelerating; and the breeze up there, stronger than at the hand.
+        const yaw = walker.yaw, bx = -Math.sin(yaw), bz = Math.cos(yaw), tie = [rig.own.x + bx * 0.17, rig.own.z + bz * 0.17], was = you.tie;
+        let ax = 0, az = 0;
+        if (dt > 0 && was && was.length === 4) { ax = (tie[0] - 2 * was[0] + was[2]) / (dt * dt); az = (tie[1] - 2 * was[1] + was[3]) / (dt * dt); }
+        if (dt > 0) you.tie = was ? [tie[0], tie[1], was[0], was[1]] : [tie[0], tie[1]];
+        // (Smoothed: two frames' difference of a position is a rough measure.)
+        you.tieA = [(you.tieA?.[0] || 0) * 0.7 + ax * 0.3, (you.tieA?.[1] || 0) * 0.7 + az * 0.3];
+        const high = 0.45 * breeze.z * gust * (1 + 0.25 * Math.sin(clock.time * 7.3) * Math.sin(clock.time * 3.1)), wx = breeze.x * high, wz = breeze.y * high, rx = Math.cos(yaw), rz = Math.sin(yaw);
+        figure.swing(dt, [you.tieA[0] * rx + you.tieA[1] * rz, you.tieA[0] * bx + you.tieA[1] * bz], [wx * rx + wz * rz, wx * bx + wz * bz]);
+      }
       const doing = { wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] };
       handL.act(dt, { ...you.reachable, want: !!lastInput.hand2, ...doing });
       hand.act(dt, { ...you.reachable, wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] });
@@ -912,6 +927,8 @@ export async function start(canvas, onProgress = () => {}) {
     outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false) { rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}) }; },
     /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
     rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
+    /** For tests: how far the tail of her hair has swung from where it hangs: { x: to her right, z: back } (m). */
+    figureTail: () => (figure?.tail ? { x: figure.tail.x, z: figure.tail.z } : null),
     /** For tests: [how wet, how sandy] the skin is at a texture coordinate of the body. */
     skinAt: (u, v) => (skin ? skin.read(u, v) : null),
     /** For tests: draw (or not) what the patch of real sand and the ripple field say; they go on being worked out. */

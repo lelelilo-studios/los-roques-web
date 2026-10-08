@@ -239,11 +239,16 @@ function hairGeometry(eye) {
   // Where it is tied, and the tail hanging from there to the base of the neck.
   put([0, eye + 0.062, 0.166], [0.03, 0.03, 0.028]);
   put([0, eye - 0.03, 0.2], [0.036, 0.098, 0.032], -0.2);
+  const tailCount = parts[2].attributes.position.count;
   const n = parts.reduce((a, g) => a + g.attributes.position.count, 0), position = new Float32Array(n * 3), normal = new Float32Array(n * 3), index = [];
   let o = 0;
   for (const g of parts) { position.set(g.attributes.position.array, o * 3); normal.set(g.attributes.normal.array, o * 3); for (const i of g.index.array) index.push(i + o); o += g.attributes.position.count; g.dispose(); }
   const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(position, 3)); out.setAttribute('normal', new THREE.BufferAttribute(normal, 3)); out.setIndex(index);
+  out.setAttribute('position', new THREE.BufferAttribute(position, 3).setUsage(THREE.DynamicDrawUsage)); out.setAttribute('normal', new THREE.BufferAttribute(normal, 3)); out.setIndex(index);
+  // (The tail: its vertices, where they hang at rest, and how far down it each is, 0 where it is tied .. 1 at its end.)
+  const first = n - tailCount, top = eye + 0.066, hang = new Float32Array(tailCount);
+  for (let i = 0; i < tailCount; i++) hang[i] = Math.min(1, Math.max(0, (top - position[(first + i) * 3 + 1]) / 0.19));
+  out.userData.tail = { first, count: tailCount, rest: position.slice(first * 3), hang, length: 0.19 };
   return out;
 }
 
@@ -304,6 +309,35 @@ void main() {
       glslVersion: THREE.GLSL3, vertexShader: casterVertex, fragmentShader: casterFragment, side: THREE.DoubleSide,
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CASTER_UNIFORMS], own),
     });
+  }
+
+  /**
+   * The tail of her hair is a pendulum hung from the back of her head: it lags as the head starts off, swings on
+   * as it stops, sways with each pace, and leans downwind, fluttering. (You see it only in your shadow.)
+   * @param {number} dt
+   * @param {number[]} accel  how the place where it is tied is accelerating, in the head's own frame: [to the right, back] (m/s2)
+   * @param {number[]} wind  the breeze there in the same frame (m/s)
+   */
+  swing(dt, accel, wind) {
+    const tail = this.hair.geometry.userData.tail, t = this.tail ??= { x: 0, z: 0, vx: 0, vz: 0, shown: [9, 9] };
+    if (dt > 0) {
+      // (A pendulum 19 cm long swings 1.1 times a second; hair is well damped. A breeze of 3 m/s holds it 2 cm off.)
+      const w2 = 9.81 / tail.length, damp = 2 * 0.3 * Math.sqrt(w2), step = Math.min(dt, 1 / 30);
+      for (const [k, v, a, b] of [['x', 'vx', accel[0], wind[0]], ['z', 'vz', accel[1], wind[1]]]) {
+        t[v] += (-w2 * t[k] - damp * t[v] - 0.42 * Math.max(-9, Math.min(9, a)) + w2 * 0.007 * b) * step;
+        t[k] = Math.max(-0.1, Math.min(0.1, t[k] + t[v] * step));
+      }
+      // (Forward, her neck is in the way: the tail comes to rest against it.)
+      if (t.z < -0.012) { t.z = -0.012; t.vz = Math.max(t.vz, 0); }
+    }
+    if (Math.abs(t.x - t.shown[0]) + Math.abs(t.z - t.shown[1]) < 2e-4) return;
+    t.shown = [t.x, t.z];
+    const p = this.hair.geometry.attributes.position, rise = (t.x * t.x + t.z * t.z) / (2 * tail.length);
+    for (let i = 0; i < tail.count; i++) {
+      const h = tail.hang[i] * tail.hang[i], o = i * 3;
+      p.setXYZ(tail.first + i, tail.rest[o] + t.x * h, tail.rest[o + 1] + rise * h, tail.rest[o + 2] + t.z * h);
+    }
+    p.needsUpdate = true;
   }
 
   /** Every bone where it is at rest. */

@@ -549,13 +549,20 @@ void main() {
     // Sparkle, mostly on dry sand (the film on wet sand has its own glitter).
     col += uSunE * shade * sunCut * lrGlints(d, px, n, normalize(uSunDir + V)) * 0.55 * grainy * (1.0 - 0.7 * wetAll);
   }
-  float blowing = smoothstep(8.5, 13.0, uWind.z) * sand * dryLand * (1.0 - uWet) * step(water, -0.2) * (1.0 - smoothstep(0.02, 0.2, px));
+  // (The wind comes in gusts, the same ones that ruffle the sea in patches: in an ordinary trade wind only the
+  // strongest of them lift any sand, a faint streamer here and there that is gone again as the gust passes.)
+  // (On dry sand a hand's breadth and more above the sea: the bar of Cayo de Agua stands hardly two hands over
+  // it, and with a limit of 20 cm no sand ever blew there at all.)
+  float blowing = smoothstep(7.8, 12.5, uWind.z * lrGust(vRel.xz)) * sand * dryLand * (1.0 - uWet) * smoothstep(0.06, 0.14, -water) * (1.0 - smoothstep(0.02, 0.2, px));
   if (blowing > 0.01) {
     // A strong wind lifts the dry sand: pale streamers snaking along the ground downwind, never still.
     vec2 w0 = normalize(uWind.xy + 1e-4), q = vec2(dot(dxz, w0), dot(dxz, vec2(-w0.y, w0.x)));
     float streak = lrNoise(vec2(q.x * 0.5 - uTime * 3.2, q.y * 7.0)) * lrNoise(vec2(q.x * 0.13 - uTime * 1.1, q.y * 1.3) + 7.0)
                  + 0.35 * lrNoise(vec2(q.x * 1.7 - uTime * 6.0, q.y * 19.0) + 3.0);
-    col = mix(col, albedo * (uSunE * lrSaturate(uSunDir.y) * shade + uSkyE) / PI * 1.12, 0.6 * blowing * smoothstep(0.42, 0.85, streak));
+    // (Sand in the air is lit from every side and hides the ground's own shading under it: a pale veil, a third
+    // brighter than the beach. At 12 % brighter and never more than a fifth there, as it was in a light gust,
+    // it could not be seen at all.)
+    col = mix(col, albedo * (uSunE * lrSaturate(uSunDir.y) * mix(shade, 1.0, 0.5) + uSkyE) / PI * 1.3, min(0.8, 1.5 * sqrt(blowing)) * smoothstep(0.42, 0.85, streak));
   }
   if (wetAll > 0.0) {
     // Wet sand is darker by exactly what the water model gives for water of no depth. On top lies the film the
