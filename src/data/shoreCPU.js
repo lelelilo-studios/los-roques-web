@@ -24,6 +24,36 @@ export function shoreLag(x, z) {
  */
 export const swashPhase = (x, z, t, shore = 0) => fract(t / SWASH_T - shoreLag(x, z) + 2.2 * (Math.sqrt(Math.max(shore, 0) + 1) - 1) / SWASH_T);
 
+// The lattice noise of the shaders, on the CPU. Its hash is worked out step by step in 32-bit arithmetic, as the
+// graphics card does it (lrHash12): in doubles it comes out quite different, because the last step takes the
+// fraction of a number of twenty thousand that single precision knows only to a few thousandths. (Cards that
+// fuse a multiply and an add round a last bit differently: the two then differ by a few thousandths, which
+// for where a patch of wet sand ends is nothing.)
+const f32 = Math.fround, frac32 = v => f32(v - Math.floor(v)), K = f32(0.1031), C = f32(33.33);
+export function hash12(px, py) {
+  let x = frac32(f32(f32(px) * K)), y = frac32(f32(f32(py) * K)), z = x;
+  const d = f32(f32(f32(x * f32(y + C)) + f32(y * f32(z + C))) + f32(z * f32(x + C)));
+  x = f32(x + d); y = f32(y + d); z = f32(z + d);
+  return frac32(f32(f32(x + y) * z));
+}
+/** lrNoiseTile: lattice noise repeating every `period` cells. */
+export function noiseTile(px, py, period) {
+  const ix = Math.floor(px), iy = Math.floor(py), fx = px - ix, fy = py - iy, ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+  const m = v => ((v % period) + period) % period, x0 = m(ix), x1 = m(ix + 1), y0 = m(iy), y1 = m(iy + 1);
+  const a = hash12(x0, y0), b = hash12(x1, y0), c = hash12(x0, y1), d = hash12(x1, y1);
+  return (a + (b - a) * ux) + ((c + (d - c) * ux) - (a + (b - a) * ux)) * uy;
+}
+/**
+ * lrRagged: how ragged the reach of a sheet of water over a flat is at a place (world x, z): -0.5..0.5, tongues a
+ * few steps wide. With it the CPU knows the same patches of a low bar to be wet as the picture shows.
+ */
+export function ragged(x, z) {
+  const px = ((x % 1024) + 1024) % 1024, pz = ((z % 1024) + 1024) % 1024, wx = px * (2 * Math.PI / 1024), wz = pz * (2 * Math.PI / 1024);
+  const ax = px * (330 / 1024) + 0.6 * Math.sin(wz * 263 + 1.3 * Math.sin(wx * 97)), az = pz * (330 / 1024) + 0.6 * Math.sin(wx * 229 + 1.7 * Math.sin(wz * 113));
+  const bx = px * (788 / 1024) + 0.4 * Math.sin(wx * 401) + 7, bz = pz * (788 / 1024) + 0.4 * Math.sin(wz * 367) + 7;
+  return 0.62 * noiseTile(ax, az, 330) + 0.38 * noiseTile(bx, bz, 788) - 0.5;
+}
+
 /** How high the swash of waves of height hs runs (lrRunup). */
 export const runup = hs => 0.8 * Math.min(hs, 0.22) + 0.015;
 

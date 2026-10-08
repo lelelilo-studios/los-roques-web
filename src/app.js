@@ -3,9 +3,9 @@
 import { TIERS, isSoftware, params, pickTier } from './config.js';
 import { registerChunks } from './core/chunks.js';
 import { createRenderer } from './core/renderer.js';
-import { FrameGraph } from './core/framegraph.js';
+import { FrameGraph, FullscreenPass } from './core/framegraph.js';
 import { DynamicResolution } from './core/perf.js';
-import { shared } from './core/uniforms.js';
+import { CHUNK_UNIFORMS, shared, uniformsFor } from './core/uniforms.js';
 import { loadData } from './data/loader.js';
 import { Ground } from './data/geoCPU.js';
 import { CameraRig, attachOrbitInput } from './camera/rig.js';
@@ -33,7 +33,7 @@ import { buildConchMounds, buildShoreLife } from './world/shorelife.js';
 import { buildPlants } from './world/plants.js';
 import { Sound, measure, runup } from './audio/ambience.js';
 import { fullMoonDay, moonPosition } from './world/moon.js';
-import { shoreCrest, swashPhase } from './data/shoreCPU.js';
+import { noiseTile, ragged, shoreCrest, swashPhase } from './data/shoreCPU.js';
 import { createObjectMaterial } from './world/landmarks.js';
 import { pierWalk } from './world/piers.js';
 import { Body } from './world/body.js';
@@ -245,8 +245,12 @@ export async function start(canvas, onProgress = () => {}) {
     const a = Math.max(g - shared.uSeaLevel.value, 0), ease = (lo, hi, v) => { const t = Math.min(1, Math.max(0, (v - lo) / (hi - lo))); return t * t * (3 - 2 * t); };
     let R = runup(seaAt(x, z).hs);
     const flat = Math.max(-ground.shoreAt(x, z) - a / 0.08, 0), run = (R / 0.11 + 0.3) * (1 + 3 * (1 - ease(0.03, 0.2, a / Math.max(R, 1e-4))));
-    R *= 1 - ease(1.2 * run, 3 * run, flat);
-    return a < R * 1.02 + 0.02 * Math.min(1, R * 100);
+    // (Over a flat the sheet's reach is ragged, tongues and bays a few steps wide: the same ones as the picture
+    // has, lrBeach. Without them here the darker patches on top of the bar were wet sand to the eye and dry sand
+    // to everything else: deep prints, the sound of dry sand, a dry handful.)
+    const px = ((x % 1024) + 1024) % 1024, pz = ((z % 1024) + 1024) % 1024;
+    R *= 1 - ease(1.2 * run, 3 * run, flat + ease(0, 1, flat) * 3.8 * ragged(x, z));
+    return a < (R * (1 + 0.05 * noiseTile(px * (445 / 1024), pz * (445 / 1024), 445)) + 0.02) * ease(0, 0.01, R);
   };
   // Your right hand, taking up sand and water and letting them run out between the fingers (world/hand.js).
   const handParts = { spray, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch,
@@ -330,8 +334,8 @@ export async function start(canvas, onProgress = () => {}) {
     if (step.depth < 0.02 && !onDeck(step.x, step.z) && feetWet()) soak.sand = Math.min(1, soak.sand + 0.3);
     // (On a pier: the knock of boards, and no prints in the sand below.)
     if (onDeck(step.x, step.z) && step.depth < 0.03) { sound.step({ side: step.side, surface: 'wood' }); return; }
-    const above = ground.heightAt(step.x, step.z) - shared.uSeaLevel.value;
-    const wetSand = above < runup(seaAt(step.x, step.z).hs) + 0.02;
+    // (Wet sand as everything else has it: the same patches as the picture shows.)
+    const wetSand = wetSandAt(step.x, step.z, ground.heightAt(step.x, step.z));
     sound.step({ depth: step.depth, side: step.side, wet: wetSand ? 1 : 0 });
     // Where that foot came down: under the foot itself as it was posed a moment ago (the middle of the sole is
     // 6 cm ahead of the ankle), or, when nothing is being drawn (a test walking on fast), a hip's width to the
@@ -578,7 +582,7 @@ export async function start(canvas, onProgress = () => {}) {
     reachable.together = you.together || 0;
     const reach = hand.plan(dt, reachable), reachL = handL.plan(dt, { ...reachable, want: !!input.hand2 });
     // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
-    const firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5, sink = deck ? 0 : (firm ? 0.008 : patch ? 0.018 : 0.011) + sunk;
+    const firm = walker.depth > 0.005 || wetSandAt(walker.x, walker.z, footing.heightAt(walker.x, walker.z)), sink = deck ? 0 : (firm ? 0.008 : patch ? 0.018 : 0.011) + sunk;
     const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting, time: clock.time,
       // (Your hip joints as last posed, carried on by how far you have come since.)
       hips: you.on && body.joints?.hips && !walker.sitting && walker.seated < 0.02 ? body.joints.hips.map(q => { const w = toWorld(q); return [w[0] + walker.vx * dt, w[1], w[2] + walker.vz * dt]; }) : null });
@@ -1005,6 +1009,23 @@ export async function start(canvas, onProgress = () => {}) {
     outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false) { rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}) }; },
     /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
     rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
+    /** For tests: whether the sand at a place is sand the sea keeps wet, as everything but the picture has it. */
+    wetSand: (x, z) => wetSandAt(x, z, ground.heightAt(x, z)),
+    /** For tests: lrRagged at world points [[x, z], ...] as the graphics card works it out, beside the CPU's own. */
+    raggedBoth(points) {
+      const n = Math.min(points.length, 64), target = new THREE.WebGLRenderTarget(n, 1, { type: THREE.FloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      const pass = new FullscreenPass(`
+#include <lr_common>
+#include <lr_geo>
+#include <lr_shore>
+uniform vec2 uPts[64];
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(lrRagged(uPts[int(gl_FragCoord.x)]), 0.0, 0.0, 1.0); }`, uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore], { uPts: { value: Array.from({ length: 64 }, (_, i) => new THREE.Vector2(...(points[i] || [0, 0]).map(v => ((v % 1024) + 1024) % 1024))) } }));
+      const previous = renderer.getRenderTarget(), out = new Float32Array(n * 4);
+      pass.render(renderer, target); renderer.readRenderTargetPixels(target, 0, 0, n, 1, out); renderer.setRenderTarget(previous);
+      target.dispose(); pass.material.dispose();
+      return points.slice(0, n).map((q, i) => [out[i * 4], ragged(q[0], q[1])]);
+    },
     /** For tests: as if both hands had just come out of the sea (they drip). */
     wetHands() { you.drip = [{ t: 0.01, owed: 0 }, { t: 0.01, owed: 0 }]; },
     /** For tests: how far the tail of her hair has swung from where it hangs: { x: to her right, z: back } (m). */
