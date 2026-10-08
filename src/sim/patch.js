@@ -30,9 +30,21 @@ uniform vec2 uCentre;         // where the window's middle is (detail coordinate
 uniform float uL, uN, uDt, uFeetWet;
 uniform vec2 uHop;            // this frame's hop for sand in transit (texels): a new length and direction every frame
 uniform vec4 uDrop[${EVENTS}];        // sand arriving (or taken): where (detail coordinates), over what radius (m), how fast at its middle (m/s)
-uniform vec4 uDropWet[${EVENTS}];     // x: dampness arriving per second; y: 1 = a footprint pressed in (flat floor, steep side), pointing the way zw says
+uniform vec4 uDropWet[${EVENTS}];     // x: dampness arriving per second; y: 1 = a right foot's print pressed in, 2 = a left foot's, pointing the way zw says
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
+// The print of a bare foot 22 cm long, about its middle (p: along it, and across it towards its outside; metres):
+// the heel, the outer edge of the sole, the ball, and the five toes, the big one on the inside. Nothing under
+// the arch. 1 where it presses deepest.
+float lrPad(vec2 p, vec2 c, vec2 r) { return 1.0 - smoothstep(0.7, 1.0, length((p - c) / r)); }
+float lrSole(vec2 p) {
+  vec2 a = vec2(-0.07, 0.008), b = vec2(0.03, 0.018), ab = b - a;
+  float edge = 1.0 - smoothstep(0.7, 1.0, length(p - a - ab * clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0)) / 0.025);
+  float k = max(max(lrPad(p, vec2(-0.078, 0.0), vec2(0.03)), 0.9 * edge), lrPad(p, vec2(0.036, 0.0), vec2(0.04, 0.044)));
+  k = max(k, 0.85 * lrPad(p, vec2(0.092, -0.027), vec2(0.0145)));
+  k = max(k, 0.7 * max(max(lrPad(p, vec2(0.099, -0.008), vec2(0.0105)), lrPad(p, vec2(0.096, 0.007), vec2(0.0095))), max(lrPad(p, vec2(0.089, 0.02), vec2(0.009)), lrPad(p, vec2(0.079, 0.031), vec2(0.0085)))));
+  return k;
+}
 // (The steepest slope sand stands at between two neighbours: 33 degrees dry, nearly a wall damp, almost flat under water.)
 float talus(float wet, float under) { return mix(mix(0.65, 3.5, smoothstep(0.15, 0.6, wet)), 0.18, under); }
 void main() {
@@ -84,10 +96,9 @@ void main() {
     // poured or scooped is a soft mound or bowl.)
     float o2 = dot(o, o) / (uDrop[i].z * uDrop[i].z), k = exp(-2.0 * o2);
     if (uDropWet[i].y > 0.5) {
-      // (The sole: 25 cm long, wider at the ball than at the heel, pressed a little deeper at both than under the arch.)
-      vec2 f = uDropWet[i].zw, l = vec2(dot(o, f), dot(o, vec2(-f.y, f.x)));
-      float along = l.x / 0.125, across = l.y / mix(0.034, 0.048, smoothstep(-0.1, 0.06, l.x)), r2 = along * along + across * across;
-      k = exp(-2.0 * r2 * r2 * r2) * (0.78 + 0.3 * smoothstep(0.3, 0.85, abs(along)));
+      // (Along the foot and across it, the outside of the foot positive: 2 marks a left foot.)
+      vec2 f = uDropWet[i].zw, l = vec2(dot(o, f), dot(o, vec2(-f.y, f.x)) * (uDropWet[i].y > 1.5 ? -1.0 : 1.0));
+      k = lrSole(l);
       pressed = max(pressed, min(k, 1.0));
     }
     h += uDrop[i].w * uDt * k;
@@ -197,8 +208,9 @@ export class SandPatch {
 
   /**
    * Sand arriving at (x, z) (world; or taken, with a negative rate) for `seconds`: over radius r (m), `rate`
-   * metres a second at the middle; `wet` = dampness arriving per second; `foot` = [east, south], the way a
-   * foot points: then it is a footprint pressed in there (a sole's outline, a flat floor and a steep side), not a soft bowl.
+   * metres a second at the middle; `wet` = dampness arriving per second; `foot` = [east, south, side], the
+   * way a foot points and which it is (-1 left, 1 right): then it is that foot's print pressed in there (heel, outer
+   * edge, ball and toes, flat-floored and steep-sided), not a soft bowl.
    */
   drop(x, z, r, rate, seconds, wet = 0, foot = null) {
     if (this.events.length >= EVENTS) this.events.shift();
@@ -258,7 +270,7 @@ export class SandPatch {
     { const k = this.tick = ((this.tick || 0) + 1) % 4093, r = [2.6, 5.3, 3.7, 6.9, 4.4, 8.1, 3.1][k % 7] * this.size / 2048 + 0.5, a = k * 2.399963; u.uHop.value.set(r * Math.cos(a), r * Math.sin(a)); }
     for (let i = 0; i < EVENTS; i++) {
       const e = this.events[i];
-      if (e) { u.uDrop.value[i].set(wrap(e.x), wrap(e.z), e.r, e.rate); u.uDropWet.value[i].set(e.wet, e.foot ? 1 : 0, e.foot ? e.foot[0] : 0, e.foot ? e.foot[1] : 0); e.left -= dt; } else u.uDrop.value[i].set(0, 0, 0, 0);
+      if (e) { u.uDrop.value[i].set(wrap(e.x), wrap(e.z), e.r, e.rate); u.uDropWet.value[i].set(e.wet, e.foot ? (e.foot[2] < 0 ? 2 : 1) : 0, e.foot ? e.foot[0] : 0, e.foot ? e.foot[1] : 0); e.left -= dt; } else u.uDrop.value[i].set(0, 0, 0, 0);
     }
     this.events = this.events.filter(e => e.left > 0);
     this.now = 1 - this.now;

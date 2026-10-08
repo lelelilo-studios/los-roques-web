@@ -557,12 +557,15 @@ void main() {
   if (blowing > 0.01) {
     // A strong wind lifts the dry sand: pale streamers snaking along the ground downwind, never still.
     vec2 w0 = normalize(uWind.xy + 1e-4), q = vec2(dot(dxz, w0), dot(dxz, vec2(-w0.y, w0.x)));
-    float streak = lrNoise(vec2(q.x * 0.5 - uTime * 3.2, q.y * 7.0)) * lrNoise(vec2(q.x * 0.13 - uTime * 1.1, q.y * 1.3) + 7.0)
-                 + 0.35 * lrNoise(vec2(q.x * 1.7 - uTime * 6.0, q.y * 19.0) + 3.0);
-    // (Sand in the air is lit from every side and hides the ground's own shading under it: a pale veil, a third
-    // brighter than the beach. At 12 % brighter and never more than a fifth there, as it was in a light gust,
-    // it could not be seen at all.)
-    col = mix(col, albedo * (uSunE * lrSaturate(uSunDir.y) * mix(shade, 1.0, 0.5) + uSkyE) / PI * 1.3, min(0.8, 1.5 * sqrt(blowing)) * smoothstep(0.42, 0.85, streak));
+    // (They are veils a forearm wide that snake as they go, each wandering a hand's breadth or two to either side:
+    // not threads. Drawn two centimetres wide and dead straight, as they were, they crossed the sand at your
+    // feet like scratches, or the track of a wheel.)
+    q.y += 0.22 * sin(q.x * 0.9 + 4.0 * lrNoise(vec2(q.x * 0.11 - uTime * 0.5, q.y * 0.4)));
+    float streak = lrNoise(vec2(q.x * 0.5 - uTime * 3.2, q.y * 2.4)) * lrNoise(vec2(q.x * 0.13 - uTime * 1.1, q.y * 0.9) + 7.0)
+                 + 0.3 * lrNoise(vec2(q.x * 1.7 - uTime * 6.0, q.y * 6.0) + 3.0);
+    // (Sand in the air is a pale veil, a quarter brighter than the beach, that half hides the ground's own
+    // shading under it; in your shadow it is in shadow too.)
+    col = mix(col, albedo * (uSunE * lrSaturate(uSunDir.y) * shade + uSkyE) / PI * 1.25, min(0.7, 1.3 * sqrt(blowing)) * smoothstep(0.38, 0.9, streak));
   }
   if (wetAll > 0.0) {
     // Wet sand is darker by exactly what the water model gives for water of no depth. On top lies the film the

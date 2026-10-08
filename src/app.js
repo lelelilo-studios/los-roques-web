@@ -353,7 +353,7 @@ export async function start(canvas, onProgress = () => {}) {
       spray.burst(wrap64(wx), ground.heightAt(wx, wz), wrap64(wz), clock.time + 0.1 / Math.max(pace, 0.5), [-sy, cy], Math.round(3 + 8 * pace), false, 0.45 + 0.55 * pace);
     }
     shared.uFoot.value[prints % 24].set(wrap64(px), wrap64(pz), Math.atan2(sy, cy) + (feetWet() ? 64 : 0), clock.time);
-    marks[prints % 24] = { x: px, z: pz, yaw: Math.atan2(sy, cy), wet: wetSand, away: false };
+    marks[prints % 24] = { x: px, z: pz, yaw: Math.atan2(sy, cy), wet: wetSand, away: false, side: step.side ? 1 : -1 };
     shared.uFootCount.value = Math.min(++prints, 24);
   }
   // Walls, and the umbrella poles on the beaches (a coarse grid of small circles).
@@ -792,7 +792,7 @@ export async function start(canvas, onProgress = () => {}) {
       if (walking && !onDeck(walker.x, walker.z)) {
         // Prints you left and walked away from. The patch holds only the four metres round you, and forgot each
         // as it left that square; a stamped print stands for it out there. Coming back, it is pressed into the
-        // patch again as it comes within reach: a plain print the shape of a sole (the stamp is
+        // patch again as it comes within reach: that foot's print: heel, outer edge, ball and toes (the stamp is
         // not drawn inside the patch: without this your own trail vanished as you walked back along it).
         for (const m of marks) {
           if (!m) continue;
@@ -802,7 +802,7 @@ export async function start(canvas, onProgress = () => {}) {
             m.away = false; carved = clock.time;
             if (surfaceAt(m.x, m.z) - footing.heightAt(m.x, m.z) > 0.005) continue;       // (the sea is over it: gone)
             const fx = Math.sin(m.yaw), fz = -Math.cos(m.yaw), deep = m.wet ? 0.005 : 0.013;
-            patch.drop(m.x, m.z, 0.13, -deep / 0.1, 0.1, 0, [fx, fz]);
+            patch.drop(m.x, m.z, 0.13, -deep / 0.1, 0.1, 0, [fx, fz, m.side]);
           }
         }
         patch.update(dt, { x: walker.x, z: walker.z, cam: rig.eye, base: footing.heightAt(walker.x, walker.z), time: clock.time, feetWet: feetWet() ? 0.8 : 0,
