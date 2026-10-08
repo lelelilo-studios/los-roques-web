@@ -523,6 +523,8 @@ void main() {
     float dry = covered ? 0.0 : 1.0 - wetness;
     float flat_ = min(P.a, 1.0);
     albedo *= 1.0 - inPatch * dry * (0.4 * max(P.g, 0.0) + 0.07 * flat_);
+    // (Dry sand is dry only on top: a few centimetres down it is damp, cool and darker. Dig, and you come to it.)
+    albedo *= 1.0 - 0.24 * inPatch * dry * smoothstep(0.018, 0.045, -h);
     albedo *= 1.0 + 0.05 * inPatch * dry * (1.0 - flat_) * smoothstep(0.001, 0.006, abs(h));
   }
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);

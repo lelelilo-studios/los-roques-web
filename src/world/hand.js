@@ -48,7 +48,9 @@ void main() {
   // (Under the hand the stream is in its shadow, but not in the dark: the sunlit sand below lights it from
   // underneath. With the sky alone it came out deep blue.)
   vec3 bounce = uSunE * max(uSunDir.y, 0.0) * 0.3 * vec3(0.76, 0.7, 0.6);
-  vec3 light = (uSunE * max(uSunDir.y, 0.0) * lrShadow(vRel, vec3(0.0, 1.0, 0.0)) + uSkyE + bounce) / PI;
+  float lit = lrShadow(vRel, vec3(0.0, 1.0, 0.0));
+  vec3 direct = uSunE * max(uSunDir.y, 0.0) * lit;
+  vec3 light = (direct + uSkyE + bounce) / PI;
   if (uWater > 0.5) {
     // Water leaves the hand as a thread and breaks into beads as it falls (a thread of water cannot keep its
     // shape: it necks and parts within a hand's breadth).
@@ -63,8 +65,17 @@ void main() {
     float dense = k * (1.0 - u * u * u * u) * mix(1.0, 0.5, smoothstep(0.0, 0.3, tau));
     if (grain > 0.18 + 0.72 * dense) discard;
     float shade = lrNoise(vec2(u * 7.0 + seed * 3.0, s * 700.0));
-    // (Falling, grains show their shaded sides: a stream is a shade darker than the sunlit beach behind it.)
-    outColor = vec4(mix(vec3(0.26, 0.23, 0.19), vec3(0.5, 0.46, 0.4), shade) * light, -1000.0);
+    // (Falling, grains show their shaded sides: a stream is a shade darker than the sunlit beach behind it. A
+    // shade: at half the sand's own brightness it was a thread of grey, pencil lines hanging from the hand. And
+    // here and there a grain catches the sun as it turns, brighter than the beach: falling sand glitters.)
+    float glint = step(0.9, lrHash12(floor(vec2(u * 1.5 + seed, s * 2600.0))));
+    // (In the sun it stays that shade darker: with the light off the sand added to the sun's it was a white thread.)
+    // (And the light off the sand reaches it only where the sand round about is in the sun: under your hand at
+    // midday, yes; falling through your own long shadow in the evening, no: there it is as dim as the sand
+    // behind it, not a pale line drawn across the shadow.)
+    float around = (lrShadow(vRel + vec3(0.15, 0.0, 0.0), vec3(0.0, 1.0, 0.0)) + lrShadow(vRel + vec3(-0.075, 0.0, 0.13), vec3(0.0, 1.0, 0.0)) + lrShadow(vRel + vec3(-0.075, 0.0, -0.13), vec3(0.0, 1.0, 0.0))) / 3.0;
+    vec3 on = (0.85 * direct + uSkyE + 1.4 * bounce * around * (1.0 - 0.6 * lit)) / PI;
+    outColor = vec4(mix(vec3(0.5, 0.455, 0.385), vec3(0.73, 0.675, 0.58), shade) * on + glint * direct / PI * vec3(0.5, 0.48, 0.43), -1000.0);
   }
 }`;
 
