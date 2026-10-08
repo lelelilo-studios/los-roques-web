@@ -84,6 +84,9 @@ LrSwash lrBeach(vec2 rel, float shore, float hs, float a, float fine) {
   float flat_ = max(-shore - max(a, 0.0) / 0.08, 0.0), R = lrRunup(hs) * fine * mix(0.1, 1.0, s.open), run = R / 0.11 + 0.3;
   // Neighbouring stretches are out of step (noise along the shore), so the edge of the sea is scalloped.
   float c = uTime / LR_SWASH_T - lrShoreLag(wxz) + (2.2 * (sqrt(max(shore, 0.0) + 1.0) - 1.0) - flat_ / 1.5) / LR_SWASH_T;
+  // (And from one step to the next along the shore the front is a moment earlier or later: as it runs up the
+  // sand it is a wavering line with tongues in it, not a ruled one.)
+  c -= fine * (0.024 * lrNoiseTile(pw * (1138.0 / 1024.0) + 7.0, 1138.0) + 0.011 * lrNoiseTile(pw * (3103.0 / 1024.0) + 3.0, 3103.0));
   // (From the air there is no swash to draw, only the waves coming in, which need the place in the cycle.)
   if (R <= 0.0) { s.p = fract(c); s.age = a <= 0.0 ? 0.0 : 1000.0; return s; }
   // (Over sand within a few centimetres of still water the sheet runs on four times as far: as the tide comes
@@ -101,6 +104,14 @@ LrSwash lrBeach(vec2 rel, float shore, float hs, float a, float fine) {
   const vec2 hop = vec2(17.31, 5.17);
   s.reach = R * (0.72 + 0.28 * lrNoiseTile(q + mod(n, 64.0) * hop, 146.0));
   s.last = R * (0.72 + 0.28 * lrNoiseTile(q + mod(n - 1.0, 64.0) * hop, 146.0));
+  // (And its edge is lobed: tongues a step or two wide, and smaller ones a foot wide on those, different for
+  // every wave. They only ever fall short of the reach above, never pass it. Without them the front of a wave
+  // seen from where you stand was a ruled line.)
+  if (fine > 0.0) {
+    vec2 q1 = pw * (1138.0 / 1024.0), q2 = pw * (3103.0 / 1024.0);
+    s.reach *= 1.0 - fine * (0.09 * lrNoiseTile(q1 + mod(n, 64.0) * hop, 1138.0) + 0.045 * lrNoiseTile(q2 + mod(n, 64.0) * hop.yx, 3103.0));
+    s.last *= 1.0 - fine * (0.09 * lrNoiseTile(q1 + mod(n - 1.0, 64.0) * hop, 1138.0) + 0.045 * lrNoiseTile(q2 + mod(n - 1.0, 64.0) * hop.yx, 3103.0));
+  }
   // (The sand above the last wave is still wet from bigger ones.)
   s.top = (R * (1.0 + 0.05 * lrNoiseTile(pw * (445.0 / 1024.0), 445.0)) + 0.02 * fine) * smoothstep(0.0, 0.01, R);
   float level = s.reach * lrSwashCurve(s.p), h = max(a, 0.0);

@@ -367,7 +367,8 @@ void main() {
     float tilt = length(bedSlope);
     vec2 uphill = tilt > 1e-4 ? bedSlope / tilt : vec2(0.0);
     vec2 f = lrFoam(spot + uCamMod.xy - uphill * lrSwashCarry(sw.behind + aboveStill, tilt), swash, px, gx, gy);
-    col = mix(col, 0.85 * f.y * lit / PI, f.x);
+    // (Not quite white: the raft has bubbles and thin places in it, and at 0.85 they were all lost in the glare.)
+    col = mix(col, 0.74 * f.y * lit / PI, f.x);
   }
   if (uDebug.x > 0.5) {
     // Debug views: 1 = what the bed lookup found (red: bent ray, green: straight through, blue: nothing),
