@@ -483,9 +483,9 @@ export class Hand {
       running = Math.max(...this.rates);
       if (gone > 0) {
         // Where it lands: under the gaps it fell through, a third of a second later.
-        const fall = Math.sqrt(Math.max(K[1] - floor, 0.01) / 4.9), r = this.spray.random, patch = this.patch();
+        const fall = Math.sqrt(Math.max(K[1] - floor, 0.01) / 4.9), r = this.spray.random, patch = this.patch(), blown = this.carried(fall, c);
         for (let g = 0; g < 3; g++) if (out.gaps[g] > 0) {
-          const p = this.pour.gaps[g];
+          const p = [this.pour.gaps[g][0] + blown[0], this.pour.gaps[g][1], this.pour.gaps[g][2] + blown[1]];
           if (sea) continue;
           if (sandy) patch?.pour(p[0], p[2], 0.012, out.gaps[g] * (this.kind === 'dry' ? 1 : 0.75), this.kind === 'wet' && !this.pour.wetGround ? out.gaps[g] / HANDFUL * 5 : 0, fall, time);
           else patch?.pour(p[0], p[2], 0.035, 0, out.gaps[g] / HANDFUL * 7, fall, time);
@@ -541,8 +541,18 @@ export class Hand {
    * @param {object | null} pour  the hand's frame while it pours (this.pour), else null
    * @param {number} running  how fast, 0..1
    */
+  /**
+   * How far the breeze has carried what has been falling for `tau` seconds: [east, south, how fast it is going
+   * with it now (0..1 of the breeze)]. Grains of sand take up the air's speed in a quarter of a second; water,
+   * in drops and threads, hardly in a second. (c.wind: the breeze at hand height, m/s east and south.)
+   */
+  carried(tau, c) {
+    const w = c.wind || [0, 0], tp = this.kind === 'water' ? 1.1 : 0.25, k = tau - tp * (1 - Math.exp(-tau / tp));
+    return [w[0] * k, w[1] * k, 1 - Math.exp(-tau / tp)];
+  }
+
   flow(dt, c, pour, running) {
-    const time = c.time, eye = c.eye, water = this.kind === 'water', r = this.spray.random;
+    const time = c.time, eye = c.eye, water = this.kind === 'water', r = this.spray.random, wind = c.wind || [0, 0];
     if (pour && dt > 0 && time - this.pushed >= 1 / 75) {
       this.pushed = time;
       for (let i = 0; i < GAPS; i++) {
@@ -573,15 +583,16 @@ export class Hand {
       // (The top of it is at the hand, wherever that is this very frame.)
       if (pour && trail.length) { const at = this.gapAt(pour, i), q = trail[0]; write(at[0], at[1], at[2], q.v[0], q.v[1], q.v[2], time, q.k, 0); }
       for (let j = 0; j < trail.length && n < SAMPLES; j++) {
-        const q = trail[j], tau = time - q.t, x = q.p[0] + q.v[0] * tau, z = q.p[2] + q.v[2] * tau, y = q.p[1] + q.v[1] * tau - 0.5 * GRAVITY * tau * tau;
+        // (It falls, and the breeze leans it over: more the longer it has been falling.)
+        const q = trail[j], tau = time - q.t, blown = this.carried(tau, c), x = q.p[0] + q.v[0] * tau + blown[0], z = q.p[2] + q.v[2] * tau + blown[1], y = q.p[1] + q.v[1] * tau - 0.5 * GRAVITY * tau * tau;
         if (y <= q.floor) {
           // It has landed: the stream ends here, and what was below this is forgotten.
-          write(x, q.floor, z, q.v[0], q.v[1] - GRAVITY * tau, q.v[2], q.t, q.k, tau);
+          write(x, q.floor, z, q.v[0] + wind[0] * blown[2], q.v[1] - GRAVITY * tau, q.v[2] + wind[1] * blown[2], q.t, q.k, tau);
           trail.length = j === 0 && !pour ? 0 : j + 1;
           if (q.k > 0.05) landed = [x, q.floor, z, q.k, q.sea];
           break;
         }
-        write(x, y, z, q.v[0], q.v[1] - GRAVITY * tau, q.v[2], q.t, q.k, tau);
+        write(x, y, z, q.v[0] + wind[0] * blown[2], q.v[1] - GRAVITY * tau, q.v[2] + wind[1] * blown[2], q.t, q.k, tau);
       }
       if (n > 1) any = true;
       // (The rest of the ribbon is folded away into its last point.)

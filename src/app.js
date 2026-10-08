@@ -656,7 +656,9 @@ export async function start(canvas, onProgress = () => {}) {
         if (body.joints.touching && !you.folded) body.joints.touching.palm = figureRig.hand(1);
       }
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
-      hand.act(dt, { ...you.reachable, joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] });
+      // (The breeze where your hand is: a fifth of what blows at mast height, less down near the sand in your own lee.)
+      const breeze = shared.uWind.value, lee = 0.2 * breeze.z * (1 - 0.45 * walker.crouched);
+      hand.act(dt, { ...you.reachable, wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] });
     }
     else if (walking) {
       if (hand.ik > 0 || hand.amount > 0) hand.reset();          // (swimming: the hand has other work)
