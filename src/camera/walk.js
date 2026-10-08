@@ -72,7 +72,7 @@ export class Walker {
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
     this.body = height; this.bodyTo = height; this.bodyV = 0;
-    this.pinned = eye !== null; this.under0 = g;
+    this.pinned = eye !== null; this.under0 = g; this.onFeet = false;
     this.eyeY = eye !== null ? Math.max(this.surf + eye, g + 0.2) : Math.max(g + height, this.surf + FLOAT);
     this.diving = this.eyeY < this.surf;
     this.depth = Math.max(this.surf - g, 0);
@@ -205,15 +205,23 @@ export class Walker {
       this.bodyTo = this.bodyTo === undefined ? want : this.bodyTo + (want - this.bodyTo) * (1 - Math.exp(-dt * 5.5));
       this.bodyV = (this.bodyV || 0) + (w * w * (this.bodyTo - this.body) - 2 * w * (this.bodyV || 0)) * dt; this.body += this.bodyV * dt;
     } else this.body += (want - this.body) * (1 - Math.exp(-dt * 10));
-    this.afloat = this.surf + FLOAT > g2 + this.body;
+    // (Lifted off your feet when the water would float you four centimetres clear of them, and set down again
+    // only when it is six short of that: at just the depth where you float, every wave no longer takes you off
+    // your feet and puts you back.)
+    { const lift = this.surf + FLOAT - (g2 + this.body); this.afloat = this.afloat ? lift > -0.06 : lift > 0.04; }
     if (!this.diving) {
       const target = Math.max(g2 + this.body, this.surf + FLOAT);
       // (On your feet with a gait, your eye is exactly your own height over the ground you stand on, the ground
       // followed smoothly: chasing ground-plus-height instead left the whole body behind whenever you crouched or
       // rose, a tenth of a second's worth: it dipped into the sand as you stood up.)
       this.under0 = this.under0 === undefined || !Number.isFinite(this.under0) ? g2 : this.under0 + (g2 - this.under0) * (1 - Math.exp(-dt * 12));
-      if (this.gaited && !this.afloat && Math.abs(this.eyeY - (this.under0 + this.body)) < 0.25) this.eyeY = this.under0 + this.body;
-      else this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 9 : 10)));
+      // (Whatever your eye is off that by when you come on to your feet, set down by the sea or put down by a
+      // test, is given up over a fifth of a second: not all at once, which was a jolt of several centimetres.)
+      if (this.gaited && !this.afloat) {
+        const want = this.under0 + this.body;
+        this.eyeOff = (this.onFeet ? this.eyeOff || 0 : this.eyeY - want) * Math.exp(-dt * 10);
+        this.eyeY = want + this.eyeOff; this.onFeet = true;
+      } else { this.onFeet = false; this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 9 : 10))); }
       // Under we go: with the dive key in water deep enough, or by swimming forward while looking well down.
       this.diveTimer = this.afloat && this.look < -0.35 && input.fwd > 0.5 ? this.diveTimer + dt : 0;
       if ((input.down && d >= 0.9) || this.diveTimer > 0.3) this.diving = true;

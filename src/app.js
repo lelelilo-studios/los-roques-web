@@ -544,7 +544,23 @@ export async function start(canvas, onProgress = () => {}) {
   function advance(dt, input) {
     walker.step(dt, input);          // (its own footfalls are not used: the gait says when a foot comes down)
     walker.head = null;
-    if (walker.afloat || walker.diving) { you.on = false; return; }
+    // Where your eye is afloat (the walker's own place), and how far you are on your feet: 0 swimming .. 1
+    // standing, half a second from the one to the other. Standing, your eye is the posed body's, a hand's
+    // breadth from the walker's place: as the sea lifts you off your feet or sets you down, your eye goes over
+    // from the one to the other (it jumped 15 cm in a frame, each time).
+    const floatAt = [walker.x + Math.cos(walker.yaw) * walker.sway, walker.eyeY + walker.bob, walker.z + Math.sin(walker.yaw) * walker.sway];
+    const swimming = walker.afloat || walker.diving;
+    // (Put down somewhere at once: you are standing there, or swimming there, from the first moment.)
+    if (walker.placed) { you.grounded = swimming ? 0 : 1; you.headOff = null; }
+    if (dt > 0) you.grounded = Math.min(1, Math.max(0, (you.grounded ?? (swimming ? 0 : 1)) + (swimming ? -dt : dt) / 0.5));
+    const stood = (k => k * k * (3 - 2 * k))(you.grounded ?? (swimming ? 0 : 1));
+    if (swimming) {
+      you.on = false;
+      if (stood > 0 && you.headOff && !walker.placed) walker.head = { x: floatAt[0] + you.headOff[0] * stood, y: floatAt[1] + you.headOff[1] * stood, z: floatAt[2] + you.headOff[2] * stood };
+      else you.headOff = null;
+      walker.placed = false;
+      return;
+    }
     const heading = walker.heading, cy = Math.cos(heading), sy = Math.sin(heading), feetY = walker.eyeY - walker.body, deck = onDeck(walker.x, walker.z);
     const turn = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), state = walker.sitting ? 'sit' : 'stand';
     // (Put down somewhere, come out of the water, sat down or got up: your feet are under you.)
@@ -618,7 +634,11 @@ export async function start(canvas, onProgress = () => {}) {
     Object.assign(you, { on: true, home: j.home, x: walker.x - (j.home[0] * cy - j.home[2] * sy), y: feetY, z: walker.z - (j.home[0] * sy + j.home[2] * cy), cy, sy, heading, folded, eyeUp, reachable });
     // (Asked for less movement: your eye keeps its height and its line; the body under it still walks.)
     const calm = 1 - walker.bobAmount, ex = j.eye[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = j.eye[1] + calm * 0.92 * you.dip, ez = j.eye[2];
-    if (!folded) walker.head = { x: you.x + ex * cy - ez * sy, y: feetY + ey, z: you.z + ex * sy + ez * cy };
+    if (!folded) {
+      const head = [you.x + ex * cy - ez * sy, feetY + ey, you.z + ex * sy + ez * cy];
+      you.headOff = [head[0] - floatAt[0], head[1] - floatAt[1], head[2] - floatAt[2]];
+      walker.head = { x: floatAt[0] + you.headOff[0] * stood, y: floatAt[1] + you.headOff[1] * stood, z: floatAt[2] + you.headOff[2] * stood };
+    }
     walker.roll = walker.sitting ? 0 : 0.22 * g.shift * walker.bobAmount;
     posedAt = frames;
     // Each foot that came down: its sound, its splash or its grains, where it is.
