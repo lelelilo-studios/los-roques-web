@@ -290,7 +290,8 @@ export class Hand {
     // Where: on the line of your look, as far as the arm goes. (In dry sand the fingers go in; on wet sand they
     // press on it; in water the hand goes to the bottom if that is within a hand's length, or under by that much.)
     // (Sitting, your legs lie where it would go: it works beside your right thigh.)
-    const far = Math.min(c.sitting ? 0.45 : 0.6, Math.max(0.3, Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx = c.sitting ? 0.33 : 0.1, lz = -far;
+    // (`seated`: how far you are on to your seat, 0..1: the hand's places go over from the one posture's to the other's, not at a jump.)
+    const seated = c.seated ?? (c.sitting ? 1 : 0), far = Math.min(0.6 - 0.15 * seated, Math.max(0.3, Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx = 0.1 + 0.23 * seated, lz = -far;
     const wx = c.x + lx * c.cy - lz * c.sy, wz = c.z + lx * c.sy + lz * c.cy, g = c.groundAt(wx, wz), depth = Math.max(c.surf - g, 0);
     if (!this.down && this.lift < 0.05 && this.amount < 0.02) this.kind = depth > 0.015 ? 'water' : c.wetAt(wx, wz, g) ? 'wet' : 'dry';
     const y = this.kind === 'water' ? Math.max(g + 0.004, c.surf - 0.17) : this.kind === 'dry' ? g - 0.012 - 0.012 * this.grip : g - 0.003 - 0.006 * this.grip;
@@ -300,11 +301,17 @@ export class Hand {
     const L = [0, sl, -cl], U = [0, cl, sl], eye = [0, c.body, 0];
     // (Far enough out, and near enough to the middle of what you see, that the hand, what falls from it and the
     // place where that lands are all in view.)
-    const wrist = [eye[0] + (c.sitting ? 0.27 : 0.085), eye[1] + L[1] * 0.31 - U[1] * 0.075, eye[2] + L[2] * 0.31 - U[2] * 0.075];
+    // Not hung from the line of your look, a forearm from your face: held as people hold a handful to watch it,
+    // the upper arm by your side, the forearm out in front of the lower chest, some 45 cm from your eyes. It comes
+    // a little higher when you look less far down. Squatting, it is held over your knees.
+    const raise = 0.12 * clamp01((c.look + 0.95) / 0.7), low = c.low || 0;
+    // (Seated you lean back: it is held out beside your right thigh, the elbow still bent.)
+    const up = [eye[0] + 0.13 + 0.03 * low, eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low], down = [eye[0] + 0.27, eye[1] - 0.36 + raise, eye[2] - 0.15];
+    const wrist = [0, 1, 2].map(i => up[i] + (down[i] - up[i]) * seated);
     // (A hand held out is never quite still: it rises and falls a little with your breath.)
     wrist[1] += 0.003 * Math.sin(c.time * 1.45); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1);
     // (No lower than the arm can hold it level, crouched: above your knees.)
-    wrist[1] = Math.max(wrist[1], Math.min(c.body - 0.3, 0.36));
+    wrist[1] = Math.max(wrist[1], Math.min(c.body - 0.22, 0.36));
     // How far the fingers are parted: as you have set them (the wheel), wide while you send it all down.
     if (dt > 0) this.open += (clamp01(c.want && !c.canReach ? 1 : c.open ?? 0.3) - this.open) * (1 - Math.exp(-dt * 8));
     let dir, palm, cupped, spread;

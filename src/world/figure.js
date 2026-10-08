@@ -79,6 +79,9 @@ layout(location = 0) out vec4 outColor;
 void main() {
   // (The head is not drawn: you look out of it. It is still there for the shadow.)
   if (vPart > 0.001 && uShowHead < 0.5) discard;
+  // (Nothing of you is drawn nearer your eye than a hand's breadth: you cannot focus there, and the picture's
+  // near edge would cut it open. It thins out over the last two centimetres.)
+  if (uShowHead < 0.5 && distance(vRel, vec3(0.0, uCamY, 0.0)) < 0.055 + 0.025 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;
   vec3 n = normalize(vNormal), V = normalize(vec3(-vRel.x, uCamY - vRel.y, -vRel.z));
   // The grain of the skin, seen from near: it breaks up the sheen (a hand at arm's length; it fades with distance).
   // (Only where a pixel is much smaller than the grain: nearer the limit it showed as stubble.)
@@ -91,6 +94,9 @@ void main() {
   float sun = mix(cloud, lrSunThrough(cloud, vRel, n), smoothstep(0.05, 0.45, nl));
   vec3 skin = pow(texture(tSkin, vUv).rgb, vec3(2.2)) * uTone;
   skin = mix(vec3(dot(skin, vec3(0.3, 0.59, 0.11))), skin, 0.9);
+  // (The picture of the skin has flushed knees and elbows, which on a tanned body in the sun read as sunburn:
+  // red is held to what the rest of the skin has of it.)
+  skin.r = min(skin.r, mix(skin.r, skin.g * 1.9, 0.8));
   // The bikini: where the field is positive. Its edge is a line a pixel wide however near you look; the skin
   // beside it is a little shaded by it, and the cloth has a weave.
   float edge = fwidth(vCloth) + 1e-5, cloth = smoothstep(-edge, edge, vCloth), hem = 1.0 - smoothstep(0.0, 0.25, abs(vCloth));
@@ -114,8 +120,13 @@ void main() {
   // plaster cast's would, and the edge of the shade is warm.
   float wrap = lrSaturate((nl + 0.3) / 1.3), soft = mix(wrap * wrap, lrSaturate(nl), cloth);
   vec3 bleed = vec3(0.5, 0.12, 0.05) * smoothstep(-0.3, 0.05, nl) * (1.0 - smoothstep(0.05, 0.5, nl)) * (1.0 - cloth);
-  // (The sunlit sand lights the body from below.)
-  vec3 bounce = uSunE * lrSaturate(uSunDir.y) * cloud * 0.22 * vec3(0.76, 0.7, 0.6) * (0.5 - 0.5 * n.y);
+  // The sand lights the body from below: pale coral sand sends back six tenths of what falls on it, so what
+  // faces down over a sunlit beach is lit nearly half as brightly as what faces up. (It was a third of this:
+  // an arm's underside was black.) Less low down, where your own shadow lies on the sand under you.
+  // And a beach is bright all round: what is in shade and faces up, with only the blue sky to light it, still
+  // gets a sixth of that from the sand beyond and from your own lit skin. (Without it the shade of your
+  // trunk on your thighs was black: tanned skin gives little back of blue light.)
+  vec3 bounce = (uSunE * lrSaturate(uSunDir.y) * cloud + 0.8 * uSkyE) * vec3(0.6, 0.55, 0.47) * (0.17 + 0.83 * (0.5 - 0.5 * n.y)) * (0.5 + 0.3 * smoothstep(0.1, 0.9, vUp));
   vec3 light = uSunE * sun * (soft + 0.12 * bleed) + uSkyE * (0.5 + 0.5 * n.y) + bounce;
   // Light through the thin parts (fingers, toes, the edge of the hand) when the sun is behind them.
   float through = (1.0 - smoothstep(0.006, 0.02, vThin)) * lrSaturate(-nl) * lrSaturate(dot(V, -uSunDir) * 0.5 + 0.5) * (1.0 - cloth);
@@ -152,6 +163,31 @@ export async function loadFigure(gzip = false) {
   return { info, arrays, texture };
 }
 
+/** Her hair, in the body's frame at rest (the eye at height `eye`, forward -z): a cap over the skull and a tail from the back of the crown. */
+function hairGeometry(eye) {
+  const parts = [], put = (centre, radii, tilt = 0, shape = null) => {
+    const g = new THREE.SphereGeometry(1, 20, 14), p = g.attributes.position, c = Math.cos(tilt), s = Math.sin(tilt);
+    for (let i = 0; i < p.count; i++) {
+      let x = p.getX(i) * radii[0], y = p.getY(i) * radii[1], z = p.getZ(i) * radii[2];
+      if (shape) [x, y, z] = shape(x, y, z, p.getX(i), p.getY(i), p.getZ(i));
+      p.setXYZ(i, centre[0] + x, centre[1] + y * c - z * s, centre[2] + y * s + z * c);
+    }
+    g.computeVertexNormals(); parts.push(g);
+  };
+  // The cap: the skull is 16 cm wide, 19 cm front to back, its top 10.5 cm over the eye. In front it stops at
+  // the hairline (what would cover the face is tucked inside the head).
+  put([0, eye + 0.036, 0.07], [0.089, 0.079, 0.102], 0, (x, y, z, ux, uy, uz) => (uz < -0.25 && uy < 0.55 ? [x * 0.7, y * 0.7, z * 0.7] : [x, y, z]));
+  // Where it is tied, and the tail hanging from there to the base of the neck.
+  put([0, eye + 0.062, 0.166], [0.03, 0.03, 0.028]);
+  put([0, eye - 0.03, 0.2], [0.036, 0.098, 0.032], -0.2);
+  const n = parts.reduce((a, g) => a + g.attributes.position.count, 0), position = new Float32Array(n * 3), normal = new Float32Array(n * 3), index = [];
+  let o = 0;
+  for (const g of parts) { position.set(g.attributes.position.array, o * 3); normal.set(g.attributes.normal.array, o * 3); for (const i of g.index.array) index.push(i + o); o += g.attributes.position.count; g.dispose(); }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(position, 3)); out.setAttribute('normal', new THREE.BufferAttribute(normal, 3)); out.setIndex(index);
+  return out;
+}
+
 export class Figure {
   /**
    * @param {{info: object, arrays: object, texture: THREE.Texture}} data  from loadFigure()
@@ -184,11 +220,26 @@ export class Figure {
         uShowHead: { value: 0 }, ...own, tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
-    // Her hair, tied back: you never see it, only its outline in your shadow (a knot at the back of the crown).
-    this.hair = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), new THREE.MeshBasicMaterial());
+    // Her hair, tied back: over the skull from the hairline to the nape, gathered at the back of the crown and
+    // hanging from there in a tail to the base of the neck. You never see it yourself, only its outline in
+    // your shadow: a head with hair, not a bare skull with ears. It goes with the head bone.
+    this.hair = new THREE.Mesh(hairGeometry(info.eyeHeight), new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, side: THREE.DoubleSide, uniforms: uniformsFor(CHUNK_UNIFORMS.common, {}),
+      vertexShader: /* glsl */`
+#include <lr_common>
+out vec3 vN;
+void main() { vN = mat3(modelMatrix) * normal; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`,
+      fragmentShader: /* glsl */`
+#include <lr_common>
+in vec3 vN;
+layout(location = 0) out vec4 outColor;
+void main() {
+  vec3 n = normalize(vN);
+  outColor = vec4(vec3(0.085, 0.05, 0.03) * (uSunE * (0.25 + 0.75 * lrSaturate(dot(n, uSunDir))) + uSkyE * (0.6 + 0.4 * n.y)) / PI, -1000.0);
+}`,
+    }));
     this.hair.frustumCulled = false; this.hair.matrixAutoUpdate = false; this.hair.visible = false;
-    const head = info.bones.find(b => b.name === 'head');
-    this.knot = [0, head.tail[1] - 0.05, head.tail[2] + 0.085]; this.lift = 0;
+    this.headBone = info.bones.findIndex(b => b.name === 'head'); this.lift = 0;
     /** What draws it into a shadow map (Shadows.render looks for this). */
     this.mesh.userData.caster = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: casterVertex, fragmentShader: casterFragment, side: THREE.DoubleSide,
@@ -209,8 +260,8 @@ export class Figure {
   place(x, y, z, yaw, pitch = 0) {
     const m = this.mesh;
     m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix);
-    // (The knot of hair goes with the head, which stays on your eye.)
-    const h = this.hair.matrix.makeScale(0.05, 0.045, 0.055).setPosition(this.knot[0], this.knot[1] + this.lift, this.knot[2]);
+    // (Her hair goes with her head: wherever the rig has turned that bone.)
+    const b = this.matrices, o = this.headBone * 12, h = this.hair.matrix.set(b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7], b[o + 8], b[o + 9], b[o + 10], b[o + 11], 0, 0, 0, 1);
     h.premultiply(m.matrix); this.hair.matrixWorld.copy(h);
   }
 }

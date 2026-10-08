@@ -343,13 +343,17 @@ export function footfall(stride) {
  * @param {number} [p.wiggle]  how far the toes are curled up (radians; negative: gripping)
  * @param {object} [p.touch]  the right hand at work, as for poseBody
  */
-export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0 }) {
+export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0, look = 0, recline = null }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   t.n = 0; h.n = 0;
   // The hip joints stand a hand's breadth over the sand you sit on; the trunk leans back from them as far as
   // it must for the eye to be where it is.
-  const SEAT = 0.095, sy = eye - PROP.eyeToShoulder + 0.004 * breath, shoulder = [0, sy, PROP.back + 0.02];
-  const hip = [0, SEAT, shoulder[2] - Math.sqrt(Math.max(PROP.torso * PROP.torso - (sy - SEAT) * (sy - SEAT), 0))];
+  // (`recline`, when given, says how far back the trunk leans (radians; forward negative), and the eye's height
+  // follows from it. Without it the lean is whatever puts the eye at `eye`: a few centimetres of eye height are
+  // then a hand's breadth of lean, which is no way to sit.)
+  const SEAT = 0.095, sy = (recline === null ? eye - PROP.eyeToShoulder : SEAT + PROP.torso * Math.cos(recline)) + 0.004 * breath, shoulder = [0, sy, PROP.back + 0.02];
+  const hip = [0, SEAT, shoulder[2] - (recline === null ? Math.sqrt(Math.max(PROP.torso * PROP.torso - (sy - SEAT) * (sy - SEAT), 0)) : PROP.torso * Math.sin(recline))];
+  if (recline !== null) eye = sy - 0.004 * breath + PROP.eyeToShoulder;
   const joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [], shoulders: [], elbows: [], feet: [], hands: [], hip, shoulder, crouch: 1, sitting: true };
   const leg = PROP.thigh + PROP.shin;
   for (const side of [-1, 1]) {
@@ -375,7 +379,7 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     if (reaching) {
       const to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
       // (You lean over towards what you reach for.)
-      sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); sh[0] += 0.03 * reaching * (1 - up);
+      if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } sh[0] += 0.03 * reaching * (1 - up);
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
@@ -418,7 +422,9 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
   h.tube([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.078, 0.098], [0.062, 0.08], HAIR);
   h.cap([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.062, 0.08], HAIR, 0.55);
   // (`home`: the ground under your seat; `eye`: where your eye is, round the neck as the head turns.)
-  joints.home = [0, 0, hip[2]]; joints.eye = [0.085 * Math.sin(turn), eye, 0.085 * (1 - Math.cos(turn))];
+  const head = headOn(turn, look);
+  // (`home`: where your weight was when you stood: you sit down a foot's length behind your feet.)
+  joints.home = [0, 0, hip[2] - 0.3]; joints.eye = [head.eye[0], eye + head.eye[1], head.eye[2]]; joints.headTurn = head.turn; joints.headNod = head.nod; joints.pelvis = 0;
   return joints;
 }
 
@@ -432,6 +438,38 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
 export function eyeAhead({ look = 0, eye, stride = 0 }) {
   const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch;
   return 0.1 * Math.max(0, -Math.sin(look)) + PROP.torso * Math.sin(lean) * 0.75 * (0.45 - 0.2 * crouch);
+}
+
+/**
+ * Part of the way (k, 0..1) from pose a to pose b: every joint that far along the line between where the two
+ * have it, each taken from its own pose's `home` (the ground under your weight), so that the result's home is
+ * the origin. Limbs are not kept to length here: the rig reaches again from hip to ankle and shoulder to wrist.
+ * It is how you get from one posture to another without a jump (squatting to sitting, and back).
+ */
+export function mixPoses(a, b, k) {
+  if (k <= 0 && a.home.every(v => v === 0)) return a;
+  const at = (j, p) => [p[0] - j.home[0], p[1] - j.home[1], p[2] - j.home[2]], mix = (p, q) => [p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k, p[2] + (q[2] - p[2]) * k];
+  const dir = (p, q) => unit([p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k, p[2] + (q[2] - p[2]) * k]), num = (p, q) => (p ?? 0) + ((q ?? 0) - (p ?? 0)) * k;
+  const out = { ...(k < 0.5 ? a : b), home: [0, 0, 0] };
+  for (const name of ['knees', 'ankles', 'hips', 'wrists', 'fingertips', 'shoulders', 'elbows']) out[name] = a[name].map((p, i) => mix(at(a, p), at(b, b[name][i] || p)));
+  for (const name of ['hip', 'shoulder', 'eye']) out[name] = mix(at(a, a[name]), at(b, b[name]));
+  out.feet = a.feet.map((f, i) => ({ pitch: num(f.pitch, b.feet[i].pitch), out: num(f.out, b.feet[i].out), planted: num(f.planted, b.feet[i].planted), toes: num(f.toes, b.feet[i].toes) }));
+  out.hands = a.hands.map((h, i) => { const g = b.hands[i] || h; return { ...h, f: dir(h.f, g.f), N: dir(h.N, g.N), curl: num(h.curl, g.curl), spread: num(h.spread, g.spread) }; });
+  for (const name of ['pelvis', 'headTurn', 'headNod', 'crouch', 'lean']) out[name] = num(a[name], b[name]);
+  const t = (k < 0.5 ? a : b).touching;
+  if (t) out.touching = { ...t, tip: at(k < 0.5 ? a : b, t.tip), wrist: at(k < 0.5 ? a : b, t.wrist) };
+  return out;
+}
+
+/**
+ * Your head on your neck. Looking up or down, the head does six tenths of it (the eyes the rest), about the
+ * middle of the neck: 8 cm under the eye and 5 cm behind it. Looking down, the eye goes forward and down;
+ * turning, it goes round. Returns { turn, nod (radians, up positive), eye: where the eye is from where it is
+ * with the head straight: [right, up, back] }.
+ */
+export function headOn(turn = 0, look = 0) {
+  const nod = Math.max(-0.75, Math.min(0.6, 0.6 * look)), ahead = 0.05 * Math.cos(nod) - 0.08 * Math.sin(nod);
+  return { turn, nod, eye: [ahead * Math.sin(turn), 0.08 * Math.cos(nod) + 0.05 * Math.sin(nod) - 0.08, 0.05 - ahead * Math.cos(turn)] };
 }
 
 /** Two bones of lengths l1, l2 from `hip` reaching for `target`, the joint between them bending towards `bend`. Returns the joint. */
@@ -482,7 +520,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   // (You lean into a hill, and back coming down one.)
   const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
   // (What is above the hips comes down with them, a little less: the back takes up a fifth of it, the neck a little more.)
-  const sy = eye - PROP.eyeToShoulder + 0.004 * breath - (gait ? 0.8 * dip : 0), shoulder = [0, sy, PROP.back + 0.02 + 0.1 * Math.max(0, -Math.sin(look))];
+  const sy = eye - PROP.eyeToShoulder + 0.004 * breath - (gait ? 0.8 * dip : 0), shoulder = [0, sy, PROP.back + 0.02 + (gait ? 0.04 : 0.1) * Math.max(0, -Math.sin(look))];
   const joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [], shoulders: [], elbows: [], feet: [], hands: [], crouch, lean };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.
   const hip = [0, Math.max(sy + (gait ? 0.8 * dip : 0) - PROP.torso * Math.cos(lean), 0.2), shoulder[2] + PROP.torso * Math.sin(lean) * 0.75];
@@ -531,7 +569,9 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     const out = gait ? mine.out : side * 0.12, tipped = tilt * mine.planted * (gait ? 0 : 1);
     const pelvis = gait ? gait.turn : 0, hipJ = [side * PROP.hip * Math.cos(pelvis), hip[1], hip[2] - side * PROP.hip * Math.sin(pelvis)], ankle = feet[side < 0 ? 0 : 1];
     // (The feet stay as wide apart as they were when you squat: it is the knees that part.)
-    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * (0.12 + 0.45 * crouch), 0, -1]);
+    // (Squatting, the knees go forward and a little outward, over the feet: not out to the sides.)
+    // (and up: squatting, the line from hip to ankle runs forward, and a knee asked only to go forward could as well go under it.)
+    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * (0.12 + (gait ? 0.2 : 0.45) * crouch), gait ? 0.9 * crouch : 0, -1]);
     const hem = [hipJ[0] + (knee[0] - hipJ[0]) * 0.55, hipJ[1] + (knee[1] - hipJ[1]) * 0.55, hipJ[2] + (knee[2] - hipJ[2]) * 0.55];
     // (Loose shorts: the leg of them stands a finger's breadth off the thigh.)
     t.tube(hipJ, hem, [0.088, 0.092], [0.08, 0.083], SHORTS);
@@ -545,15 +585,17 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     joints.feet.push({ pitch: mine.pitch + tipped, out, planted: mine.planted });
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
-    const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], a = ((gait ? gait.arm[side < 0 ? 0 : 1] : 0.7 * swing * c) - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = 0.14 + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
+    const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], a = ((gait ? gait.arm[side < 0 ? 0 : 1] : 0.7 * swing * c) - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = (gait ? 0.3 : 0.14) + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
     let elbow = [sh[0] + side * (0.025 + 0.14 * wade), sh[1] - PROP.upperArm * Math.cos(a), sh[2] - PROP.upperArm * Math.sin(a)];
     const wrist = [elbow[0] - side * 0.015, elbow[1] - PROP.forearm * Math.cos(a + bend), elbow[2] - PROP.forearm * Math.sin(a + bend)];
     // Squatting, the arms come to rest: forearms over the knees, elbows out, hands hanging loose in front.
     const squat = crouch * crouch * (3 - 2 * crouch) * (1 - wade);
     if (squat > 0) {
-      const over = [knee[0] + side * 0.012, knee[1] + 0.035, knee[2] - 0.09];
+      // (The forearm lies along the top of the thigh, the wrist just past the knee and a little inside it, the
+      // hand hanging loose in front of the shin; the elbow is down by the thigh, not out to the side.)
+      const over = gait ? [knee[0] - side * 0.035, knee[1] + 0.03, knee[2] - 0.075] : [knee[0] + side * 0.012, knee[1] + 0.035, knee[2] - 0.09];
       for (let i = 0; i < 3; i++) wrist[i] += (over[i] - wrist[i]) * squat;
-      const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * 0.8, -0.45, 0.35]);
+      const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, gait ? [side * 0.35, -0.5, 0.8] : [side * 0.8, -0.45, 0.35]);
       for (let i = 0; i < 3; i++) elbow[i] += (bent[i] - elbow[i]) * squat;
     }
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid
@@ -581,9 +623,9 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       // A hand at rest: the palm towards the thigh and a little back, fingers half curled; opened out when wading.
       const fore = unit([wrist[0] - elbow[0], wrist[1] - elbow[1], wrist[2] - elbow[2]]), mix = (p, q) => unit([p[0] + (q[0] - p[0]) * reaching, p[1] + (q[1] - p[1]) * reaching, p[2] + (q[2] - p[2]) * reaching]);
       // (Squatting: palms down, fingers hanging.)
-      const rest = [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat], loose = 0.55 - 0.3 * wade - 0.15 * squat;
-      // (Hanging from the knee, the hand points forward and down, whatever way the forearm lies.)
-      const hang = unit([fore[0] * (1 - squat), fore[1] * (1 - squat) - 0.55 * squat, fore[2] * (1 - squat) - 0.83 * squat]);
+      const rest = gait ? [-side * (1 - 0.45 * squat), -0.6 * wade - 0.25 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.85 * squat] : [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat], loose = 0.55 - 0.3 * wade - 0.15 * squat;
+      // (Hanging from the knee, the hand points down and a little forward and inward, whatever way the forearm lies.)
+      const hang = gait ? unit([fore[0] * (1 - squat) - side * 0.18 * squat, fore[1] * (1 - squat) - 0.9 * squat, fore[2] * (1 - squat) - 0.4 * squat]) : unit([fore[0] * (1 - squat), fore[1] * (1 - squat) - 0.55 * squat, fore[2] * (1 - squat) - 0.83 * squat]);
       const tip = t.hand(wrist, point ? mix(hang, point) : hang, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow, sleeve);
       joints.fingertips.push(tip);
       // (How the hand is held: the frame of its palm, how far the fingers are curled and parted.)
@@ -619,8 +661,9 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   h.tube([0, eye - 0.06, z - 0.005], [0, eye + 0.03, z], [0.074, 0.092], [0.078, 0.098], SKIN, HAIR);
   h.tube([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.078, 0.098], [0.062, 0.08], HAIR);
   h.cap([0, eye + 0.03, z], [0, top - 0.035, z + 0.004], [0.062, 0.08], HAIR, 0.55);
-  // (The eye: down with the hips; and round the neck, which is a hand's breadth behind it, as the head turns.)
-  return { ...joints, hip, shoulder, home, pelvis: gait ? gait.turn : 0, eye: [0.085 * Math.sin(turn), eye - (gait ? 0.72 * dip : 0), 0.085 * (1 - Math.cos(turn))] };
+  // (The eye: down with the hips; and on the neck as the head turns and nods.)
+  const head = headOn(turn, gait ? look : 0);
+  return { ...joints, hip, shoulder, home, pelvis: gait ? gait.turn : 0, headTurn: head.turn, headNod: head.nod, eye: [head.eye[0], eye - (gait ? 0.72 * dip : 0) + head.eye[1], head.eye[2]] };
 }
 
 const HAND = 0.19;

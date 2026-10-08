@@ -131,7 +131,7 @@ export class CameraRig {
 
     // Reversed float depth has precision to spare. The ordinary 24-bit path needs the near plane pushed out with height.
     // (In first person the sea surface can be centimetres from the eye.)
-    cam.near = walking ? (reversed ? 0.05 : 0.1) : reversed ? 0.1 : Math.min(50, Math.max(0.3, 0.05 * eye.y));
+    cam.near = walking ? (reversed ? 0.03 : 0.1) : reversed ? 0.1 : Math.min(50, Math.max(0.3, 0.05 * eye.y));
     cam.far = reversed ? 200000 : 150000;
     cam.aspect = aspect;
     cam.position.set(0, eye.y, 0);

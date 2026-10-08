@@ -46,6 +46,7 @@ export class Walker {
     // (How high your eyes are standing and crouched, and your legs against the 0.87 m the paces are for: your body's, see app.js.)
     this.stand = STAND; this.crouch = CROUCH; this.legs = 1;
     this.sit = 0.83; this.sitting = false;                        // seated eye height; whether you are sitting on the sand
+    this.seated = 0;                                              // how far you are on to your seat: 0 on your feet .. 1 sitting (it takes a second)
     this.eyeY = STAND; this.body = STAND; this.surf = 0; this.vx = 0; this.vz = 0;
     this.diving = false; this.diveTimer = 0; this.phase = 0; this.bob = 0; this.bobAmount = 1;
     this.pinned = false;                                          // a test pose holds the eye where it was put
@@ -66,11 +67,11 @@ export class Walker {
   /** How far down you are, 0 standing .. 1 in a full crouch. */
   get crouched() { return Math.min(1, Math.max(0, (this.stand - this.body) / (this.stand - this.crouch))); }
   place({ x, z, yaw = this.yaw, look = this.look, height = this.stand, eye = null }) {
-    Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
+    Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, seated: 0, bodyV: 0, turnRate: 0, turning: false, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z);
-    this.body = height;
-    this.pinned = eye !== null;
+    this.body = height; this.bodyTo = height; this.bodyV = 0;
+    this.pinned = eye !== null; this.under0 = g;
     this.eyeY = eye !== null ? Math.max(this.surf + eye, g + 0.2) : Math.max(g + height, this.surf + FLOAT);
     this.diving = this.eyeY < this.surf;
     this.depth = Math.max(this.surf - g, 0);
@@ -122,28 +123,30 @@ export class Walker {
     if (onGround) speed *= 1 - 0.55 * crouch;
     // (Backwards you go at little more than half your pace, sideways at less: the feet cannot cross.)
     if (onGround && wl > 0.01) { const a = input.fwd / Math.max(wl, 1), r = input.right / Math.max(wl, 1); speed *= (a * a * (a < 0 ? 0.55 : 1) + r * r * 0.42) / (a * a + r * r); }
-    if (this.sitting) speed = 0;                       // (seated, the same keys move your legs: see app.js)
+    if (this.sitting || this.seated > 0.02) speed = 0;  // (seated, the same keys move your legs: see app.js)
     // (You do not start or stop at once: the first pace takes you up to speed, the last one brings you to rest.)
     const faster = wx * speed * this.vx + wz * speed * this.vz > this.vx * this.vx + this.vz * this.vz, k = 1 - Math.exp(-dt * (onGround ? (this.gaited ? (faster ? 4.2 : 6) : 9) : 3.5));
     this.vx += (wx * speed - this.vx) * k; this.vz += (wz * speed - this.vz) * k;
     // Your body's heading. Going anywhere, it comes round to where you look; standing, it stays, and only
     // follows when your head has turned as far as it goes (seated: slowly, shuffling round on your seat).
     {
-      const off = Math.atan2(Math.sin(this.yaw - this.heading), Math.cos(this.yaw - this.heading)), limit = this.sitting ? 1.4 : 0.87, going = Math.hypot(this.vx, this.vz);
+      const off = Math.atan2(Math.sin(this.yaw - this.heading), Math.cos(this.yaw - this.heading)), low = this.sitting || this.seated > 0.4, limit = low ? 1.4 : 0.87, going = Math.hypot(this.vx, this.vz);
       if (!onGround || !this.gaited) this.heading = this.yaw;
       else {
         let rate = 0;
-        if (!this.sitting && going > 0.2) rate = Math.max(-4.5, Math.min(4.5, off * 6));
-        else if (this.sitting) { if (Math.abs(off) > limit) rate = Math.sign(off) * Math.min((Math.abs(off) - limit) * 10, 0.45); }
+        if (!low && going > 0.2) rate = Math.max(-4.5, Math.min(4.5, off * 6));
+        else if (low) { if (Math.abs(off) > limit) rate = Math.sign(off) * Math.min((Math.abs(off) - limit) * 10, 0.45); }
         else {
           // (Once your feet have to move, you turn to face what you are looking at, not just far enough.)
           if (Math.abs(off) > limit) this.turning = true; else if (Math.abs(off) < 0.12) this.turning = false;
           if (this.turning) rate = Math.sign(off) * Math.min(Math.max(Math.abs(off) * 5, (Math.abs(off) - limit) * 40), 7);
         }
-        this.heading += rate * dt;
+        // (A body does not start or stop turning at once.)
+        this.turnRate = (this.turnRate || 0) + (rate - (this.turnRate || 0)) * (1 - Math.exp(-dt * 14));
+        this.heading += this.turnRate * dt;
         // (Your head cannot go further round than your neck lets it. On your feet the body keeps up with any
         // turn you are likely to make, stepping round; on your seat you can only shuffle.)
-        const over = Math.atan2(Math.sin(this.yaw - this.heading), Math.cos(this.yaw - this.heading)), most = limit + (this.sitting ? 0.045 : 0.5);
+        const over = Math.atan2(Math.sin(this.yaw - this.heading), Math.cos(this.yaw - this.heading)), most = limit + (low ? 0.06 : 0.5);
         if (Math.abs(over) > most) this.yaw = this.heading + Math.sign(over) * most;
       }
     }
@@ -169,12 +172,27 @@ export class Walker {
     // The eye.
     const g2 = this.ground.heightAt(this.x, this.z);
     // (Crouched, reaching down to touch, you lean in over your hand: the eye comes a hand's breadth lower.)
-    const want = this.sitting ? this.sit - (input.hand ? 0.06 : 0) : input.down && !this.diving && d < 0.9 ? this.crouch - (input.hand ? 0.12 : 0) : this.stand;
-    this.body += (want - this.body) * (1 - Math.exp(-dt * 10));
+    // (Nobody walks in a full squat: going anywhere crouched, you come half way up and go stooped.)
+    const stoop = this.gaited ? 0.3 * (this.stand - this.crouch) * Math.min(1, Math.hypot(this.vx, this.vz) / 0.3) : 0;
+    const want = this.sitting ? this.sit - (input.hand && !this.gaited ? 0.06 : 0) : input.down && !this.diving && d < 0.9 ? this.crouch + stoop - (input.hand ? 0.12 : 0) : this.stand;
+    // (Down into a squat and up again in two thirds of a second; on to your seat and off it in a second and more.)
+    { const to = this.sitting ? 1 : 0; this.seated += Math.sign(to - this.seated) * Math.min(Math.abs(to - this.seated), dt / 1.1); }
+    if (this.gaited) {
+      // (Eased at both ends: you neither drop nor shoot up. A spring without overshoot.)
+      // (What it is drawn towards moves off gently too: you begin to sink at about the rate things fall, not faster.)
+      const w = this.seated > 0.02 && this.seated < 0.98 ? 6 : 7.5;
+      this.bodyTo = this.bodyTo === undefined ? want : this.bodyTo + (want - this.bodyTo) * (1 - Math.exp(-dt * 5.5));
+      this.bodyV = (this.bodyV || 0) + (w * w * (this.bodyTo - this.body) - 2 * w * (this.bodyV || 0)) * dt; this.body += this.bodyV * dt;
+    } else this.body += (want - this.body) * (1 - Math.exp(-dt * 10));
     this.afloat = this.surf + FLOAT > g2 + this.body;
     if (!this.diving) {
       const target = Math.max(g2 + this.body, this.surf + FLOAT);
-      this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 9 : 10)));
+      // (On your feet with a gait, your eye is exactly your own height over the ground you stand on, the ground
+      // followed smoothly: chasing ground-plus-height instead left the whole body behind whenever you crouched or
+      // rose, a tenth of a second's worth: it dipped into the sand as you stood up.)
+      this.under0 = this.under0 === undefined || !Number.isFinite(this.under0) ? g2 : this.under0 + (g2 - this.under0) * (1 - Math.exp(-dt * 12));
+      if (this.gaited && !this.afloat && Math.abs(this.eyeY - (this.under0 + this.body)) < 0.25) this.eyeY = this.under0 + this.body;
+      else this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 9 : 10)));
       // Under we go: with the dive key in water deep enough, or by swimming forward while looking well down.
       this.diveTimer = this.afloat && this.look < -0.35 && input.fwd > 0.5 ? this.diveTimer + dt : 0;
       if ((input.down && d >= 0.9) || this.diveTimer > 0.3) this.diving = true;

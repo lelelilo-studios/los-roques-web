@@ -52,7 +52,7 @@ export class Gait {
    * @param {object} c  x, z, heading: where the middle of your hips is over the ground and which way your body
    *   faces; vx, vz: how you are travelling (m/s); crouch 0..1; legs: your leg against 0.87 m; base: the height
    *   the body's frame stands on; groundAt(x, z); sink: how far a planted foot goes into this ground (m);
-   *   hold: true to leave the feet alone (they are placed by something else: sitting)
+   *   hold: true to leave the feet alone (they are placed by something else: sitting); time (s)
    * @returns {{feet: {ankle: number[], pitch: number, out: number, planted: number, down: boolean}[], shift: number,
    *   arm: number[], turn: number, amount: number, beat: number, landed: object[]}}  feet in the body's frame; `shift`: how far
    *   your hips have gone over to the right foot (m); `arm`: how far forward each arm has swung (radians);
@@ -152,9 +152,10 @@ export class Gait {
         // How far ahead of you it stands, along the way it points. Just landed ahead: on the heel, the toes
         // coming down. Left far behind: the heel has to come up, and it stands on its ball.
         f.ahead = (f.x - c.x) * dx + (f.z - c.z) * dz;
-        const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2, push = c.hold ? 0 : PUSH * ease(clamp((-f.ahead - 0.15 * L) / (0.3 * L), 0, 1));
+        // (Squatting right down, most people's heels come off the ground: they sit on the balls of their feet.)
+        const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2, push = Math.max(PUSH * ease(clamp((-f.ahead - 0.15 * L) / (0.3 * L), 0, 1)), 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)));
         const [a, hgt] = t > 0.002 ? heelUp(t) : ballDown(push);
-        wx = f.x + dx * a; wz = f.z + dz * a; up = hgt; pitch = t > 0.002 ? t : -push; yaw = f.yaw; planted = t > 0.002 ? 1 : 1 - 0.7 * push / PUSH;
+        wx = f.x + dx * a; wz = f.z + dz * a; up = hgt; pitch = t > 0.002 ? t : -push; yaw = f.yaw; planted = t > 0.002 ? 1 : 1 - 0.7 * push / PUSH * (1 - crouch);
         // (Set down on the ground under it, tipped to its slope.)
         ground = c.groundAt(f.x, f.z);
         const rise = (c.groundAt(f.x + dx * 0.13, f.z + dz * 0.13) - c.groundAt(f.x - dx * 0.05, f.z - dz * 0.05)) / 0.18;
@@ -182,7 +183,9 @@ export class Gait {
       return { ankle: [px * rx + pz * rz, ground - c.base + up - f.sunk, -px * fx - pz * fz], pitch, out: wrapPi(yaw - h), planted, down: f.down, ahead: f.ahead };
     });
     // Your weight goes over the foot that bears it: the hips shift a couple of centimetres that way.
-    const bear = feet.map(f => (f.down ? f.planted : 0)), want = (bear[1] - bear[0]) / (bear[0] + bear[1] + 0.3) * 0.024 * clamp(speed / 0.8 + (airborne() ? 0.5 : 0), 0, 1) * (1 - 0.5 * run);
+    // (Nobody stands quite still: standing a while, your weight drifts slowly from one foot towards the other.)
+    const idle = clamp((this.still - 1.5) / 2, 0, 1) * (c.hold ? 0 : 1) * (1 - crouch), drift = 0.011 * idle * (Math.sin((c.time || 0) * 0.31 + 1.3) + 0.4 * Math.sin((c.time || 0) * 0.83));
+    const bear = feet.map(f => (f.down ? f.planted : 0)), want = drift + (bear[1] - bear[0]) / (bear[0] + bear[1] + 0.3) * 0.024 * clamp(speed / 0.8 + (airborne() ? 0.5 : 0), 0, 1) * (1 - 0.5 * run);
     // (Eased both ways: weight does not jump from one foot to the other.)
     if (dt > 0) { this.shiftV = (this.shiftV || 0) + (81 * (want - this.shift) - 18 * (this.shiftV || 0)) * dt; this.shift += this.shiftV * dt; }
     // The arms swing against the legs (an arm is forward when its own foot is back), further the faster you go;
