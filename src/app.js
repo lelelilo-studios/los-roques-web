@@ -763,8 +763,16 @@ export async function start(canvas, onProgress = () => {}) {
       if (hand.ik > 0 || hand.amount > 0 || handL.ik > 0 || handL.amount > 0) { hand.reset(); handL.reset(); }          // (swimming: the hands have other work)
       for (const c of shared.uContact.value) c.w = 0;
       const under = walker.diving ? 1 : 0;
-      body.pose({ swim: true, stroke: walker.stroke, under }); body.place(0, walker.eyeY + walker.bob, 0, walker.yaw, under * walker.look);
-      if (figure) { figure.setPose(figureRig.pose(body.joints, 0), 0); figure.place(0, walker.eyeY + walker.bob, 0, walker.yaw, under * walker.look); }
+      // (Placed from your own eye: which is where the camera is, unless you are being looked at from outside.)
+      const sx = rig.own.x - rig.eye.x, sz = rig.own.z - rig.eye.z;
+      body.pose({ swim: true, stroke: walker.stroke, under }); body.place(sx, walker.eyeY + walker.bob, sz, walker.yaw, under * walker.look);
+      if (figure) {
+        figure.setPose(figureRig.pose(body.joints, 0), 0); figure.place(sx, walker.eyeY + walker.bob, sz, walker.yaw, under * walker.look);
+        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.hair.visible = !!rig.outside;
+        // (Afloat, what of you is under the surface is seen through it, as your legs are when you wade: your arms
+        // working under the water in front of you. It was painted over by the sea: a head floating by itself.)
+        figure.mesh.material.uniforms.uWaterY.value = walker.surf; figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0;
+      }
     }
     if (walking) {
       // Wet to where the water stands round you (a hand's breadth more for the splash; all over when you swim).
