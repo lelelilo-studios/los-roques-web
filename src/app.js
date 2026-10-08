@@ -385,6 +385,19 @@ export async function start(canvas, onProgress = () => {}) {
   const you = { on: false, was: '', x: 0, y: 0, z: 0, cy: 1, sy: 0, heading: 0, dip: 0, home: [0, 0, 0.08], folded: false, eyeUp: 1.5, reachable: null };
   const toWorld = q => [you.x + q[0] * you.cy - q[2] * you.sy, you.y + q[1], you.z + q[0] * you.sy + q[2] * you.cy];
   /**
+   * The height of the sea's surface where any of you is in it this very moment (far below when none of you is):
+   * under your weight, at each ankle and at each wrist. (Not the walker's own idea of it, which follows the
+   * sea a quarter of a second late and only where you stand: a wave running in over your feet, or the wash
+   * over your heels when you sit above it, was water your feet were not yet "in", and it was painted over them.)
+   */
+  function waterOver() {
+    let high = -1e9;
+    const at = (x, z) => { const s = surfaceAt(x, z); if (s - footing.heightAt(x, z) > 0.003) high = Math.max(high, s); };
+    at(walker.x, walker.z);
+    for (const p of [...(body.joints?.ankles || []), ...(body.joints?.wrists || [])]) { const w = toWorld(p); at(w[0], w[2]); }
+    return high;
+  }
+  /**
    * Where the site opens: standing on the sandbar of Cayo de Agua, near its narrow end by the main cay,
    * looking down its length between the two seas to West Cay and its lighthouse.
    */
@@ -670,7 +683,7 @@ export async function start(canvas, onProgress = () => {}) {
         body.joints.wrists.forEach((w, i) => { const t = body.joints.fingertips[i] || w; put(4 + i, [(w[0] + t[0]) / 2, (w[1] + t[1]) / 2, (w[2] + t[2]) / 2], 0.05); });
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
         figure.mesh.visible = !you.folded; figure.setPose(figureRig.pose(body.joints, you.eyeUp), body.joints.eye ? body.joints.eye[1] : you.eyeUp); figure.place(offX, you.y, offZ, you.heading);
-        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = walker.depth > 0.01 ? walker.surf : -1e9; figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
+        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = figureRig.hand(1);
         if (body.joints.touchingL && !you.folded) body.joints.touchingL.palm = figureRig.hand(0);
@@ -744,7 +757,7 @@ export async function start(canvas, onProgress = () => {}) {
           meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: pressing }] : [],
           sample: (x, z) => { const g = footing.heightAt(x, z); return [g, wetSandAt(x, z, g) ? 1 : 0, surfaceAt(x, z) - g]; } });
         ripples?.update(dt, { x: walker.x, z: walker.z, time: clock.time, flow, meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: crossing }] : [] });
-        if (skin && figure.mesh.visible) skin.update(dt, figure.mesh, walker.depth > 0.01 || !standing ? walker.surf : -1e9, rig.eye);
+        if (skin && figure.mesh.visible) skin.update(dt, figure.mesh, !standing ? walker.surf : (you.waterY ?? -1e9), rig.eye);
       } else { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
       // (For tests: drawn as if there were no patch, to see that untouched sand looks the same with it as without.)
       if (hidePatch) { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
