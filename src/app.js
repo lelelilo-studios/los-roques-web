@@ -570,7 +570,8 @@ export async function start(canvas, onProgress = () => {}) {
     // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
     // or seated, on sand or in water no deeper than your knee. (Its frame is the body's, as last posed.)
     const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
-    const reachable = { want: !!input.hand, open: input.open ?? 0.3, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
+    const settling = Math.max(0, walker.body - (walker.bodyWant ?? walker.body)) + (walker.sitting ? Math.abs(seated.lean - (seated.leanTo ?? seated.lean)) * 0.45 : 0);
+    const reachable = { want: !!input.hand, open: input.open ?? 0.3, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
       x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
     // (Both hands holding something, held up: they come together.)
     if (dt > 0) you.together = (you.together || 0) + ((hand.lift > 0.3 && handL.lift > 0.3 && hand.amount > 0.004 && handL.amount > 0.004 ? 1 : 0) - (you.together || 0)) * (1 - Math.exp(-dt * 4));
@@ -610,7 +611,7 @@ export async function start(canvas, onProgress = () => {}) {
     // feet together and apart, Space curls your toes.
     // (You sit leaning back a little on your hand; reaching for the sand beside you, you lean forward over it.)
     // (Eased both ways, like any movement of the trunk.)
-    if (dt > 0) { const to = reach && walker.sitting ? 0.22 - 0.34 * reach.amount * (1 - (reach.lift || 0)) : 0.22; seated.leanV = (seated.leanV || 0) + (36 * (to - seated.lean) - 12 * (seated.leanV || 0)) * dt; seated.lean += seated.leanV * dt; }
+    if (dt > 0) { const down = Math.max(reach ? reach.amount * (1 - (reach.lift || 0)) : 0, reachL ? reachL.amount * (1 - (reachL.lift || 0)) : 0), to = walker.sitting ? 0.22 - 0.34 * down : 0.22; seated.leanTo = to; seated.leanV = (seated.leanV || 0) + (36 * (to - seated.lean) - 12 * (seated.leanV || 0)) * dt; seated.lean += seated.leanV * dt; }
     if (walker.sitting && dt > 0) {
       seated.draw = Math.min(1, Math.max(0, seated.draw + input.fwd * -dt * 0.9)); seated.splay = Math.min(1, Math.max(0, seated.splay + input.right * dt * 0.9));
       seated.wiggle += ((input.up ? 0.45 * Math.sin(clock.time * 9) - 0.15 : 0) - seated.wiggle) * (1 - Math.exp(-dt * 12));
@@ -793,7 +794,7 @@ export async function start(canvas, onProgress = () => {}) {
     // The keys for what you are doing, said the first time you do it (the opening hint has faded by then).
     if (params.ui && !params.freeze && walking && standing) {
       if (walker.sitting && !told.sit) { told.sit = true; notice('Seated: S draws your legs up, W stretches them out · A D move your feet · Space curls your toes · the mouse button works your right hand · X gets you up', null, 10); }
-      else if (!walker.sitting && walker.crouched > 0.9 && !told.crouch) { told.crouch = true; notice('Hold the mouse button to take a handful of sand or water. Let go and it runs out between your fingers · the other button (or F) does the same with your left hand · the wheel (or Q / E) closes and parts them', null, 12); }
+      else if (!walker.sitting && walker.crouched > 0.9 && !told.crouch) { told.crouch = true; notice('Hold the mouse button: your hand goes down to the sand or the water. Move your look and your fingers rake through it; hold still and they close on a handful. Let go and it runs out between your fingers · the other button (or F) is your left hand · the wheel (or Q / E) closes and parts them', null, 14); }
     }
     // How the water runs past you: up the beach with each wave, more slowly back down. Standing in it, the
     // backwash draws the sand from under your heels and you sink, a centimetre or two; a step frees you.
@@ -995,7 +996,7 @@ export async function start(canvas, onProgress = () => {}) {
     figure: () => (figure ? { vertices: figure.info.vertices, eyeHeight: figure.info.eyeHeight, stand: walker.stand, crouch: walker.crouch } : null),
     /** For tests: what your hand is doing (see world/hand.js). */
     handL: () => ({ ik: handL.ik, lift: handL.lift, amount: handL.amount, kind: handL.kind, down: handL.down, wet: handL.wet, sand: handL.sand }),
-    hand: () => ({ ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, open: hand.open, rates: hand.rates.slice(), kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
+    hand: () => ({ rest: hand.rest, rake: hand.rake, speed: hand.speed, took: hand.took, ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, open: hand.open, rates: hand.rates.slice(), kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
       stamps: shared.uTouchInfo.value.slice(0, shared.uTouchCount.value).map((v, i) => ({ kind: v.y, a: v.z, b: v.w, age: clock.time - v.x, x: shared.uTouchSeg.value[i].x, z: shared.uTouchSeg.value[i].y })) }),
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },
     /** For tests: the kinds of small things scattered near the eye (world/scatter.js), to switch one off and see what it drew. */

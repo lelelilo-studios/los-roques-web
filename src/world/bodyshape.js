@@ -383,6 +383,11 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
       // (You lean over towards what you reach for.)
       if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } sh[0] += side * 0.03 * reaching * (1 - up);
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
+      // (No further than the arm goes: a place out of reach is reached for along the ground as far as the hand
+      // gets, not from above it. Reaching across yourself, the hand used to hang a hand's breadth over the sand.
+      // While your shoulders are still coming down, touch.settle, the place is the one the arm will reach when
+      // they have: the hand is over it meanwhile, and comes down on it.)
+      { const most = (PROP.upperArm + PROP.forearm) * 0.985, dy = want[1] - (sh[1] - (touch.settle || 0)), flat = Math.hypot(want[0] - sh[0], want[2] - sh[2]), can = Math.sqrt(Math.max(most * most - dy * dy, 0.01)); if (flat > can) { want[0] = sh[0] + (want[0] - sh[0]) * can / flat; want[2] = sh[2] + (want[2] - sh[2]) * can / flat; } }
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
       // (The way the elbow bends goes over from the resting arm's to the working arm's as the hand sets out: it does not flip.)
@@ -637,6 +642,11 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       // (Down on the ground: curled fingers reach less far and go down into what they touch, so the wrist comes
       // nearer and higher. Held up: the wrist where it is asked for.)
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
+      // (No further than the arm goes: a place out of reach is reached for along the ground as far as the hand
+      // gets, not from above it. Reaching across yourself, the hand used to hang a hand's breadth over the sand.
+      // While your shoulders are still coming down, touch.settle, the place is the one the arm will reach when
+      // they have: the hand is over it meanwhile, and comes down on it.)
+      { const most = (PROP.upperArm + PROP.forearm) * 0.985, dy = want[1] - (sh[1] - (touch.settle || 0)), flat = Math.hypot(want[0] - sh[0], want[2] - sh[2]), can = Math.sqrt(Math.max(most * most - dy * dy, 0.01)); if (flat > can) { want[0] = sh[0] + (want[0] - sh[0]) * can / flat; want[2] = sh[2] + (want[2] - sh[2]) * can / flat; } }
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
       { const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up]), q = Math.min(1, reaching * 1.4); elbow = [elbow[0] + (bent[0] - elbow[0]) * q, elbow[1] + (bent[1] - elbow[1]) * q, elbow[2] + (bent[2] - elbow[2]) * q]; }

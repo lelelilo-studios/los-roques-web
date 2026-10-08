@@ -195,7 +195,10 @@ export class Walker {
     // (Crouched, reaching down to touch, you lean in over your hand: the eye comes a hand's breadth lower.)
     // (Nobody walks in a full squat: going anywhere crouched, you come half way up and go stooped.)
     const stoop = this.gaited ? 0.3 * (this.stand - this.crouch) * Math.min(1, Math.hypot(this.vx, this.vz) / 0.3) : 0;
-    const want = this.sitting ? this.sit - (input.hand && !this.gaited ? 0.06 : 0) : input.down && !this.diving && d < 0.9 ? this.crouch + stoop - (input.hand ? 0.12 : 0) : this.stand;
+    // (Either hand at work brings you a hand's breadth lower.)
+    const reaching = input.hand || input.hand2;
+    const want = this.sitting ? this.sit - (reaching && !this.gaited ? 0.06 : 0) : input.down && !this.diving && d < 0.9 ? this.crouch + stoop - (reaching ? 0.12 : 0) : this.stand;
+    this.bodyWant = want;                                         // (where your eye is on its way to: app.js holds the hand off the sand until you are nearly there)
     // (Down into a squat and up again in two thirds of a second; on to your seat and off it in a second and more.)
     { const to = this.sitting ? 1 : 0; this.seated += Math.sign(to - this.seated) * Math.min(Math.abs(to - this.seated), dt / 1.1); }
     if (this.gaited) {
