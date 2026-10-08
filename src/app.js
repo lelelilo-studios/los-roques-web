@@ -19,6 +19,7 @@ import { Figure, loadFigure } from './world/figure.js';
 import { FigureRig } from './world/figurepose.js';
 import { SandPatch } from './sim/patch.js';
 import { Ripples } from './sim/ripples.js';
+import { SkinState } from './sim/skin.js';
 import { Terrain } from './world/terrain.js';
 import { Water } from './world/water.js';
 import { Sky } from './world/sky.js';
@@ -211,7 +212,7 @@ export async function start(canvas, onProgress = () => {}) {
   // Your real body (world/figure.js: a woman of 1.63 m, built by pipeline/body). Until its files have come, and
   // on the simplest tier, you are the figure of tubes; once they have, the tubes only do the solving: the same
   // gait and reach, worked out with her proportions, are handed to her bones (figurepose.js).
-  let figure = null, figureRig = null, patch = null, pressing = null, ripples = null, crossing = null;
+  let figure = null, figureRig = null, patch = null, pressing = null, ripples = null, crossing = null, skin = null;
   // How far your feet have sunk as the wash drew the sand from under them (metres), and how the water runs past you (m/s).
   let sunk = 0;
   const told = { crouch: false, sit: false };
@@ -230,7 +231,9 @@ export async function start(canvas, onProgress = () => {}) {
     opaque.add(figure.mesh, figure.hair);
     // The sand round you as real sand: your body presses into it (sim/patch.js).
     if (tier.fp.patch && !params.stamps) { patch = new SandPatch(renderer, tier.fp.patch); pressing = patch.toolMaterial(figure.mesh.material.uniforms.tBones);
-      ripples = new Ripples(renderer, patch, 512); crossing = ripples.crossMaterial(figure.mesh.material.uniforms.tBones); }
+      ripples = new Ripples(renderer, patch, 512); crossing = ripples.crossMaterial(figure.mesh.material.uniforms.tBones);
+      // What is on your skin, where it is (sim/skin.js): the figure's shader reads it.
+      skin = new SkinState(renderer, patch, figure.mesh.material.uniforms.tBones); figure.mesh.material.uniforms.tSkinState = skin.uniform; }
     return true;
   }).catch(e => { note(`the body model did not load: ${e?.message || e}`); return false; });
   const spray = new Spray();
@@ -422,7 +425,7 @@ export async function start(canvas, onProgress = () => {}) {
      */
     setWalk(on, pose = null, instant = false) {
       // (Wherever you are put down, your hand is at your side and the sand there is as you found it.)
-      hand.reset(); handL.reset(); patch?.reset(); ripples?.reset(); sunk = 0; Object.assign(seated, { draw: 0, splay: 0, wiggle: 0 });
+      hand.reset(); handL.reset(); patch?.reset(); ripples?.reset(); skin?.reset(); sunk = 0; Object.assign(seated, { draw: 0, splay: 0, wiggle: 0 });
       if (!on) {
         sound.stop();
         if (rig.mode === 'walk') { rig.setMode('orbit'); walkInput?.release(); }
@@ -741,6 +744,7 @@ export async function start(canvas, onProgress = () => {}) {
           meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: pressing }] : [],
           sample: (x, z) => { const g = footing.heightAt(x, z); return [g, wetSandAt(x, z, g) ? 1 : 0, surfaceAt(x, z) - g]; } });
         ripples?.update(dt, { x: walker.x, z: walker.z, time: clock.time, flow, meshes: standing && figure.mesh.visible ? [{ mesh: figure.mesh, material: crossing }] : [] });
+        if (skin && figure.mesh.visible) skin.update(dt, figure.mesh, walker.depth > 0.01 || !standing ? walker.surf : -1e9, rig.eye);
       } else { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
       // (For tests: drawn as if there were no patch, to see that untouched sand looks the same with it as without.)
       if (hidePatch) { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
@@ -894,6 +898,8 @@ export async function start(canvas, onProgress = () => {}) {
     outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false) { rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}) }; },
     /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
     rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
+    /** For tests: [how wet, how sandy] the skin is at a texture coordinate of the body. */
+    skinAt: (u, v) => (skin ? skin.read(u, v) : null),
     /** For tests: draw (or not) what the patch of real sand and the ripple field say; they go on being worked out. */
     patchShown(on) { hidePatch = !on; },
     /** For tests: the sand round you at a place: [height gained or lost (m), dampness, in transit (m), pressed]. */

@@ -61,6 +61,7 @@ ${shadowGLSL}
 uniform sampler2D tSkin;
 uniform vec3 uTone;         // what the skin's own colour is multiplied by: her tan
 uniform vec3 uClothColour;
+uniform sampler2D tSkinState;  // over the body's surface: r = how wet, g = how much sand is on it (sim/skin.js)
 uniform float uWaterY;      // the height of the sea's surface where you stand (far below you when you are not in it)
 uniform float uShowHead;    // 1 = draw the head too (you are being looked at from outside)
 // (Until the skin has a map of its own for what is on it: wet as far up as the sea has stood round you, the hand
@@ -134,6 +135,9 @@ void main() {
   float nearHand = distance(vRel, uHandWet.xyz), nearLeft = distance(vRel, uHandWetL.xyz);
   float soaked = max(uBodyWet.y * (1.0 - smoothstep(uBodyWet.x - 0.04, uBodyWet.x + 0.015, vRel.y)), uBodyWet.w * (1.0 - smoothstep(uBodyWet.z - 0.03, uBodyWet.z + 0.01, vRel.y)));
   soaked = max(soaked, max(uHandWet.w * (1.0 - smoothstep(0.17, 0.24, nearHand)), uHandWetL.w * (1.0 - smoothstep(0.17, 0.24, nearLeft))));
+  // (And what this very point of skin has been in: under the sea, on the sand.)
+  vec2 state = texture(tSkinState, vUv).rg;
+  soaked = max(soaked, state.r);
   // (Grains: the body at rest cut into cubes two thirds of a millimetre across, each with a grain in it or not,
   // so that they are specks whichever way the skin faces. Smoothed noise drew a web of cracks; squares seen from
   // one side, dashes.)
@@ -141,6 +145,7 @@ void main() {
   float grains = lrHash12(cube.xy + cube.z * vec2(37.0, 17.0) + 3.0);
   float line = 0.02 + 0.05 * uBodySand * (0.4 + lrNoise(vRest.xz * 70.0));
   float stuck = max(step(1.0 - 0.7 * uBodySand * (1.0 - smoothstep(0.4 * line, line, vUp)), grains), max(step(1.0 - 0.32 * uHandSand * (1.0 - smoothstep(0.085, 0.125, nearHand)), grains), step(1.0 - 0.32 * uHandSandL * (1.0 - smoothstep(0.085, 0.125, nearLeft)), grains))) * (1.0 - cloth);
+  stuck = max(stuck, step(1.0 - 0.8 * state.g, grains) * (1.0 - 0.6 * cloth));
   // (Wet cloth goes much darker; wet skin a little, and it shines. Sand on it does not.)
   albedo *= 1.0 - soaked * mix(0.12, 0.34, cloth);
   albedo = mix(albedo, vec3(0.66, 0.62, 0.54) * (0.75 + 0.5 * lrHash12(cube.xy + cube.z * vec2(11.0, 29.0) + 19.0)), stuck);
@@ -201,6 +206,9 @@ export async function loadFigure(gzip = false) {
   Object.assign(texture, { colorSpace: THREE.NoColorSpace, anisotropy: 8, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
   return { info, arrays, texture };
 }
+
+/** A map that says dry and clean everywhere, until there is a real one. */
+function blank() { const t = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); t.needsUpdate = true; return t; }
 
 /** The bikini's measures on this body (as pipeline/body/build.mjs takes them): uniforms for lrCloth. */
 function bikini(info, position) {
@@ -268,7 +276,7 @@ export class Figure {
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.FrontSide, defines: { LR_SHADOW_TAPS: shadowTaps },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
         uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, uHandWetL: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSandL: { value: 0 }, ...state,
-        uShowHead: { value: 0 }, uWaterY: { value: -1e9 }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
+        uShowHead: { value: 0 }, uWaterY: { value: -1e9 }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
     // Her hair, tied back: over the skull from the hairline to the nape, gathered at the back of the crown and
