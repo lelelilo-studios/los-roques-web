@@ -50,7 +50,7 @@ export const HAND = {
 export const WRIST = {
   can: { flex: [-70, 80], dev: [-30, 20] },
   flex: [-60, 60], dev: [-25, 15],
-  holdBack: 30,                        // holding something up to look at, the wrist is bent back no further than this
+  holdBack: 45,                        // holding something up to look at, the wrist is bent back no further than this
   speed: 250,
 };
 export const FOREARM = {

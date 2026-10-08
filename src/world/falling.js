@@ -33,6 +33,7 @@ in vec4 aMore;             // how many grains it stands for, how hard it hops up
 out vec3 vColor;
 out vec4 vShape;           // along, across, the streak's length over its width, its cover
 out vec3 vGlint;           // how bright a glint it gives this frame, where along the streak, how far the frame is in pixels
+out float vDrop;           // 1: a drop of water
 // (sim/fall.js fallAt: the same lines.)
 vec3 lrFallAt(float t) {
   float tau = aVel.w, k = tau * (1.0 - exp(-t / tau)), vy = -9.81 * tau;
@@ -54,7 +55,9 @@ float lrLitAt(vec3 p) {
 }
 void main() {
   float age = uNow - aBirth.w, land = aLand.x, kind = floor(aMore.w + 0.02), dense = fract(aMore.w + 0.02) / 0.45;
-  gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vColor = vec3(0.0); vShape = vec4(0.0); vGlint = vec3(0.0);
+  gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vColor = vec3(0.0); vShape = vec4(0.0); vGlint = vec3(0.0); vDrop = step(3.5, kind);
+  // (A drop is seen sharper than a grain: the eye follows it. A third of a frame of it.)
+  float shutter = uShutter * mix(1.0, 0.3, vDrop);
   // (Not let go yet, or landed and gone.)
   if (age < 0.0 || age > land + 0.25 || aMore.x <= 0.0) return;
   // Where it lands the sand may stand higher than the beach: the heap it is building. It lands on that, a moment sooner.
@@ -66,7 +69,7 @@ void main() {
     end = lrFallAt(land);
   }
   vec3 A, B;
-  if (age <= land) { A = lrFallAt(clamp(age - uShutter, 0.0, land)); B = lrFallAt(age); }
+  if (age <= land) { A = lrFallAt(clamp(age - shutter, 0.0, land)); B = lrFallAt(age); }
   else {
     // Landed. Most grains stay where they fall; one in three hops: up a few millimetres to a centimetre or two
     // and out a little way, and is down again in a twentieth of a second. (Sand alone: not clots, not drops.)
@@ -82,7 +85,7 @@ void main() {
   // The streak, in pixels: from where it was a frame ago to where it is, as wide as the grain (and a pixel and a
   // quarter at least: narrower than that it would flicker; its cover makes up for the width it is given).
   vec2 pixels = 0.5 / uInvResolution, sa = a.xy / a.w * pixels, sb = b.xy / b.w * pixels, d = sb - sa;
-  float run = length(d), size = aLand.z * projectionMatrix[1][1] * pixels.y / b.w, wide = max(size, 1.25);
+  float run = length(d), size = aLand.z * projectionMatrix[1][1] * pixels.y / b.w, wide = max(size, mix(1.25, 2.0, vDrop));
   vec2 dir = run > 1e-3 ? d / run : vec2(0.0, -1.0), side = vec2(-dir.y, dir.x);
   vec2 p = mix(sa - dir * wide * 0.5, sb + dir * wide * 0.5, corner.x) + side * corner.y * wide * 0.5;
   float w = mix(a.w, b.w, corner.x);
@@ -92,6 +95,15 @@ void main() {
   // width of it; counted once, sand falling in front of sand could hardly be made out at arm's length.)
   float cover = min(2.0 * aMore.x * (size / wide) * size / (run + size), 0.92);
   vShape = vec4(corner.x, corner.y, (run + wide) / wide, cover);
+  if (vDrop > 0.5) {
+    // Water: a bead that lets the sand behind it through, darker round its rim, with the sky in it and the sun's
+    // spark on its sunward side. (Its light is worked out where it is drawn.)
+    float lit = lrLitAt(B);
+    vColor = uSkyE / PI * vec3(0.9, 1.0, 1.08);
+    vGlint = vec3(lit, 0.0, run + wide);
+    vShape.w = min(size / wide, 1.0);
+    return;
+  }
   // The light on it. A grain is a little ball: how much of its lit side you see goes by the angle between the
   // sun and you, seen from it (a ball lit from behind you is all bright; lit from in front of you, a dark dot
   // with a bright edge). With the sky's light, and the sunlit sand below it throwing light up.
@@ -116,8 +128,21 @@ const fragmentShader = /* glsl */`
 in vec3 vColor;
 in vec4 vShape;
 in vec3 vGlint;
+in float vDrop;
 layout(location = 0) out vec4 outColor;
 void main() {
+  if (vDrop > 0.5) {
+    // (The bead's own shape: a round end at each end of the little way it has come. A drop is a lens: dark round
+    // its rim, where it turns the light away, clear and a little bright in its middle, and with the sun's spark
+    // on it wherever you see it from: there is always a place on a ball that mirrors the sun to you.)
+    float l = vShape.x * vShape.z, core = clamp(l, 0.5, vShape.z - 0.5), r2 = (l - core) * (l - core) * 4.0 + vShape.y * vShape.y;
+    if (r2 > 1.0) discard;
+    float rim = smoothstep(0.35, 1.0, r2), cover = vShape.w * (0.1 + 0.6 * rim);
+    vec2 at = vec2((l - core) * 2.0 + 0.3, vShape.y + 0.35);
+    float spark = (0.35 + 0.65 * vGlint.x) * smoothstep(0.12, 0.0, dot(at, at));
+    outColor = vec4(vColor * (1.4 - 1.1 * rim) * cover + vColor * 0.5 * (1.0 - rim) * vShape.w + uSunE / PI * spark * 5.0 * vShape.w, cover);
+    return;
+  }
   // Soft across, and rounded at its two ends.
   float along = vShape.x * vShape.z, end = min(min(along, vShape.z - along), 0.5) * 2.0, across = 1.0 - vShape.y * vShape.y;
   float cover = vShape.w * across * 1.5 * smoothstep(0.0, 1.0, end);
@@ -157,7 +182,7 @@ export class Falling {
   /**
    * Lets one thing go: from (x, y, z) in the world at time `when` (the clock's; it may be a moment back, within
    * the frame), with velocity (vx, vy, vz), to fall to `floor`. `size` in metres, `tau` (sim/fall.js), `weight`:
-   * how many grains it stands for, `kind`: 0 a grain, 1 a flake of shell, 2 a dark grain, 3 a clot of wet sand;
+   * how many grains it stands for, `kind`: 0 a grain, 1 a flake of shell, 2 a dark grain, 3 a clot of wet sand, 4 a drop of water;
    * `dense`, 0..1: how thick the stream it falls in (the grains of a thick stream shade one another).
    * Returns when it lands (seconds after `when`).
    */

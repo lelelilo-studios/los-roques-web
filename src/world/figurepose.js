@@ -95,7 +95,45 @@ export class FigureRig {
    * Measures her fingers from the mesh (`arrays`: { position, joints, weights } of body.bin): the rods that stand
    * for their skin. With them the hands know how to lie with their fingers together, and how far apart they are.
    */
-  fitHands(arrays) { this.fit = ['L', 'R'].map(s => fitHand(this.info, arrays, s)); this.models.forEach((m, i) => { m.fit = this.fit[i]; m.learn(); }); return this; }
+  fitHands(arrays) {
+    this.fit = ['L', 'R'].map(s => fitHand(this.info, arrays, s)); this.models.forEach((m, i) => { m.fit = this.fit[i]; m.learn(); });
+    // Her hands' own skin, for what lies in them (handSkin): the vertices held most by the wrist, the bones of the
+    // palm, the fingers and the thumb, and the triangles between them.
+    const { joints, weights, index } = arrays;
+    this.mesh = arrays;
+    this.skin = this.sides.map(s => {
+      const want = new Set([s.names.wrist, ...s.names.palm, ...s.names.fingers.flat(), ...s.names.thumb].map(n => this.need(n))), local = new Map(), v = [], bones = new Set();
+      for (let q = 0; q < this.info.vertices; q++) if (want.has(joints[q * 4])) { local.set(q, v.length); v.push(q); for (let c = 0; c < 4; c++) if (weights[q * 4 + c]) bones.add(joints[q * 4 + c]); }
+      const tri = [];
+      for (let t = 0; t + 2 < index.length; t += 3) { const a = local.get(index[t]), b = local.get(index[t + 1]), c = local.get(index[t + 2]); if (a !== undefined && b !== undefined && c !== undefined) tri.push(a, b, c); }
+      return { v: Uint32Array.from(v), tri: Uint32Array.from(tri), bones: [...bones], pos: new Float32Array(v.length * 3) };
+    });
+    return this;
+  }
+
+  /**
+   * The skin of hand i where it is posed now: { pos: x, y, z of each of its vertices (the body's frame), tri: three
+   * of them a triangle }, as the picture of her is skinned (each vertex by the bones that hold it), or null before
+   * fitHands. For what lies in the hand: it lies on this.
+   */
+  handSkin(i) {
+    const k = this.skin?.[i];
+    if (!k) return null;
+    for (const b of k.bones) this.current(b);
+    const { position, joints, weights } = this.mesh, m = this.matrices, out = k.pos;
+    for (let q = 0; q < k.v.length; q++) {
+      const v = k.v[q], x = position[v * 3], y = position[v * 3 + 1], z = position[v * 3 + 2];
+      let X = 0, Y = 0, Z = 0, W = 0;
+      for (let c = 0; c < 4; c++) {
+        const w = weights[v * 4 + c];
+        if (!w) continue;
+        const o = joints[v * 4 + c] * 12;
+        X += w * (m[o] * x + m[o + 1] * y + m[o + 2] * z + m[o + 3]); Y += w * (m[o + 4] * x + m[o + 5] * y + m[o + 6] * z + m[o + 7]); Z += w * (m[o + 8] * x + m[o + 9] * y + m[o + 10] * z + m[o + 11]); W += w;
+      }
+      out[q * 3] = X / W; out[q * 3 + 1] = Y / W; out[q * 3 + 2] = Z / W;
+    }
+    return k;
+  }
 
   /** What the solver should take this body's proportions to be (bodyshape.js: setProportions). */
   get proportions() {

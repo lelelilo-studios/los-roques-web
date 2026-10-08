@@ -212,7 +212,7 @@ export function slerpFrame(f0, N0, f1, N1, k) {
 // palm is hollowed, and the thumb: [where its line lies in the palm's plane, how far it is raised from it, its
 // second joint and its last bent beyond where they are at rest]. A hand at ease is never flat: each finger is
 // a little more curled than the one before it, and they lie together. (Joint ranges: humanref.js HAND.)
-const ATTITUDES = {
+export const ATTITUDES = {
   rest: [[30, 33, 36, 39], [33, 33, 33, 33], [20, 20, 20, 20], [3, 2, 2], 3, { beside: 2, lift: 14, mcp: 5, ip: 5 }],            // hanging at your side
   flat: [[5, 5, 6, 7], [6, 6, 6, 6], [3, 3, 3, 3], [4, 3, 3], 0, { plane: 34, lift: 8, mcp: 0, ip: 0 }],                        // laid on the sand, or pulling at the water
   reach: [[10, 12, 14, 18], [15, 15, 15, 15], [8, 8, 8, 8], [12, 9, 9], 0, { plane: 44, lift: 28, mcp: 0, ip: 0 }],             // on its way to take something: opened out
@@ -220,7 +220,11 @@ const ATTITUDES = {
   dig: [[28, 32, 34, 36], [40, 42, 42, 44], [20, 20, 20, 20], [8, 6, 6], 2, { plane: 38, lift: 16, mcp: 5, ip: 8 }],            // the fingers gone in
   closed: [[52, 56, 59, 62], [60, 64, 65, 66], [38, 40, 40, 41], [0.5, 0.5, 0.5], 10, { beside: 1, lift: 20, mcp: 15, ip: 20 }], // closed on a handful
   cup: [[24, 27, 29, 33], [20, 20, 21, 22], [12, 12, 12, 12], [0.3, 0.3, 0.3], 10, { beside: 0.5, lift: 10, mcp: 8, ip: 10 }],   // holding sand: a shallow bowl, fingers together
-  cupWater: [[30, 33, 35, 36], [26, 26, 27, 28], [16, 16, 16, 16], [0, 0, 0], 13, { beside: 0, lift: 12, mcp: 10, ip: 12 }],     // holding water: deeper, and pressed tight
+  // (Holding water: a scoop. The fingers stand up from the knuckles, straight and pressed together, the thumb laid
+  // along the first of them, the palm hollowed as far as it goes: measured on her own skin, that holds a spoonful,
+  // 13 to 17 ml. Bent at the middle joints instead, as it was, the hollow of the palm lay no lower than the corner
+  // between thumb and finger, and she carried 1 ml.)
+  cupWater: [[52, 54, 56, 58], [10, 10, 10, 10], [5, 5, 5, 5], [0, 0, 0], 14, { beside: 0, lift: 26, mcp: 0, ip: 0 }],
   sift: [[23, 26, 28, 31], [19, 20, 20, 21], [11, 11, 11, 11], [2.5, 2, 2], 8, { beside: 2, lift: 12, mcp: 6, ip: 8 }],          // the fingers a little apart
   siftWide: [[20, 22, 24, 27], [16, 17, 17, 18], [10, 10, 10, 10], [8, 7, 7], 5, { beside: 6, lift: 16, mcp: 5, ip: 6 }],        // and wide apart
   rake: [[35, 38, 40, 42], [45, 45, 45, 45], [28, 28, 28, 28], [9, 8, 8], 0, { plane: 40, lift: 12, mcp: 5, ip: 10 }],           // bent like the tines of a rake

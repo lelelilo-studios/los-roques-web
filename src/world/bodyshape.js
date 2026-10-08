@@ -81,10 +81,13 @@ function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0
   const turn = work.wrist ? Math.min(1, Math.max(0, work.turn ?? up)) : 0;
   const away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), ci = Math.cos(inc), si = Math.sin(inc);
   const fG = [away[0] * ci, -si, away[2] * ci], NG = [-away[0] * si, -ci, -away[2] * si];
+  // (And how far the fingers have come round from pointing down into the ground to pointing as the held hand
+  // points them: with the lift, unless the hand says otherwise: under water it lies level before it rises.)
+  const level = work.wrist ? Math.min(1, Math.max(up, work.level ?? 0)) : 0;
   let f = fG, N = NG;
-  if (up > 0 || turn > 0) {
+  if (up > 0 || turn > 0 || level > 0) {
     const fH = unit(work.dir), k = work.palm[0] * fH[0] + work.palm[1] * fH[1] + work.palm[2] * fH[2], NH = unit([work.palm[0] - fH[0] * k, work.palm[1] - fH[1] * k, work.palm[2] - fH[2] * k]);
-    f = unit([fG[0] + (fH[0] - fG[0]) * up, fG[1] + (fH[1] - fG[1]) * up, fG[2] + (fH[2] - fG[2]) * up]);
+    f = unit([fG[0] + (fH[0] - fG[0]) * level, fG[1] + (fH[1] - fG[1]) * level, fG[2] + (fH[2] - fG[2]) * level]);
     const from = rollOf(side, fG, NG);
     let till = rollOf(side, fH, NH);
     if (till < from) till += 2 * Math.PI;
@@ -106,14 +109,27 @@ function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0
   if (up > 0) for (let i = 0; i < 3; i++) want[i] += (work.wrist[i] - want[i]) * up;
   const wrist = [0, 1, 2].map(i => wrist0[i] + (want[i] - wrist0[i]) * reaching);
   { const d = [wrist[0] - sh[0], wrist[1] - sh[1], wrist[2] - sh[2]], l = Math.hypot(d[0], d[1], d[2]), most = (PROP.upperArm + PROP.forearm) * 0.999; if (l > most) for (let i = 0; i < 3; i++) wrist[i] = sh[i] + d[i] * most / l; }
-  const [hf, hN] = slerpFrame(f0, N0, f, N, reaching);
+  let [hf, hN] = slerpFrame(f0, N0, f, N, reaching);
   // (Held up to look at, a wrist is not bent back as far as it will go: `work.back` degrees at most, by default 26;
   // more as the hand tips forward to let what it holds run.)
   const limits = { sup: ARM.sup, flex: [ARM.flex[0] + (-ARM.flex[0] - (work.back ?? 26)) * up * reaching, ARM.flex[1]], dev: ARM.dev }, q = Math.min(1, reaching * 1.4);
   // (The way the elbow goes by habit: over from the resting arm's to the working arm's as the hand sets out.)
   const habit = [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up].map((v, i) => pole0[i] + (v - pole0[i]) * q);
   // (As the hand sets out the elbow is where habit has it, the resting arm's: it leaves that only as the work asks. So nothing jumps at the start.)
-  const found = swivel(sh, wrist, PROP.upperArm, PROP.forearm, hf, hN, side, habit, limits, { last: m && m.way ? m.way : null, step: m ? m.step ?? Infinity : Infinity, blocks, habit: 0.004 + 2 * (1 - q) * (1 - q) });
+  const seek = (ff, NN) => swivel(sh, wrist, PROP.upperArm, PROP.forearm, ff, NN, side, habit, limits, { last: m && m.way ? m.way : null, step: m ? m.step ?? Infinity : Infinity, blocks, habit: 0.004 + 2 * (1 - q) * (1 - q) });
+  let found = seek(hf, hN);
+  // A palm that must stay as it is asked (`work.keepLevel`: it carries water) and cannot, the arm being where it
+  // is: the fingers point another way instead, turned about the palm's own upright a little further each frame
+  // until a forearm and a wrist can hold it so, and back again when they could hold it as asked. (Swung out to
+  // the side as you looked round, the palm was let tip, and what it carried was spilt.)
+  if (work.keepLevel && m && up > 0.5) {
+    const about = a => { const c = Math.cos(a), s = Math.sin(a), k = cross(hN, hf); return unit([hf[0] * c + k[0] * s, hf[1] * c + k[1] * s, hf[2] * c + k[2] * s]); };
+    const at = a => { const ff = about(a); return [a, ff, seek(ff, hN)]; };
+    let best = Math.abs(m.yaw || 0) > 1e-4 ? at(m.yaw) : [0, hf, found];
+    if (best[2].over > 3) { const more = at(best[0] + 0.05), less = at(best[0] - 0.05), other = more[2].over < less[2].over ? more : less; if (other[2].over < best[2].over && Math.abs(other[0]) <= 1.1) best = other; }
+    else if (Math.abs(best[0]) > 1e-4) { const back = at(best[0] - Math.sign(best[0]) * Math.min(0.03, Math.abs(best[0]))); if (back[2].over <= 1.5) best = back; }
+    m.yaw = best[0]; hf = best[1]; found = best[2];
+  } else if (m) m.yaw = 0;
   if (m) m.way = found.way;
   // (And it leaves the resting arm's own place for the found one as the hand sets out, and comes back to it as
   // the hand comes back: the two are not the same place, and at the moment between it jumped a hand's breadth.)

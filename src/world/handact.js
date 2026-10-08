@@ -51,7 +51,8 @@ export class Mover {
 const TIMES = {
   dry: { settle: 0.12, dig: 0.22, gather: 0.55, lift: 1.1 },
   wet: { settle: 0.15, dig: 0.3, gather: 0.75, lift: 1.2 },
-  water: { settle: 0.05, dig: 0.25, gather: 0.5, lift: 1.35 },
+  // (Under water the palm turns right over, and the hand comes level: that takes a person most of a second.)
+  water: { settle: 0.05, dig: 0.25, gather: 0.9, lift: 1.35 },
 };
 const DWELL = 0.18, BACK = 0.65;
 // When each finger sets about closing after the little finger does, and about opening after the thumb does
@@ -127,7 +128,7 @@ export class HandMotion {
         break;
       case 'dig':
         if (!c.going) this.leaving = true;
-        if (this.dig.done) { const g = T.gather / quick; this.drag.to(1, g); this.close.to(1, g); this.turn.to(0.5, g); this.shapeTo('closed', g - 0.09, CLOSING); this.enter('gather'); }
+        if (this.dig.done) { const g = T.gather / quick; this.drag.to(1, g); this.close.to(1, g); this.turn.to(this.kind === 'water' ? 1 : 0.5, g); this.shapeTo('closed', g - 0.09, CLOSING); this.enter('gather'); }
         break;
       case 'gather':
         if (!c.going) this.leaving = true;
@@ -158,6 +159,9 @@ export class HandMotion {
     this.rake += (raking - this.rake) * (1 - Math.exp(-dt * 8));
     return this;
   }
+
+  /** What it holds is let go: the palm turns over, back through thumb up, in under half a second. */
+  dump() { if (this.phase === 'hold' || this.phase === 'lift') this.turn.to(0.12, 0.45); }
 
   /** How long the reach takes: longer the further the hand has to go (humanref.js REACH.time). */
   reachTime(far = 0.45) { return Math.min(0.85, Math.max(0.55, 0.45 + 0.6 * far)); }

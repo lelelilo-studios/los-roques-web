@@ -328,7 +328,9 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
   const typing = e => /INPUT|SELECT|TEXTAREA/.test(e.target?.tagName || '');
   const key = e => (e.code === 'Space' ? ' ' : e.key.length === 1 ? e.key.toLowerCase() : e.key);
   const turn = (dx, dy, rate) => { walker.yaw += dx * rate; walker.look = Math.min(1.5, Math.max(-1.5, walker.look - dy * rate)); };
-  const grasp = { open: 0.3, at: performance.now(), left: false };
+  // (What your hands are asked: `by`, how much further to part the fingers since last read; `steer`, whether the
+  // mouse moves the hand that holds something and not your look, as app.js says; `dx`, `dy`, how far it has moved it.)
+  const grasp = { by: 0, at: performance.now(), left: false, steer: false, dx: 0, dy: 0 };
   const lock = () => {
     if (!el.requestPointerLock || document.pointerLockElement === el) return;
     // Raw mouse movement where the browser offers it; some refuse the option, some refuse the lock: both are fine.
@@ -348,17 +350,20 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
     on(window, 'blur', () => { held.clear(); grasp.left = false; }),
     on(el, 'click', () => { if (active()) lock(); }),
     // The wheel parts your fingers (away from you) or brings them together: how fast what you hold runs out.
-    on(el, 'wheel', e => { if (!active()) return; e.preventDefault(); grasp.open = Math.min(1, Math.max(0, grasp.open - Math.sign(e.deltaY) * Math.min(0.12, Math.abs(e.deltaY) / 600 + 0.04))); }, { passive: false }),
-    on(document, 'mousemove', e => { if (active() && document.pointerLockElement === el) turn(e.movementX, e.movementY, 0.0022); }),
+    on(el, 'wheel', e => { if (!active()) return; e.preventDefault(); grasp.by -= Math.sign(e.deltaY) * Math.min(0.12, Math.abs(e.deltaY) / 600 + 0.04); }, { passive: false }),
+    // (While you hold the button of a hand that holds something, the mouse moves that hand, not your look.)
+    on(document, 'mousemove', e => { if (!active() || document.pointerLockElement !== el) return; if (grasp.steer) { grasp.dx += e.movementX; grasp.dy += e.movementY; } else turn(e.movementX, e.movementY, 0.0022); }),
     on(el, 'pointerdown', e => {
       if (!active()) return;
       if (e.pointerType === 'touch' && e.clientX < el.clientWidth * 0.45 && !touch.stick) touch.stick = { id: e.pointerId, x: e.clientX, y: e.clientY };
       else if (e.pointerType === 'mouse' && e.button === 2) grasp.left = true;                 // (the other mouse button: your left hand)
       else if (!touch.look) touch.look = { id: e.pointerId, x: e.clientX, y: e.clientY, touch: e.pointerType === 'touch' };
     }),
-    // (With one button already down the second does not come as a pointer event: the mouse's own events say.)
-    on(el, 'mousedown', e => { if (active() && e.button === 2) grasp.left = true; }),
-    on(window, 'mouseup', e => { if (e.button === 2) grasp.left = false; }),
+    // (With one button already down the second does not come as a pointer event, and letting one of two go is not
+    // a pointer's letting go: the mouse's own events say, for either button, in either order. The other button
+    // first and then the main one, the main one was never heard; the main one let go first, it stayed down.)
+    on(el, 'mousedown', e => { if (!active()) return; if (e.button === 2) grasp.left = true; else if (e.button === 0 && !touch.look) touch.look = { id: -1, x: e.clientX, y: e.clientY, touch: false }; }),
+    on(window, 'mouseup', e => { if (e.button === 2) grasp.left = false; else if (e.button === 0 && touch.look && !touch.look.touch) touch.look = null; }),
     on(el, 'contextmenu', e => { if (active()) e.preventDefault(); }),
     on(el, 'pointermove', e => {
       if (!active()) return;
@@ -384,19 +389,24 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
     read() {
       const h = k => (held.has(k) ? 1 : 0), now = performance.now();
       // (E parts the fingers, Q closes them, for as long as either is held.)
-      grasp.open = Math.min(1, Math.max(0, grasp.open + (h('e') - h('q')) * Math.min(0.1, (now - grasp.at) / 1000) * 0.9)); grasp.at = now;
+      grasp.by += (h('e') - h('q')) * Math.min(0.1, (now - grasp.at) / 1000) * 0.9; grasp.at = now;
+      const openBy = grasp.by, steerBy = grasp.dx || grasp.dy ? [grasp.dx, grasp.dy] : null;
+      grasp.by = 0; grasp.dx = grasp.dy = 0;
       return {
         fwd: Math.max(-1, Math.min(1, h('w') + h('ArrowUp') - h('s') - h('ArrowDown') + touch.vec[1])),
         right: Math.max(-1, Math.min(1, h('d') + h('ArrowRight') - h('a') - h('ArrowLeft') + touch.vec[0])),
         run: held.has('Shift') || pressed.has('run') || Math.hypot(touch.vec[0], touch.vec[1]) > 0.97,
         down: held.has('c') || pressed.has('down'), up: held.has(' ') || pressed.has('up'),
         sit: held.has('x') || pressed.has('sit'),      // sit down on the sand, or get up
-        open: grasp.open,                                // how far your fingers are parted, 0 together .. 1
+        openBy,                                          // how much further you part your fingers (the wheel, Q / E): from then on they are yours for that handful
+        steerBy,                                         // how far the mouse has moved the hand you are steering (counts across, counts down), or null
         hand2: grasp.left || held.has('f'),              // the other mouse button (or F): your left hand does the same
         hand: !!touch.look,                              // the mouse button (or a finger on the right of the screen) held: crouched, your hand goes down to touch
       };
     },
-    release() { held.clear(); pressed.clear(); touch.stick = touch.look = null; touch.vec = [0, 0]; if (document.pointerLockElement === el) document.exitPointerLock?.(); },
+    /** Whether the mouse moves a hand and not your look, from now (the hand that holds something, its button held). */
+    steering(on) { grasp.steer = !!on; if (!on) grasp.dx = grasp.dy = 0; },
+    release() { grasp.steer = false; held.clear(); pressed.clear(); touch.stick = touch.look = null; touch.vec = [0, 0]; if (document.pointerLockElement === el) document.exitPointerLock?.(); },
     dispose() { for (const f of off) f(); },
   };
 }

@@ -18,7 +18,7 @@ import { Falling } from './world/falling.js';
 import { Hand } from './world/hand.js';
 import { Figure, loadFigure } from './world/figure.js';
 import { FigureRig } from './world/figurepose.js';
-import { clearance, handsApart, mixPose, slerpFrame } from './world/handpose.js';
+import { clearance, handsApart, mixPose, slerpFrame, ATTITUDES } from './world/handpose.js';
 import { SandPatch } from './sim/patch.js';
 import { Ripples } from './sim/ripples.js';
 import { SkinState } from './sim/skin.js';
@@ -52,7 +52,7 @@ import { buildPanel, buildWalkHud } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
-const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false, hand2: false, open: 0.3, sit: false };
+const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false, hand2: false, sit: false };
 
 export async function start(canvas, onProgress = () => {}) {
   const errors = [];
@@ -248,6 +248,7 @@ export async function start(canvas, onProgress = () => {}) {
   const falling = tier.fp.grains ? new Falling(tier.fp.grains, tier.fp.grainShare) : null, overlay = new THREE.Scene();
   overlay.matrixWorldAutoUpdate = false;
   if (falling) overlay.add(falling.mesh);
+  let pools = false;
   // Whether the sand at (x, z), ground height g, is wet from the waves: under the height the swash reaches there.
   // (As lr_shore's lrBeach has it, without the ragged edge: on a beach face the waves climb to their run-up; over
   // flat sand a sheet runs on a few metres and dies, so the middle of a wide bar is dry though it is low.)
@@ -281,6 +282,7 @@ export async function start(canvas, onProgress = () => {}) {
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
   opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying);
+  overlay.add(hand.pool, handL.pool); pools = true;
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
@@ -648,12 +650,14 @@ export async function start(canvas, onProgress = () => {}) {
     // or seated, on sand or in water no deeper than your knee. (Its frame is the body's, as last posed.)
     const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
     const settling = Math.max(0, walker.body - (walker.bodyWant ?? walker.body)) + (walker.sitting ? Math.abs(seated.lean - (seated.leanTo ?? seated.lean)) * 0.45 : 0);
-    const reachable = { want: !!input.hand, open: input.open ?? 0.3, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
+    const reachable = { want: !!input.hand, open: input.open, openBy: input.openBy || 0, steerBy: input.steerBy || null, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
       x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
     // (Both hands holding something, held up: they come together.)
     if (dt > 0) you.together = (you.together || 0) + ((hand.lift > 0.3 && handL.lift > 0.3 && hand.amount > 0.004 && handL.amount > 0.004 ? 1 : 0) - (you.together || 0)) * (1 - Math.exp(-dt * 4));
     reachable.together = you.together || 0;
     const reach = hand.plan(dt, reachable), reachL = handL.plan(dt, { ...reachable, want: !!input.hand2 });
+    // (A hand that holds something, its button held: the mouse is that hand's until you let go. camera/walk.js.)
+    walkInput?.steering?.(hand.steering || handL.steering);
     // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
     const firm = walker.depth > 0.005 || wetSandAt(walker.x, walker.z, footing.heightAt(walker.x, walker.z)), sink = deck ? 0 : (firm ? 0.008 : patch ? 0.018 : 0.011) + sunk;
     const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting, time: clock.time,
@@ -816,8 +820,8 @@ export async function start(canvas, onProgress = () => {}) {
         figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         // (And her fingers as rods, where they are: what she holds lies on them, and falls between them.)
-        if (body.joints.touching && !you.folded) body.joints.touching.palm = { ...figureRig.hand(1), caps: figureRig.handCaps(1) };
-        if (body.joints.touchingL && !you.folded) body.joints.touchingL.palm = { ...figureRig.hand(0), caps: figureRig.handCaps(0) };
+        if (body.joints.touching && !you.folded) body.joints.touching.palm = { ...figureRig.hand(1), caps: figureRig.handCaps(1), skin: () => figureRig.handSkin(1) };
+        if (body.joints.touchingL && !you.folded) body.joints.touchingL.palm = { ...figureRig.hand(0), caps: figureRig.handCaps(0), skin: () => figureRig.handSkin(0) };
       }
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
       // (The breeze where your hand is: a fifth of what blows at mast height, less down near the sand in your own lee.)
@@ -953,7 +957,7 @@ export async function start(canvas, onProgress = () => {}) {
       shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     falling?.update(clock.time, dt, you.air || [0, 0]);
-    graph.render(opaque, water.mesh, rig.camera, clouds, falling ? overlay : null);
+    graph.render(opaque, water.mesh, rig.camera, clouds, falling || pools ? overlay : null);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
   }
 
@@ -1124,6 +1128,10 @@ export async function start(canvas, onProgress = () => {}) {
     /** For tests: the way to the sun (east, up, south), and where the camera is. */
     sunDir: () => shared.uSunDir.value.toArray(), cameraAt: () => [rig.eye.x, rig.eye.y, rig.eye.z],
     /** For tests: what a hand holds and its account of what it took and let go (world/hand.js `ledger`, cubic metres): `side` 1 your right, -1 your left. */
+    // (For tools: a named attitude of the hand set to other angles, to try it: handpose.js ATTITUDES.)
+    attitude: (name, spec) => { if (spec) { ATTITUDES[name] = spec; figureRig.models.forEach(m => m.learn()); } return ATTITUDES[name]; },
+    // (What lies in a hand, cell by cell, for tools: sim/palm.js.)
+    palm: (side = 1) => { const h = side > 0 ? hand : handL, q = h.sim; return q ? { floor: Array.from(q.floor), s: Array.from(q.s), leak: Array.from(q.leak), gap: Array.from(q.gap), drops: h.drops || 0, hang: (h.hang || []).slice(), last: h.lastDrop || null, lift: h.lift, fresh: !!h.fresh, up: h.upNow || null, lost: q.lost ? Array.from(q.lost) : null, trace: () => { q.lost = new Float32Array(q.s.length); }, edgeBy: h.edgeBy || null, open: h.open, tipped: h.tipped, worked: h.worked || 0, began: h.began || 0, flow: h.running_ || 0 } : null; },
     handful: (side = 1) => { const h = side > 0 ? hand : handL; return { kind: h.kind, amount: h.amount, open: h.open, rates: h.rates.slice(), ...h.ledger, gaps: h.ledger.gaps.slice() }; },
     /** For tests: chance begins again from `n`: the same doing then gives the same grains and drops. */
     seed(n = 1) { spray.seed(n); hand.seed(n + 1); handL.seed(n + 2); falling?.seed(n + 3); },

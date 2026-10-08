@@ -15,7 +15,7 @@ import { FullscreenPass } from '../core/framegraph.js';
 import { shared } from '../core/uniforms.js';
 import { skinningGLSL } from '../world/figure.js';
 
-const DROPS = 8, SPEED = 0.3;
+const DROPS = 16, SPEED = 0.3;
 
 const simFragment = /* glsl */`
 precision highp float;
