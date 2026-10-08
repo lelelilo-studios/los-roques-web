@@ -575,7 +575,9 @@ export async function start(canvas, onProgress = () => {}) {
     const reach = hand.plan(dt, reachable), reachL = handL.plan(dt, { ...reachable, want: !!input.hand2 });
     // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
     const firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5, sink = deck ? 0 : (firm ? 0.005 : patch ? 0.018 : 0.011) + sunk;
-    const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting, time: clock.time });
+    const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting, time: clock.time,
+      // (Your hip joints as last posed, carried on by how far you have come since.)
+      hips: you.on && body.joints?.hips && !walker.sitting && walker.seated < 0.02 ? body.joints.hips.map(q => { const w = toWorld(q); return [w[0] + walker.vx * dt, w[1], w[2] + walker.vz * dt]; }) : null });
     // Your toes, standing: Space curls them up and digs them into the sand, as it does when you sit; and left to
     // themselves, standing a while, the toes of one foot and then the other lift and settle again every few
     // seconds, as bare feet do on sand. (They press what they touch: the patch of real sand takes their marks.)
@@ -628,7 +630,8 @@ export async function start(canvas, onProgress = () => {}) {
       you.shallow = need < (you.shallow || 0) ? need : (you.shallow || 0) + (need - (you.shallow || 0)) * Math.min(1, dt / 0.6);
       const want = j.dipWant === undefined ? 0 : Math.max(need, you.shallow + (Math.max(you.deepS, you.shallow) - you.shallow) * (g.beat || 0));
       // (Followed as a sprung weight follows, not at once: quicker down, when a leg needs it, than up.)
-      { const w = want > you.dip ? 30 : 22; you.dipV = (you.dipV || 0) + (w * w * (want - you.dip) - 2 * w * (you.dipV || 0)) * dt; you.dip = Math.max(0, you.dip + you.dipV * dt); }
+      // (Up again briskly when you are walking forward at a steady pace, as the leg straightens under you; more gently otherwise.)
+      { const w = want > you.dip ? 30 : 24 + 14 * (g.along ?? 1) * (you.carry || 0); you.dipV = (you.dipV || 0) + (w * w * (want - you.dip) - 2 * w * (you.dipV || 0)) * dt; you.dip = Math.max(0, you.dip + you.dipV * dt); }
     }
     // Where that leaves the body's frame in the world, and your eye. (Your weight is where the walker is.)
     Object.assign(you, { on: true, home: j.home, x: walker.x - (j.home[0] * cy - j.home[2] * sy), y: feetY, z: walker.z - (j.home[0] * sy + j.home[2] * cy), cy, sy, heading, folded, eyeUp, reachable });

@@ -567,8 +567,9 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     // (Both feet count, the one in the air too: as it comes down ahead the hips are already coming down to
     // it. Walking, the standing knee is never quite straight: a centimetre is given away at the top. The hips
     // turn with the stride, which brings each hip joint a little nearer its foot.)
-    let reachable = standing - 0.012 * gait.amount * (1 - crouch);
-    const most = (PROP.thigh + PROP.shin) * 0.995, can = (ankle, i) => { const side = i ? 1 : -1, dx = ankle[0] - side * PROP.hip * Math.cos(gait.turn), dz = ankle[2] - (hip[2] - side * PROP.hip * Math.sin(gait.turn)); return ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04)); };
+    // (Three millimetres: a knee ten degrees bent. The centimetre that used to be given away was twenty.)
+    let reachable = standing - 0.003 * gait.amount * (1 - crouch);
+    const most = (PROP.thigh + PROP.shin) * 0.997, can = (ankle, i) => { const side = i ? 1 : -1, dx = ankle[0] - side * PROP.hip * Math.cos(gait.turn), dz = ankle[2] - (hip[2] - side * PROP.hip * Math.sin(gait.turn)); return ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04)); };
     const part = (a, b, v) => { const k = Math.min(1, Math.max(0, (v - a) / (b - a))); return k * k * (3 - 2 * k); };
     feet.forEach((planted, i) => {
       const f = steps[i];

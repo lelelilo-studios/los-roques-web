@@ -55,7 +55,8 @@ export class Gait {
    * @param {object} c  x, z, heading: where the middle of your hips is over the ground and which way your body
    *   faces; vx, vz: how you are travelling (m/s); crouch 0..1; legs: your leg against 0.87 m; base: the height
    *   the body's frame stands on; groundAt(x, z); sink: how far a planted foot goes into this ground (m);
-   *   hold: true to leave the feet alone (they are placed by something else: sitting); time (s)
+   *   hold: true to leave the feet alone (they are placed by something else: sitting); time (s);
+   *   hips: [[x, y, z], [x, y, z]], where your hip joints are in the world as last posed (left, right), if known
    * @returns {{feet: {ankle: number[], pitch: number, out: number, planted: number, down: boolean}[], shift: number,
    *   arm: number[], turn: number, amount: number, beat: number, landed: object[]}}  feet in the body's frame; `shift`: how far
    *   your hips have gone over to the right foot (m); `arm`: how far forward each arm has swung (radians);
@@ -166,11 +167,24 @@ export class Gait {
         // (Against the way your body faces now, when the foot was put down facing another way: you have turned since.)
         { const k = ease(clamp((Math.abs(wrapPi(f.yaw - f.side * TOE_OUT - h)) - 0.15) / 0.5, 0, 1)), own = (f.x - c.x) * dx + (f.z - c.z) * dz, yours = (f.x - c.x) * fx + (f.z - c.z) * fz; f.ahead = own + (yours - own) * k; }
         // (Squatting right down, most people's heels come off the ground: they sit on the balls of their feet.)
-        const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2, push = Math.max(PUSH * clamp((-f.ahead - 0.18 * L) / (0.275 * L), 0, 1) ** 1.8, 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)));
+        const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2;
+        // (By rule, only in the last tenth of its stance, once the other foot is down: from a third of a metre
+        // behind you to four tenths, where it leaves the ground. Before that it rises only as the leg needs: below.)
+        let push = Math.max(PUSH * clamp((-f.ahead - 0.33 * L) / (0.115 * L), 0, 1) ** 1.3, 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)));
+        ground = c.groundAt(f.x, f.z);
+        // And the heel comes up as far as the leg needs it to: a leg left behind you does not pull your hips
+        // down after it, it goes up on to its ball until, all but straight, it reaches. (c.hips: where your hip
+        // joints are in the world, as last posed. Without this the hips came down five centimetres for the
+        // trailing leg just before the other foot landed, and the leading knee met the ground bent seventeen
+        // degrees where a person's is at five.)
+        if (c.hips && !c.hold && t <= 0.002 && f.ahead < -0.04 && crouch < 0.3) {
+          const H = c.hips[f.side < 0 ? 0 : 1], most = 0.996 * prop.leg;       // (a leg 0.4 % short of straight has its knee bent ten degrees; 1.5 % short, twenty)
+          const far = q => { const [qa, qh] = ballDown(q); return Math.hypot(f.x + dx * qa - H[0], ground + qh - (f.sunk || 0) - H[1], f.z + dz * qa - H[2]); };
+          if (far(push) > most) { let lo = push, hi = PUSH; for (let n = 0; n < 7; n++) { const mid = (lo + hi) / 2; if (far(mid) > most) lo = mid; else hi = mid; } push = hi; }
+        }
         const [a, hgt] = t > 0.002 ? heelUp(t) : ballDown(push);
         wx = f.x + dx * a; wz = f.z + dz * a; up = hgt; pitch = t > 0.002 ? t : -push; yaw = f.yaw; planted = t > 0.002 ? 1 : 1 - 0.7 * push / PUSH * (1 - crouch);
         // (Set down on the ground under it, tipped to its slope.)
-        ground = c.groundAt(f.x, f.z);
         const rise = (c.groundAt(f.x + dx * 0.13, f.z + dz * 0.13) - c.groundAt(f.x - dx * 0.05, f.z - dz * 0.05)) / 0.18;
         pitch += Math.atan(clamp(rise, -0.5, 0.5)) * planted;
         f.lift = push;
@@ -184,7 +198,9 @@ export class Gait {
         const ways = moving ? Math.max(along, 0) ** 2 : 0, clear = (0.04 + 0.03 * ways + 0.06 * run) * (1 - 0.6 * crouch) * clamp(0.3 + d / 0.35, 0.3, 1);
         // (Highest a third of the way through the swing, and almost down again well before it lands: the leg
         // straightens out in front of you before the heel touches.)
-        up = from.ankle[1] + (h1 - from.ankle[1]) * e + clear * 1.7 * Math.sin(Math.PI * f.w) * (1 - f.w);
+        // (The ankle, high as the toes leave, is down to its carrying height by two thirds of the swing: the shin
+        // swings through under the knee, it is not held up behind.)
+        up = from.ankle[1] + (h1 - from.ankle[1]) * ease(Math.min(1, f.w * 1.5)) + clear * 1.7 * Math.sin(Math.PI * f.w) * (1 - f.w);
         pitch = from.pitch + (strike - from.pitch) * ease(clamp((f.w - 0.15) / 0.8, 0, 1)); yaw = from.yaw + wrapPi(to.yaw - from.yaw) * e; planted = 0;
         ground = from.ground + (c.groundAt(to.x, to.z) - from.ground) * e;
         f.ahead = (wx - c.x) * fx + (wz - c.z) * fz;
@@ -212,7 +228,9 @@ export class Gait {
     // in front of you. Swung as far forward as back, the hand reached out two hand's lengths at every pace.)
     const reachOf = v => (v > 0 ? 0.62 * v : 1.15 * v);
     const apart = clamp((out[1].ahead - out[0].ahead) / (0.75 * legs), -1, 1), swing = 0.3 * clamp(speed / 1.3, 0, 1.5) ** 0.8 * (1 - 0.75 * crouch);
-    // (`beat`: 1 as a foot comes down, 0 half way between two footfalls: the hips are lowest at the one, highest at the other.)
-    return { feet: out, shift: this.shift, arm: [reachOf(apart * swing), reachOf(-apart * swing)], turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase) ** 2 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
+    // (`beat`: 1 a moment after a foot has come down, as your weight comes on to it, 0 half way between: the hips
+    // are lowest at the one, highest at the other. At the footfall itself the knee is nearly straight; it gives
+    // as it takes your weight.)
+    return { feet: out, shift: this.shift, arm: [reachOf(apart * swing), reachOf(-apart * swing)], turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase - 0.08) ** 4 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
   }
 }
