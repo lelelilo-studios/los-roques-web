@@ -7,9 +7,9 @@
 // It is a texture anchored to the world: a texel belongs to a place, (x, z) taken modulo the patch's length L
 // (which divides the 64 m the detail coordinates wrap in), so nothing is copied as you walk; the square of it
 // that is in use is centred on you, and a texel is wiped as it leaves that square by the far side.
-//   r  height the sand has gained or lost here (m)        g  dampness added (wet feet, water poured), 0..1
+//   r  height the sand has gained or lost here (m)        g  dampness added (wet feet, water poured), 0..1;
+//                                                            below 0 on sea-wet sand: how far a foot has squeezed the water out
 //   b  sand in transit: pushed out from under you and not yet settled (m)      a  pressed smooth, 0..1; 2 while your skin is on it
-//      (on sand the sea keeps wet, a below 1 is how far a foot has squeezed the water out of it: it comes back in a second)
 //
 // Every frame: (1) your body is drawn from below into a small map of the lowest skin over each point;
 // (2) one pass over the patch moves it on (transit, press, give and take, slump, the sea);
@@ -93,19 +93,23 @@ void main() {
 
   // On sand the sea keeps wet, a foot squeezes the water out of the sand under it and for a hand's breadth round
   // it: that sand goes pale and matt while the foot presses, and the water is back within a second of its
-  // leaving. There the fourth number (below 1) says how far the sand is drained: 1 under the skin, less round it, fading.
+  // leaving. How far it is drained is kept as dampness below nothing (the second number, 0 .. -1): 1 under the
+  // skin, less round it, fading. (It was kept in the fourth number, which also says 'pressed smooth' and stays:
+  // wherever this pass and the picture disagreed about the sand being wet, a print stayed pale for good.)
+  float drained = 0.0;
   if (g.g > 0.5 && under < 0.5) {
-    float near = 0.0;
+    float near = c.a > 1.5 ? 1.0 : 0.0;
     for (int i = 0; i < 6; i++) {
       // (Six ways, turned differently every frame: looked for the same six ways each time, it spread as a lattice of stripes.)
       float t = 1.0472 * float(i) + atan(uHop.y, uHop.x);
       // (From sand that skin is on, nearly all of it; from sand that is drained, seven tenths of what it has: so it
       // falls away over a hand's breadth.)
-      float by = textureLod(tPrev, vUv + vec2(cos(t), sin(t)) * ((0.014 + 0.004 * float(i)) / uL), 0.0).a;
-      near = max(near, by > 1.5 ? 0.85 : 0.7 * by);
+      vec4 by = textureLod(tPrev, vUv + vec2(cos(t), sin(t)) * ((0.014 + 0.004 * float(i)) / uL), 0.0);
+      near = max(near, by.a > 1.5 ? 0.85 : 0.7 * max(-by.g, 0.0));
     }
-    pressed = max(pressed * exp(-uDt / 0.8), near);
+    drained = max(max(-c.g, 0.0) * exp(-uDt / 0.8), near);
   }
+  damp = max(damp, 0.0);
 
   // What arrives and what is taken.
   for (int i = 0; i < ${EVENTS}; i++) {
@@ -142,7 +146,7 @@ void main() {
   if (tool < g.r + h + 5e-4) pressed = 2.0;
   // (Dampness that was added dries; what the sea keeps wet is not in this number.)
   damp *= exp(-uDt / 40.0);
-  outColor = vec4(clamp(h, -0.08, 0.2), clamp(damp, 0.0, 1.0), max(moving, 0.0), clamp(pressed, 0.0, 2.0));
+  outColor = vec4(clamp(h, -0.08, 0.2), drained > 0.003 ? -min(drained, 1.0) : clamp(damp, 0.0, 1.0), max(moving, 0.0), clamp(pressed, 0.0, 2.0));
 }`;
 
 const toolVertex = /* glsl */`

@@ -494,7 +494,7 @@ void main() {
     n = normalize(vec3(n.x - grad.x, n.y, n.z - grad.y));
     patchSteep = smoothstep(0.08, 0.35, length(grad));
     // (On wet sand: where a foot has squeezed the water out, and, once it is back, the print it stands in.)
-    if (wetness > 0.0) { patchDrained = inPatch * min(P.a, 1.0); patchPool = inPatch * smoothstep(0.0015, 0.005, -h) * (1.0 - patchDrained); }
+    if (wetness > 0.0) { patchDrained = inPatch * lrSaturate(-P.g); patchPool = inPatch * smoothstep(0.0015, 0.005, -h) * (1.0 - patchDrained); }
     // (Soaked sand was darkened above; drained, it is three quarters of the way back to its dry colour.)
     if (patchDrained > 0.0 && !covered) albedo *= mix(1.0, LR_SOAKED, fine * wetness * (1.0 - 0.75 * patchDrained)) / mix(1.0, LR_SOAKED, fine * wetness);
     // Its own shadows: a rim shades the print beside it, a heap its far side.
@@ -517,7 +517,7 @@ void main() {
     // inside its four metres was drawn a shade darker than the bed beyond: a dark square in the shallows.)
     float dry = covered ? 0.0 : 1.0 - wetness;
     float flat_ = min(P.a, 1.0);
-    albedo *= 1.0 - inPatch * dry * (0.4 * P.g + 0.07 * flat_);
+    albedo *= 1.0 - inPatch * dry * (0.4 * max(P.g, 0.0) + 0.07 * flat_);
     albedo *= 1.0 + 0.05 * inPatch * dry * (1.0 - flat_) * smoothstep(0.001, 0.006, abs(h));
   }
   float focus = water > 0.0 ? lrCaustics(vRel.xz, water, px) : 1.0, shade = lrCloudShadow(wxz);
