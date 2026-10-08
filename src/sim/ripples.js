@@ -7,6 +7,7 @@
 // A texture anchored to the world like the patch (a texel belongs to a place modulo L):
 //   r  how far the surface stands above or below where the sea has it (m)      g  how fast that is changing (m/s)
 //   b  whether something of you stood in this cell a moment ago (0..1)
+//   a  churn: water just pushed aside by a leg or a hand, full of bubbles for a second (0..1; drawn as foam)
 // The step is the plain wave equation with a little damping, twice a frame; ripples a few centimetres long
 // travel at about 0.3 m/s, and so do these.
 import * as THREE from 'three';
@@ -27,6 +28,8 @@ uniform vec2 uFlow;           // how the water is running over the ground here (
 uniform vec4 uDrop[${DROPS}]; // what falls in: where (detail coordinates), over what radius (m), how hard (m/s)
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
+// (How much of a cell's worth of water moved in one step counts as churned: a slow push makes none.)
+float lrChurn(float pushed) { return smoothstep(0.1, 0.3, pushed); }
 void main() {
   vec2 d = vUv * uL, q = mod(d - uCentre + 0.5 * uL, uL) - 0.5 * uL;
   float cell = uL / uN, e = 1.0 / uN;
@@ -39,6 +42,16 @@ void main() {
   // running past it piles up on the side it comes from and falls away behind.
   v += (m - c.b) * 0.1;
   v += 0.5 * dot(uFlow, vec2(xp.b - xm.b, zp.b - zm.b)) * uDt;
+  // A leg wading: the water it moves into has to go somewhere. The free water beside a cell your leg has just
+  // come into is pushed up (the bow wave in front of a shin), and beside one it has just left it falls in
+  // (the hollow behind): how the cells next to this one have changed since the last step says which.
+  vec2 w = q / uL + 0.5;
+  float mNear = 0.25 * (texture(tCross, w + vec2(e, 0.0)).r + texture(tCross, w - vec2(e, 0.0)).r + texture(tCross, w + vec2(0.0, e)).r + texture(tCross, w - vec2(0.0, e)).r);
+  float pushed = mNear - 0.25 * (xp.b + xm.b + zp.b + zm.b);
+  v += 2.6 * pushed * (1.0 - m);
+  // And it is churned: bubbles for a second where water was thrown aside fast, spreading a little as they fade.
+  float churn = max(c.a, 0.25 * (xp.a + xm.a + zp.a + zm.a)) * exp(-uDt * 1.6);
+  churn = max(churn, lrChurn(abs(pushed)) * (1.0 - m));
   for (int i = 0; i < ${DROPS}; i++) {
     if (uDrop[i].z <= 0.0) continue;
     vec2 o = mod(d - uDrop[i].xy + 0.5 * uL, uL) - 0.5 * uL;
@@ -50,7 +63,7 @@ void main() {
   float h = (c.r + v * uDt) * exp(-uDt * 0.25);
   // (Where you stand in it the surface cannot move; where there is no water there are no ripples.)
   h *= wet * (1.0 - 0.85 * m); v *= wet * (1.0 - 0.85 * m);
-  outColor = vec4(clamp(h, -0.03, 0.03), clamp(v, -1.0, 1.0), m, 1.0);
+  outColor = vec4(clamp(h, -0.03, 0.03), clamp(v, -1.0, 1.0), m, clamp(churn * wet, 0.0, 1.0));
 }`;
 
 const crossVertex = /* glsl */`
@@ -85,6 +98,13 @@ float lrRippleIn(vec2 d) {
   return 1.0 - smoothstep(0.4 * uRipple.z, 0.455 * uRipple.z, max(abs(q.x), abs(q.y)));
 }
 float lrRippleH(vec2 d) { return textureLod(tRipple, d / uRipple.z, 0.0).r; }
+float lrRippleChurn(vec2 d) { return textureLod(tRipple, d / uRipple.z, 0.0).a; }
+// (Where the water stands right against your skin: a ring a couple of centimetres wide round whatever of you cuts the surface.)
+float lrRippleRuff(vec2 d) {
+  vec2 u = d / uRipple.z; float e = 0.018 / uRipple.z, own = textureLod(tRipple, u, 0.0).b;
+  float near = 0.25 * (textureLod(tRipple, u + vec2(e, 0.0), 0.0).b + textureLod(tRipple, u - vec2(e, 0.0), 0.0).b + textureLod(tRipple, u + vec2(0.0, e), 0.0).b + textureLod(tRipple, u - vec2(0.0, e), 0.0).b);
+  return near * (1.0 - own);
+}
 // (The slope of the surface they add, and how sharply it bends each way: for reflections, and for the light on the bed.)
 vec2 lrRippleSlope(vec2 d) {
   float e = uRipple.z / float(textureSize(tRipple, 0).x);

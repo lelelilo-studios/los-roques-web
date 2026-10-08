@@ -230,13 +230,16 @@ void main() {
   var += 0.0012 * close * lrSaturate(weights.w * 200.0);
   // On the beach face the sheet lies on the sand, and an advancing front stands up from it.
   if (aboveStill > 0.0) slope += lrSheetSlope(bedSlope, aboveStill, sw);
-  float spray = 0.0;
+  float spray = 0.0, churned = 0.0;
   if (close > 0.0 && uRain > 0.01 && column > 0.004) slope += lrRainRings(spot + uCamMod.xy, uRain, spray) * close;
   if (close > 0.0 && uRipple.w > 0.5) {
     // The ripples you make, as the water has them (sim/ripples.js).
     vec2 dr = spot + uCamMod.xy;
     float rip = lrRippleIn(dr);
     if (rip > 0.0) slope += lrRippleSlope(dr) * rip * close;
+    // (And the water your legs have just pushed through is white with bubbles for a moment.)
+    // (And right against a leg it climbs the skin and breaks: a thin ruff of bubbles at the waterline, always.)
+    if (rip > 0.0) churned = max(lrRippleChurn(dr), 0.8 * smoothstep(0.05, 0.5, lrRippleRuff(dr))) * rip * close;
   } else if (close > 0.0) {
     // (Without that simulation: rings drawn by rule.) Rings spreading from where you wade: a short train of ripples that widens and fades.
     for (int i = 0; i < 6; i++) {
@@ -351,6 +354,14 @@ void main() {
     col = mix(col, 0.82 * tone * lit / PI, cover);
   }
   col += spray * close * lit / PI * 0.5;
+  if (churned > 0.01) {
+    // What your legs and hands have churned, and the ruff at your skin: small bubbles, a centimetre across and
+    // less, in a pattern of their own (the surf's rafts are metres wide: drawn with those, a ring two
+    // centimetres wide round a shin was nothing at all).
+    vec2 at = spot + uCamMod.xy;
+    float bubbles = 0.6 * lrNoise(at * 90.0 + vec2(uTime * 0.4, 0.0)) + 0.4 * lrNoise(at * 260.0 + 7.0);
+    col = mix(col, 0.8 * lit / PI, lrSaturate(churned * (0.3 + 1.2 * bubbles)));
+  }
   if (swash > 0.003) {
     // (The bubbles ride with the water: the pattern is read where the water came from.)
     float tilt = length(bedSlope);
