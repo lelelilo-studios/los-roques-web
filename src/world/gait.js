@@ -14,7 +14,7 @@
 const TAU = 2 * Math.PI;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v)), ease = t => t * t * (3 - 2 * t), wrapPi = a => Math.atan2(Math.sin(a), Math.cos(a));
 /** How far the heel is lifted at the end of a full push-off (radians), and how far each foot is turned out. */
-export const PUSH = 0.85, TOE_OUT = 0.12;
+export const PUSH = 1.05, TOE_OUT = 0.12;
 
 /**
  * Length of a pace (m) at a speed (m/s), walking the way `along` (1 forward, -1 back) and `across` (1 sideways)
@@ -23,7 +23,10 @@ export const PUSH = 0.85, TOE_OUT = 0.12;
  */
 export function paceFor(speed, along = 1, across = 0, crouch = 0, legs = 1) {
   const k = clamp((speed - 1.6) / 1.2, 0, 1), fwd = (0.72 + 0.33 * k * k * (3 - 2 * k)) * (0.55 + 0.45 * clamp(speed / 1.1, 0, 1));
-  return (along * along * fwd * (along < 0 ? 0.62 : 1) + across * across * 0.26) * (1 - 0.45 * crouch) * legs;
+  // (Going at a slant, the sideways share of each pace is held to what a side-step is: the pace is as long as fits
+  // inside an ellipse whose axes are the forward pace and the side-step.)
+  const ahead = fwd * (along < 0 ? 0.62 : 1), slant = 1 / Math.sqrt((along / ahead) ** 2 + (across / 0.26) ** 2 || 1);
+  return slant * (1 - 0.45 * crouch) * legs;
 }
 
 export class Gait {
@@ -100,6 +103,7 @@ export class Gait {
       if (airborne() || this.settling >= 0) turn = Math.max(turn, (TAU - stance) / (moving ? 0.6 : this.hurry ? 0.2 : 0.34) * dt);
       this.phase = before + turn;
       const rate = turn / dt;
+      this.rate = rate;
       feet.forEach((f, i) => {
         const u = (((before + turn + (i ? Math.PI : 0)) % TAU) + TAU) % TAU;
         // Lifted when its stance is over (if you are going anywhere, or it has a step to take); or at once if
@@ -155,10 +159,13 @@ export class Gait {
       if (f.down) {
         const dx = Math.sin(f.yaw), dz = -Math.cos(f.yaw);
         // How far ahead of you it stands, along the way it points. Just landed ahead: on the heel, the toes
-        // coming down. Left far behind: the heel has to come up, and it stands on its ball.
+        // coming down. Left far behind: the heel has to come up, and it stands on its ball. (Late and then fast,
+        // as it is in people: the heel is hardly off the ground when the other foot lands, a quarter of a
+        // metre on, and sixty degrees up as the toes leave. Rising early, it folded the trailing knee to forty
+        // degrees where a person's is at ten: tools/gaitcurves.mjs.)
         f.ahead = (f.x - c.x) * dx + (f.z - c.z) * dz;
         // (Squatting right down, most people's heels come off the ground: they sit on the balls of their feet.)
-        const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2, push = Math.max(PUSH * ease(clamp((-f.ahead - 0.15 * L) / (0.3 * L), 0, 1)), 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)));
+        const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2, push = Math.max(PUSH * clamp((-f.ahead - 0.18 * L) / (0.275 * L), 0, 1) ** 1.8, 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)));
         const [a, hgt] = t > 0.002 ? heelUp(t) : ballDown(push);
         wx = f.x + dx * a; wz = f.z + dz * a; up = hgt; pitch = t > 0.002 ? t : -push; yaw = f.yaw; planted = t > 0.002 ? 1 : 1 - 0.7 * push / PUSH * (1 - crouch);
         // (Set down on the ground under it, tipped to its slope.)
@@ -173,11 +180,16 @@ export class Gait {
         wx = sx + (ex - sx) * e; wz = sz + (ez - sz) * e;
         // (Carried forward lifted: a hand's breadth at a walk, more at a run, less for a small step.)
         // (Forward, that is; a step to the side or back only just clears the sand.)
-        const ways = moving ? Math.max(along, 0) ** 2 : 0, clear = (0.04 + 0.05 * ways + 0.05 * run) * (1 - 0.6 * crouch) * clamp(0.3 + d / 0.35, 0.3, 1);
-        up = from.ankle[1] + (h1 - from.ankle[1]) * e + clear * Math.sin(Math.PI * f.w) * (1 - 0.3 * f.w);
+        const ways = moving ? Math.max(along, 0) ** 2 : 0, clear = (0.04 + 0.03 * ways + 0.06 * run) * (1 - 0.6 * crouch) * clamp(0.3 + d / 0.35, 0.3, 1);
+        // (Highest a third of the way through the swing, and almost down again well before it lands: the leg
+        // straightens out in front of you before the heel touches.)
+        up = from.ankle[1] + (h1 - from.ankle[1]) * e + clear * 1.7 * Math.sin(Math.PI * f.w) * (1 - f.w);
         pitch = from.pitch + (strike - from.pitch) * ease(clamp((f.w - 0.15) / 0.8, 0, 1)); yaw = from.yaw + wrapPi(to.yaw - from.yaw) * e; planted = 0;
         ground = from.ground + (c.groundAt(to.x, to.z) - from.ground) * e;
         f.ahead = (wx - c.x) * fx + (wz - c.z) * fz;
+        // (Where its ankle will be against you as it lands, for the hips to come down to in time: you will have
+        // travelled on a little by then.)
+        { const left = (1 - f.w) * (TAU - stance) / Math.max(this.rate || 1e-3, 1e-3), lx = ex - c.x - c.vx * left, lz = ez - c.z - c.vz * left; f.land = [lx * rx + lz * rz, c.groundAt(to.x, to.z) - c.base + h1, -lx * fx - lz * fz]; }
       }
       f.pitch = pitch; f.planted = planted;
       // (What the foot stood at when it was lifted is kept in the world: ankle = [x, height above its ground, z].)
@@ -185,7 +197,7 @@ export class Gait {
       // (Its weight comes on to the sand over a tenth of a second, and off it as quickly: it does not drop into its print.)
       f.sunk = dt > 0 ? (f.sunk || 0) + ((c.sink || 0) * planted - (f.sunk || 0)) * (1 - Math.exp(-dt * 22)) : (f.sunk ?? (c.sink || 0) * planted);
       const px = wx - c.x, pz = wz - c.z;
-      return { ankle: [px * rx + pz * rz, ground - c.base + up - f.sunk, -px * fx - pz * fz], pitch, out: wrapPi(yaw - h), planted, down: f.down, ahead: f.ahead };
+      return { ankle: [px * rx + pz * rz, ground - c.base + up - f.sunk, -px * fx - pz * fz], pitch, out: wrapPi(yaw - h), planted, down: f.down, ahead: f.ahead, w: f.down ? 1 : f.w, land: f.down ? null : f.land };
     });
     // Your weight goes over the foot that bears it: the hips shift a couple of centimetres that way.
     // (Nobody stands quite still: standing a while, your weight drifts slowly from one foot towards the other.)
@@ -197,6 +209,6 @@ export class Gait {
     // and the hips turn with the stride.
     const apart = clamp((out[1].ahead - out[0].ahead) / (0.75 * legs), -1, 1), swing = 0.3 * clamp(speed / 1.3, 0, 1.5) ** 0.8 * (1 - 0.75 * crouch);
     // (`beat`: 1 as a foot comes down, 0 half way between two footfalls: the hips are lowest at the one, highest at the other.)
-    return { feet: out, shift: this.shift, arm: [apart * swing, -apart * swing], turn: 0.07 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), beat: c.hold ? 0 : Math.cos(this.phase) ** 2 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
+    return { feet: out, shift: this.shift, arm: [apart * swing, -apart * swing], turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase) ** 2 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
   }
 }

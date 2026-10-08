@@ -122,7 +122,11 @@ export class Walker {
     const crouch = this.crouched;
     if (onGround) speed *= 1 - 0.55 * crouch;
     // (Backwards you go at little more than half your pace, sideways at less: the feet cannot cross.)
-    if (onGround && wl > 0.01) { const a = input.fwd / Math.max(wl, 1), r = input.right / Math.max(wl, 1); speed *= (a * a * (a < 0 ? 0.55 : 1) + r * r * 0.42) / (a * a + r * r); }
+    // (Against the way your body faces, that is: going diagonally you turn towards where you are going, and walk.)
+    if (onGround && wl > 0.01) {
+      const hx = Math.sin(this.gaited ? this.heading : this.yaw), hz = -Math.cos(this.gaited ? this.heading : this.yaw), n = Math.hypot(wx, wz) || 1, a = (wx * hx + wz * hz) / n, r = (wx * -hz + wz * hx) / n;
+      speed *= (a * a * (a < 0 ? 0.55 : 1) + r * r * 0.42) / (a * a + r * r || 1);
+    }
     if (this.sitting || this.seated > 0.02) speed = 0;  // (seated, the same keys move your legs: see app.js)
     // (You do not start or stop at once: the first pace takes you up to speed, the last one brings you to rest.)
     const faster = wx * speed * this.vx + wz * speed * this.vz > this.vx * this.vx + this.vz * this.vz, k = 1 - Math.exp(-dt * (onGround ? (this.gaited ? (faster ? 4.2 : 6) : 9) : 3.5));

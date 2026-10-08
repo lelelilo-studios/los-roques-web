@@ -529,7 +529,7 @@ export async function start(canvas, onProgress = () => {}) {
     const heading = walker.heading, cy = Math.cos(heading), sy = Math.sin(heading), feetY = walker.eyeY - walker.body, deck = onDeck(walker.x, walker.z);
     const turn = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), state = walker.sitting ? 'sit' : 'stand';
     // (Put down somewhere, come out of the water, sat down or got up: your feet are under you.)
-    if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand')) { gait.reset(walker.x, walker.z, heading); you.dip = you.deep = you.deepK = you.shallow = 0; }
+    if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand')) { gait.reset(walker.x, walker.z, heading); you.dip = you.dipV = you.deep = you.deepS = you.peak = you.shallow = 0; }
     you.was = state; walker.placed = false;
     // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
     // or seated, on sand or in water no deeper than your knee. (Its frame is the body's, as last posed.)
@@ -556,25 +556,35 @@ export async function start(canvas, onProgress = () => {}) {
     // seat, a hand going to the sand behind you and your legs out in front; and the same undone. (`seated`: how
     // far along; the two poses are mixed, joint by joint.)
     const k = walker.seated, eased = k * k * (3 - 2 * k), sit = { sit: true, eye: walker.sit, recline: seated.lean, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: deck ? 0 : 0.008 + sunk, touch: reach, turn, look: walker.look };
+    // (Setting off, the hips come forward over the feet during the first pace, not in the first three frames; and
+    // only as far as you are going forward: sideways or backward they stay over your feet.)
+    if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
     if (k >= 1) body.pose(sit);
-    else body.pose({ gait: g, dip: you.dip, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
+    else body.pose({ gait: g, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
     const j = body.joints;
     // The hips ride down to each footfall and up over the standing leg, smoothly: as far down as the legs have
     // needed lately (`deep`), in time with the feet. (Left to the legs alone they came down all at once as the
     // heel reached out: five centimetres in four frames, a stamp at every pace.)
     if (dt > 0) {
-      // (The most they need goes as the square of the pace: remembered as that, it is right for the next pace
-      // even when you slow down or speed up.)
-      const need = j.dipWant ?? 0, span = (g.pace || 0.3) ** 2; you.deepK = Math.min(0.3, Math.max((you.deepK || 0) * Math.exp(-dt / 20), need / span)); you.deep = Math.min(0.1, you.deepK * span);
+      // (`deep`: the most they needed in the pace before this one. It was kept as a multiple of the pace squared
+      // and remembered for twenty seconds: the first short pace from standing set it to its limit, and the
+      // hips then rode ten centimetres down at every footfall, on knees bent to forty degrees.)
+      const need = j.dipWant ?? 0; you.peak = Math.max(you.peak || 0, need);
+      if (g.landed.length) { you.deep = you.peak; you.peak = need; you.since = 0; } else you.since = (you.since || 0) + dt;
+      if (you.since > 1) you.deep = need;
+      you.deep = Math.max(you.deep || 0, need);
+      // (Taken up gradually: sideways, one pace asks for more than the next, and the wave's height jumped at each footfall.)
+      you.deepS = (you.deepS || 0) + (you.deep - (you.deepS || 0)) * (1 - Math.exp(-dt * 7));
       // (`shallow`: the least they have needed lately, as you pass over the standing leg.)
       you.shallow = need < (you.shallow || 0) ? need : (you.shallow || 0) + (need - (you.shallow || 0)) * Math.min(1, dt / 0.6);
-      const want = j.dipWant === undefined ? 0 : Math.max(need, you.shallow + (you.deep - you.shallow) * (1 - (1 - (g.beat || 0)) ** 2));      // (down a moment before the heel, and still down just after)
-      you.dip += (want - you.dip) * (1 - Math.exp(-dt * (want > you.dip ? 45 : 25)));
+      const want = j.dipWant === undefined ? 0 : Math.max(need, you.shallow + (Math.max(you.deepS, you.shallow) - you.shallow) * (g.beat || 0));
+      // (Followed as a sprung weight follows, not at once: quicker down, when a leg needs it, than up.)
+      { const w = want > you.dip ? 30 : 22; you.dipV = (you.dipV || 0) + (w * w * (want - you.dip) - 2 * w * (you.dipV || 0)) * dt; you.dip = Math.max(0, you.dip + you.dipV * dt); }
     }
     // Where that leaves the body's frame in the world, and your eye. (Your weight is where the walker is.)
     Object.assign(you, { on: true, home: j.home, x: walker.x - (j.home[0] * cy - j.home[2] * sy), y: feetY, z: walker.z - (j.home[0] * sy + j.home[2] * cy), cy, sy, heading, folded, eyeUp, reachable });
     // (Asked for less movement: your eye keeps its height and its line; the body under it still walks.)
-    const calm = 1 - walker.bobAmount, ex = j.eye[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = j.eye[1] + calm * 0.72 * you.dip, ez = j.eye[2];
+    const calm = 1 - walker.bobAmount, ex = j.eye[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = j.eye[1] + calm * 0.92 * you.dip, ez = j.eye[2];
     if (!folded) walker.head = { x: you.x + ex * cy - ez * sy, y: feetY + ey, z: you.z + ex * sy + ez * cy };
     walker.roll = walker.sitting ? 0 : 0.22 * g.shift * walker.bobAmount;
     posedAt = frames;
