@@ -63,6 +63,7 @@ uniform vec3 uTone;         // what the skin's own colour is multiplied by: her 
 uniform vec3 uClothColour;
 uniform sampler2D tSkinState;  // over the body's surface: r = how wet, g = how much sand is on it (sim/skin.js)
 uniform float uWaterY;      // the height of the sea's surface where you stand (far below you when you are not in it)
+uniform float uShowUnder;   // 1 = hand what is under water to the water pass (0 when the camera is under water itself)
 uniform float uShowHead;    // 1 = draw the head too (you are being looked at from outside)
 // (Until the skin has a map of its own for what is on it: wet as far up as the sea has stood round you, the hand
 // that went into it, sand on wet feet and on the hand. The same numbers the figure of tubes shows.)
@@ -171,16 +172,15 @@ void main() {
   float fresnel = 0.028 + 0.972 * pow(1.0 - lrSaturate(dot(n, V)), 5.0);
   col += uSunE * sun * lrSaturate(nl) * (0.35 * pow(lrSaturate(dot(n, h)), 28.0) + 0.9 * pow(lrSaturate(dot(n, h)), 140.0)) * 0.06 * (1.0 - 0.6 * cloth) * (1.0 - stuck) + fresnel * uSkyE / PI * (0.25 + 0.75 * soaked) * (1.0 - cloth) * (1.0 - stuck);
   col += uSunE * sun * lrSaturate(nl) * soaked * (1.0 - cloth) * 0.5 * pow(lrSaturate(dot(n, h)), 400.0);
-  // What of you is under water. Seen through the surface, clear as it is, it is a little greener and flatter
-  // (water takes the red first), the sun's light dances on it in a net as it does on the bed, and where the
-  // skin cuts the surface the water climbs it: a bright thread, the one sure sign of where the surface is.
-  float below = uWaterY - vRel.y, under = smoothstep(0.0, 0.015, below);
-  if (under > 0.0) {
-    vec2 w = uCamMod.xy + vRel.xz;
-    float net = lrNoise(w * 17.0 + vec2(uTime * 0.7, -uTime * 0.5)) * lrNoise(w * 23.0 - vec2(uTime * 0.45, uTime * 0.6));
-    col *= mix(vec3(1.0), vec3(0.72, 0.9, 0.95) * (0.74 + 2.2 * net * lrSaturate(uSunDir.y * 2.0)), under * lrSaturate(0.6 + below * 1.5));
-  }
+  // Where skin cuts the surface the water climbs it: a bright thread, the one sure sign of where the surface is.
+  float below = uWaterY - vRel.y;
   col += (1.0 - smoothstep(0.0, 0.007, abs(below))) * (uSkyE + 0.25 * uSunE * lrSaturate(uSunDir.y)) / PI * 0.22;
+  // What of you is under water is handed on as the seabed is: what it gives back of the light that falls on
+  // it, and how deep it lies. The water (water.js) then does with your legs what it does with the sand beside
+  // them: bends the view of them at the surface, colours them by the depth of water over them, and lays its
+  // own glitter across them. (Drawn as lit skin, like the rest of you, the water simply painted over them:
+  // below the knee your legs were gone.)
+  if (below > 0.0 && uShowUnder > 0.5) { outColor = vec4(col * PI / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), below); return; }
   outColor = vec4(col, -1000.0);
 }`;
 
@@ -276,7 +276,7 @@ export class Figure {
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.FrontSide, defines: { LR_SHADOW_TAPS: shadowTaps },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
         uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, uHandWetL: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSandL: { value: 0 }, ...state,
-        uShowHead: { value: 0 }, uWaterY: { value: -1e9 }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
+        uShowHead: { value: 0 }, uShowUnder: { value: 1 }, uWaterY: { value: -1e9 }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
     // Her hair, tied back: over the skull from the hairline to the nape, gathered at the back of the crown and

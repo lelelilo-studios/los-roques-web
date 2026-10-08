@@ -670,7 +670,7 @@ export async function start(canvas, onProgress = () => {}) {
         body.joints.wrists.forEach((w, i) => { const t = body.joints.fingertips[i] || w; put(4 + i, [(w[0] + t[0]) / 2, (w[1] + t[1]) / 2, (w[2] + t[2]) / 2], 0.05); });
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
         figure.mesh.visible = !you.folded; figure.setPose(figureRig.pose(body.joints, you.eyeUp), body.joints.eye ? body.joints.eye[1] : you.eyeUp); figure.place(offX, you.y, offZ, you.heading);
-        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = walker.depth > 0.01 ? walker.surf : -1e9; figure.hair.visible = !!rig.outside && !you.folded;
+        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = walker.depth > 0.01 ? walker.surf : -1e9; figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = figureRig.hand(1);
         if (body.joints.touchingL && !you.folded) body.joints.touchingL.palm = figureRig.hand(0);
