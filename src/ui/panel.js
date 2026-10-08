@@ -122,7 +122,7 @@ export function buildWalkHud(root, onLeave, onSound, soundOn) {
       : el('p', { class: 'walk-hint' },
         el('span', { text: 'Click to look around · W A S D walk · Shift run · Tab back to the air' }), el('br'),
         el('span', { text: 'C crouch (or dive) · X sit down or get up · Space come up' }), el('br'),
-        el('span', { text: 'Crouched or seated: hold the mouse button to take sand or water, let go and it runs out · wheel or Q / E close and part your fingers' })),
+        el('span', { text: 'Crouched or seated: hold the mouse button to take sand or water, let go and it runs out · the other button (or F): your left hand · wheel or Q / E close and part your fingers' })),
     el('button', { class: 'chip walk-leave', text: 'Back to the air', onclick: onLeave }),
     el('button', { class: 'chip walk-sound', text: soundOn ? 'Sound on' : 'Sound off', 'aria-pressed': String(!!soundOn), title: 'Waves, wind and your steps', onclick: e => onSound(e.currentTarget.getAttribute('aria-pressed') !== 'true') }),
     el('div', { class: 'walk-pad' },

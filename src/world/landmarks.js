@@ -138,7 +138,9 @@ void main() {
 export function createObjectMaterial(shadowTaps = 8, smooth = false) {
   return new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader, fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, ...(smooth ? { LR_SMOOTH: 1 } : {}) },
-    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet', 'uWind'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 } }),
+    uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, 'uWet', 'uWind'], { uNight: { value: 0 }, uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 },
+      // (your left hand's: the body of tubes does not show them, the real one does)
+      uHandWetL: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSandL: { value: 0 } }),
   });
 }
 

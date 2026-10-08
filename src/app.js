@@ -49,7 +49,7 @@ import { buildPanel, buildWalkHud } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
-const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false, open: 0.3, sit: false };
+const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false, hand2: false, open: 0.3, sit: false };
 
 export async function start(canvas, onProgress = () => {}) {
   const errors = [];
@@ -220,7 +220,7 @@ export async function start(canvas, onProgress = () => {}) {
   const flow = [0, 0];
   const figureReady = tierName === 'low' || params.tubes ? Promise.resolve(false) : loadFigure(manifest.compressed === 'gzip').then(data => {
     const u = body.mesh.material.uniforms;
-    figure = new Figure(data, tier.fp.shadowTaps || 4, { uBodyWet: u.uBodyWet, uBodySand: u.uBodySand, uHandWet: u.uHandWet, uHandSand: u.uHandSand }); figureRig = new FigureRig(data.info);
+    figure = new Figure(data, tier.fp.shadowTaps || 4, { uBodyWet: u.uBodyWet, uBodySand: u.uBodySand, uHandWet: u.uHandWet, uHandSand: u.uHandSand, uHandWetL: u.uHandWetL, uHandSandL: u.uHandSandL }); figureRig = new FigureRig(data.info);
     const p = figureRig.proportions, was = walker.stand;
     setProportions(p);
     // (Squatting on her heels, leaning forward a little, her eyes are at about half her height.)
@@ -245,8 +245,10 @@ export async function start(canvas, onProgress = () => {}) {
     return a < R * 1.02 + 0.02 * Math.min(1, R * 100);
   };
   // Your right hand, taking up sand and water and letting them run out between the fingers (world/hand.js).
-  const hand = new Hand({ spray, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch,
-    ring: (x, z, when, strength) => (ripples ? ripples.drop(x, z, when, strength, 0.022) : shared.uRing.value[rings++ % 6].set(wrap64(x), wrap64(z), when, strength)) });
+  const handParts = { spray, sound: { touch: (kind, how, speed) => sound.touch(kind, how, speed) }, shadowTaps: tier.fp.shadowTaps, patch: () => patch,
+    ring: (x, z, when, strength) => (ripples ? ripples.drop(x, z, when, strength, 0.022) : shared.uRing.value[rings++ % 6].set(wrap64(x), wrap64(z), when, strength)) };
+  // (Your right hand: the mouse button. Your left: the other button, or F. Each takes, holds and pours its own.)
+  const hand = new Hand(handParts), handL = new Hand({ ...handParts, side: -1 });
   // How wet you are: `high` is as far up as the sea has stood round you lately (drying), `now` the water you stand in.
   const soak = { high: 0, amount: 0, now: 0, nowAmount: 0, sand: 0 };
   landmarks.material.defines.LR_SHADOW_TAPS = tier.fp.shadowTaps;
@@ -260,7 +262,7 @@ export async function start(canvas, onProgress = () => {}) {
   shared.uTreesNear.value = tier.fp.life ? 1 : 0;
   lifeGroup.matrixAutoUpdate = false;
   for (const kind of life) lifeGroup.add(kind.mesh);
-  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying);
+  opaque.add(terrain.mesh, landmarks.group, boats.group, birds.group, body.mesh, body.headMesh, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying);
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
@@ -420,7 +422,7 @@ export async function start(canvas, onProgress = () => {}) {
      */
     setWalk(on, pose = null, instant = false) {
       // (Wherever you are put down, your hand is at your side and the sand there is as you found it.)
-      hand.reset(); patch?.reset(); ripples?.reset(); sunk = 0; Object.assign(seated, { draw: 0, splay: 0, wiggle: 0 });
+      hand.reset(); handL.reset(); patch?.reset(); ripples?.reset(); sunk = 0; Object.assign(seated, { draw: 0, splay: 0, wiggle: 0 });
       if (!on) {
         sound.stop();
         if (rig.mode === 'walk') { rig.setMode('orbit'); walkInput?.release(); }
@@ -536,7 +538,7 @@ export async function start(canvas, onProgress = () => {}) {
     const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
     const reachable = { want: !!input.hand, open: input.open ?? 0.3, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
       x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
-    const reach = hand.plan(dt, reachable);
+    const reach = hand.plan(dt, reachable), reachL = handL.plan(dt, { ...reachable, want: !!input.hand2 });
     // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
     const firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5, sink = deck ? 0 : (firm ? 0.005 : patch ? 0.018 : 0.011) + sunk;
     const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting, time: clock.time });
@@ -555,12 +557,12 @@ export async function start(canvas, onProgress = () => {}) {
     // Sitting down and getting up are movements, a second long: from a squat over your feet back on to your
     // seat, a hand going to the sand behind you and your legs out in front; and the same undone. (`seated`: how
     // far along; the two poses are mixed, joint by joint.)
-    const k = walker.seated, eased = k * k * (3 - 2 * k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: deck ? 0 : 0.008 + sunk, touch: reach, turn, look: walker.look };
+    const k = walker.seated, eased = k * k * (3 - 2 * k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: deck ? 0 : 0.008 + sunk, touch: reach, touchL: reachL, turn, look: walker.look };
     // (Setting off, the hips come forward over the feet during the first pace, not in the first three frames; and
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
     if (k >= 1) body.pose(sit);
-    else body.pose({ gait: g, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
+    else body.pose({ gait: g, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
     const j = body.joints;
     // The hips ride down to each footfall and up over the standing leg, smoothly: as far down as the legs have
     // needed lately (`deep`), in time with the feet. (Left to the legs alone they came down all at once as the
@@ -668,14 +670,17 @@ export async function start(canvas, onProgress = () => {}) {
         figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = figureRig.hand(1);
+        if (body.joints.touchingL && !you.folded) body.joints.touchingL.palm = figureRig.hand(0);
       }
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
       // (The breeze where your hand is: a fifth of what blows at mast height, less down near the sand in your own lee.)
       const breeze = shared.uWind.value, lee = 0.2 * breeze.z * (1 - 0.45 * walker.crouched);
+      const doing = { wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] };
+      handL.act(dt, { ...you.reachable, want: !!lastInput.hand2, ...doing });
       hand.act(dt, { ...you.reachable, wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] });
     }
     else if (walking) {
-      if (hand.ik > 0 || hand.amount > 0) hand.reset();          // (swimming: the hand has other work)
+      if (hand.ik > 0 || hand.amount > 0 || handL.ik > 0 || handL.amount > 0) { hand.reset(); handL.reset(); }          // (swimming: the hands have other work)
       for (const c of shared.uContact.value) c.w = 0;
       const under = walker.diving ? 1 : 0;
       body.pose({ swim: true, stroke: walker.stroke, under }); body.place(0, walker.eyeY + walker.bob, 0, walker.yaw, under * walker.look);
@@ -700,7 +705,7 @@ export async function start(canvas, onProgress = () => {}) {
     // The keys for what you are doing, said the first time you do it (the opening hint has faded by then).
     if (params.ui && !params.freeze && walking && standing) {
       if (walker.sitting && !told.sit) { told.sit = true; notice('Seated: S draws your legs up, W stretches them out · A D move your feet · Space curls your toes · the mouse button works your right hand · X gets you up', null, 10); }
-      else if (!walker.sitting && walker.crouched > 0.9 && !told.crouch) { told.crouch = true; notice('Hold the mouse button to take a handful of sand or water. Let go and it runs out between your fingers · the wheel (or Q / E) closes and parts them', null, 10); }
+      else if (!walker.sitting && walker.crouched > 0.9 && !told.crouch) { told.crouch = true; notice('Hold the mouse button to take a handful of sand or water. Let go and it runs out between your fingers · the other button (or F) does the same with your left hand · the wheel (or Q / E) closes and parts them', null, 12); }
     }
     // How the water runs past you: up the beach with each wave, more slowly back down. Standing in it, the
     // backwash draws the sand from under your heels and you sink, a centimetre or two; a step frees you.
@@ -745,7 +750,7 @@ export async function start(canvas, onProgress = () => {}) {
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
       const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     graph.render(opaque, water.mesh, rig.camera, clouds);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
@@ -896,6 +901,7 @@ export async function start(canvas, onProgress = () => {}) {
     /** For tests: whether you have the real body, and its size. */
     figure: () => (figure ? { vertices: figure.info.vertices, eyeHeight: figure.info.eyeHeight, stand: walker.stand, crouch: walker.crouch } : null),
     /** For tests: what your hand is doing (see world/hand.js). */
+    handL: () => ({ ik: handL.ik, lift: handL.lift, amount: handL.amount, kind: handL.kind, down: handL.down, wet: handL.wet, sand: handL.sand }),
     hand: () => ({ ik: hand.ik, lift: hand.lift, grip: hand.grip, amount: hand.amount, open: hand.open, rates: hand.rates.slice(), kind: hand.kind, down: hand.down, marks: shared.uTouchCount.value, wet: hand.wet, sand: hand.sand, heap: hand.mesh.visible,
       stamps: shared.uTouchInfo.value.slice(0, shared.uTouchCount.value).map((v, i) => ({ kind: v.y, a: v.z, b: v.w, age: clock.time - v.x, x: shared.uTouchSeg.value[i].x, z: shared.uTouchSeg.value[i].y })) }),
     shadowsOff(off) { shadows.enabled = !off && tier.fp.shadowMap > 0; },

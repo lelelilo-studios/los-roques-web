@@ -341,10 +341,10 @@ export function footfall(stride) {
  * @param {number} [p.draw]  0 legs stretched out, heels in the sand .. 1 knees drawn up, feet flat
  * @param {number} [p.splay]  0 feet a hip's width apart .. 1 wide
  * @param {number} [p.wiggle]  how far the toes are curled up (radians; negative: gripping)
- * @param {object} [p.touch]  the right hand at work, as for poseBody
+ * @param {object} [p.touch]  the right hand at work, as for poseBody; `touchL`: the left
  * @param {number} [p.hop]  0..1: heels and hands lifted clear of the sand (a scoot round on your seat)
  */
-export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0, look = 0, recline = null, hop = 0 }) {
+export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, touchL = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0, look = 0, recline = null, hop = 0 }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   t.n = 0; h.n = 0;
   // The hip joints stand a hand's breadth over the sand you sit on; the trunk leans back from them as far as
@@ -376,16 +376,17 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]];
     const wrist = side < 0 ? [sh[0] - 0.12, 0.03 + 0.03 * hop, hip[2] + 0.2] : [sh[0] + 0.1, 0.03 + 0.03 * hop, hip[2] - 0.12];
     let elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * 0.7, 0.1, 1]);
-    const reaching = touch && side > 0 && touch.amount > 0 ? touch.amount * touch.amount * (3 - 2 * touch.amount) : 0;
+    const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? work.amount * work.amount * (3 - 2 * work.amount) : 0;
     let point = null, facing = null;
     if (reaching) {
-      const to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      const touch = work, to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
       // (You lean over towards what you reach for.)
-      if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } sh[0] += 0.03 * reaching * (1 - up);
+      if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } sh[0] += side * 0.03 * reaching * (1 - up);
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
-      elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [0.75 - 0.15 * up, 0.25 - 0.95 * up, 0.6 - 0.25 * up]);
+      // (The way the elbow bends goes over from the resting arm's to the working arm's as the hand sets out: it does not flip.)
+      { const q = Math.min(1, reaching * 2.5), mixed = (a, b) => a + (b - a) * q; elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [mixed(side * 0.7, side * (0.75 - 0.15 * up)), mixed(0.1, 0.25 - 0.95 * up), mixed(1, 0.6 - 0.25 * up)]); }
       point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, touch.dir[1] * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
       facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
     }
@@ -394,12 +395,12 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     if (!detail) t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
     // (At rest a hand lies flat on the sand, fingers pointing out and back on the left, forward on the right.)
     const flat = side < 0 ? unit([-0.55, 0, 0.83]) : unit([0.25, 0, -0.97]), mix = (a, b) => unit([a[0] + (b[0] - a[0]) * reaching, a[1] + (b[1] - a[1]) * reaching, a[2] + (b[2] - a[2]) * reaching]);
-    const curl = point ? 0.12 + ((touch.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (touch.spread ?? 0) * reaching : 0.25;
+    const curl = point ? 0.12 + ((work.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (work.spread ?? 0) * reaching : 0.25;
     if (detail) {
       const tip = t.hand(wrist, point ? mix(flat, point) : flat, point ? mix([0, -1, 0], facing) : [0, -1, 0], side, curl, SKIN, spread, elbow, sleeve);
       joints.fingertips.push(tip);
       joints.hands.push({ ...t.palm, curl, spread });
-      if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching, palm: t.palm };
+      if (point) joints[side > 0 ? 'touching' : 'touchingL'] = { tip, wrist: wrist.slice(), amount: reaching, palm: { ...t.palm } };
     } else {
       const tip = [wrist[0] + flat[0] * 0.17, wrist[1], wrist[2] + flat[2] * 0.17];
       t.tube(elbow, wrist, [0.036, 0.04], [0.026, 0.03], SKIN);
@@ -458,8 +459,7 @@ export function mixPoses(a, b, k) {
   out.feet = a.feet.map((f, i) => ({ pitch: num(f.pitch, b.feet[i].pitch), out: num(f.out, b.feet[i].out), planted: num(f.planted, b.feet[i].planted), toes: num(f.toes, b.feet[i].toes) }));
   out.hands = a.hands.map((h, i) => { const g = b.hands[i] || h; return { ...h, f: dir(h.f, g.f), N: dir(h.N, g.N), curl: num(h.curl, g.curl), spread: num(h.spread, g.spread) }; });
   for (const name of ['pelvis', 'headTurn', 'headNod', 'crouch', 'lean']) out[name] = num(a[name], b[name]);
-  const t = (k < 0.5 ? a : b).touching;
-  if (t) out.touching = { ...t, tip: at(k < 0.5 ? a : b, t.tip), wrist: at(k < 0.5 ? a : b, t.wrist) };
+  for (const name of ['touching', 'touchingL']) { const from = k < 0.5 ? a : b, t = from[name]; if (t) out[name] = { ...t, tip: at(from, t.tip), wrist: at(from, t.wrist) }; else delete out[name]; }
   return out;
 }
 
@@ -508,6 +508,7 @@ export function reach(hip, target, l1, l2, bend) {
  *   `at` = where the tip of the middle finger goes when it is down on the ground (this frame of reference), the
  *   hand laid flat; `lift` 0..1 of the way from there to being held up before you: then `wrist` (where), `dir`
  *   (the way the hand points), `palm` (the way the palm faces); `curl` of the fingers (0 flat .. 1) and `spread`
+ * @param {object | null} [p.touchL]  your left hand at work, the same way (the result has `touchingL` for it)
  * @param {object | null} [p.gait]  your feet as the gait has them (gait.js Gait.update): then `phase`, `pace`,
  *   `slope` and `sink` are not used. The feet are where they are on the ground; the body stands over them.
  * @param {number} [p.dip]  with `gait`: how far the hips have come down for the legs to reach the feet (m; the
@@ -519,7 +520,7 @@ export function reach(hip, target, l1, l2, bend) {
  * The result's `home` is where the gait's origin (the ground under your weight) is in this frame, and `eye`
  * where your eye really is (it goes down with the hips, and round the neck as the head turns).
  */
-export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0, pace = null, sink = 0, touch = null, gait = null, dip = 0, turn = 0, carry = null }) {
+export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0, pace = null, sink = 0, touch = null, touchL = null, gait = null, dip = 0, turn = 0, carry = null }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   // (You lean into a hill, and back coming down one.)
   const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy)), lean = 0.08 * Math.min(stride, 1.6) + 0.8 * crouch + 0.35 * Math.max(-0.5, Math.min(0.7, slope[0]));
@@ -618,17 +619,18 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     }
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid
     // flat, fingers pointing away from you, the wrist a hand's length behind the fingertip and just above it.
-    const reaching = touch && side > 0 && touch.amount > 0 ? touch.amount * touch.amount * (3 - 2 * touch.amount) : 0;
+    // (Either hand: `touch` is the right one's work, `touchL` the left's.)
+    const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? work.amount * work.amount * (3 - 2 * work.amount) : 0;
     let point = null, facing = null;
     if (reaching) {
-      const to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
+      const touch = work, to = touch.at, away = unit([to[0] - sh[0], 0, to[2] - sh[2]]), curl = touch.curl ?? 0.2, lift = touch.wrist ? Math.min(1, Math.max(0, touch.lift ?? 0)) : 0, up = lift * lift * (3 - 2 * lift);
       sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.12 * reaching * (1 - up);
       // (Down on the ground: curled fingers reach less far and go down into what they touch, so the wrist comes
       // nearer and higher. Held up: the wrist where it is asked for.)
       const want = [to[0] - away[0] * (0.178 - 0.05 * curl), to[1] + 0.022 + 0.05 * curl, to[2] - away[2] * (0.178 - 0.05 * curl)];
       if (up > 0) for (let i = 0; i < 3; i++) want[i] += (touch.wrist[i] - want[i]) * up;
       for (let i = 0; i < 3; i++) wrist[i] += (want[i] - wrist[i]) * reaching;
-      elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, [0.75 - 0.15 * up, 0.25 - 0.95 * up, 0.6 - 0.25 * up]);
+      { const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, [side * (0.75 - 0.15 * up), 0.25 - 0.95 * up, 0.6 - 0.25 * up]), q = Math.min(1, reaching * 2.5); elbow = [elbow[0] + (bent[0] - elbow[0]) * q, elbow[1] + (bent[1] - elbow[1]) * q, elbow[2] + (bent[2] - elbow[2]) * q]; }
       point = up > 0 ? unit([away[0] + (touch.dir[0] - away[0]) * up, (touch.dir[1]) * up, away[2] + (touch.dir[2] - away[2]) * up]) : away;
       facing = up > 0 ? unit([touch.palm[0] * up, -1 + (touch.palm[1] + 1) * up, touch.palm[2] * up]) : [0, -1, 0];
     }
@@ -644,11 +646,11 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       const rest = gait ? [-side * (1 - 0.45 * squat), -0.6 * wade - 0.25 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.85 * squat] : [-side * (1 - 0.8 * squat), -0.6 * wade - 0.75 * squat, 0.35 * (1 - wade) * (1 - squat) + 0.6 * squat], loose = 0.55 - 0.3 * wade - 0.15 * squat;
       // (Hanging from the knee, the hand points down and a little forward and inward, whatever way the forearm lies.)
       const hang = gait ? unit([fore[0] * (1 - squat) - side * 0.18 * squat, fore[1] * (1 - squat) - 0.9 * squat, fore[2] * (1 - squat) - 0.4 * squat]) : unit([fore[0] * (1 - squat), fore[1] * (1 - squat) - 0.55 * squat, fore[2] * (1 - squat) - 0.83 * squat]);
-      const tip = t.hand(wrist, point ? mix(hang, point) : hang, point ? mix(rest, facing) : rest, side, point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (touch.spread ?? 0) * reaching : 0, elbow, sleeve);
+      const tip = t.hand(wrist, point ? mix(hang, point) : hang, point ? mix(rest, facing) : rest, side, point ? loose + ((work.curl ?? 0.2) - loose) * reaching : loose, SKIN, point ? (work.spread ?? 0) * reaching : 0, elbow, sleeve);
       joints.fingertips.push(tip);
       // (How the hand is held: the frame of its palm, how far the fingers are curled and parted.)
-      joints.hands.push({ ...t.palm, curl: point ? loose + ((touch.curl ?? 0.2) - loose) * reaching : loose, spread: point ? (touch.spread ?? 0) * reaching : 0 });
-      if (point) joints.touching = { tip, wrist: wrist.slice(), amount: reaching, palm: t.palm };
+      joints.hands.push({ ...t.palm, curl: point ? loose + ((work.curl ?? 0.2) - loose) * reaching : loose, spread: point ? (work.spread ?? 0) * reaching : 0 });
+      if (point) joints[side > 0 ? 'touching' : 'touchingL'] = { tip, wrist: wrist.slice(), amount: reaching, palm: { ...t.palm } };
     } else {
       t.tube(elbow, wrist, [0.036, 0.04], [0.026, 0.03], SKIN);
       t.tube(wrist, tip, [0.036, 0.018], [0.03, 0.012], SKIN);

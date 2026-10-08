@@ -303,7 +303,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
   const typing = e => /INPUT|SELECT|TEXTAREA/.test(e.target?.tagName || '');
   const key = e => (e.code === 'Space' ? ' ' : e.key.length === 1 ? e.key.toLowerCase() : e.key);
   const turn = (dx, dy, rate) => { walker.yaw += dx * rate; walker.look = Math.min(1.5, Math.max(-1.5, walker.look - dy * rate)); };
-  const grasp = { open: 0.3, at: performance.now() };
+  const grasp = { open: 0.3, at: performance.now(), left: false };
   const lock = () => {
     if (!el.requestPointerLock || document.pointerLockElement === el) return;
     // Raw mouse movement where the browser offers it; some refuse the option, some refuse the lock: both are fine.
@@ -317,10 +317,10 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
       if (k === 'Tab' || (k === 'Escape' && document.pointerLockElement !== el)) { e.preventDefault(); onLeave(); return; }
       // (Ctrl is not among them, though many crouch with it by habit: with W, forward, it is the browser's "close
       // this tab", which no page can prevent. Crouching or diving while going forward closed the page.)
-      if (['w', 'a', 's', 'd', 'c', 'q', 'e', 'x', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
+      if (['w', 'a', 's', 'd', 'c', 'q', 'e', 'x', 'f', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
     }),
     on(window, 'keyup', e => held.delete(key(e))),
-    on(window, 'blur', () => held.clear()),
+    on(window, 'blur', () => { held.clear(); grasp.left = false; }),
     on(el, 'click', () => { if (active()) lock(); }),
     // The wheel parts your fingers (away from you) or brings them together: how fast what you hold runs out.
     on(el, 'wheel', e => { if (!active()) return; e.preventDefault(); grasp.open = Math.min(1, Math.max(0, grasp.open - Math.sign(e.deltaY) * Math.min(0.12, Math.abs(e.deltaY) / 600 + 0.04))); }, { passive: false }),
@@ -328,8 +328,13 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
     on(el, 'pointerdown', e => {
       if (!active()) return;
       if (e.pointerType === 'touch' && e.clientX < el.clientWidth * 0.45 && !touch.stick) touch.stick = { id: e.pointerId, x: e.clientX, y: e.clientY };
+      else if (e.pointerType === 'mouse' && e.button === 2) grasp.left = true;                 // (the other mouse button: your left hand)
       else if (!touch.look) touch.look = { id: e.pointerId, x: e.clientX, y: e.clientY, touch: e.pointerType === 'touch' };
     }),
+    // (With one button already down the second does not come as a pointer event: the mouse's own events say.)
+    on(el, 'mousedown', e => { if (active() && e.button === 2) grasp.left = true; }),
+    on(window, 'mouseup', e => { if (e.button === 2) grasp.left = false; }),
+    on(el, 'contextmenu', e => { if (active()) e.preventDefault(); }),
     on(el, 'pointermove', e => {
       if (!active()) return;
       if (touch.stick?.id === e.pointerId) {
@@ -362,6 +367,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
         down: held.has('c') || pressed.has('down'), up: held.has(' ') || pressed.has('up'),
         sit: held.has('x') || pressed.has('sit'),      // sit down on the sand, or get up
         open: grasp.open,                                // how far your fingers are parted, 0 together .. 1
+        hand2: grasp.left || held.has('f'),              // the other mouse button (or F): your left hand does the same
         hand: !!touch.look,                              // the mouse button (or a finger on the right of the screen) held: crouched, your hand goes down to touch
       };
     },

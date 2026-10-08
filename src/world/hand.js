@@ -177,7 +177,9 @@ export class Hand {
    * @param {(x: number, z: number, when: number, strength: number) => void} o.ring  a ring on the water
    * @param {number} o.shadowTaps
    */
-  constructor({ spray, sound, ring, shadowTaps = 8, patch = null }) {
+  /** @param {object} o  ...; side: 1 your right hand (the default), -1 your left */
+  constructor({ spray, sound, ring, shadowTaps = 8, patch = null, side = 1 }) {
+    this.side = side;
     /** `patch`: () => the sand round you as real sand (sim/patch.js), or null: then what the hand does is drawn as stamps. */
     Object.assign(this, { spray, sound, ring, patch: patch || (() => null) });
     // What is in the palm: a low dome, sized and laid in the hand every frame.
@@ -240,7 +242,7 @@ export class Hand {
       amount: 0,          // how much of a handful it holds
       owed: 0,            // grains not yet let go (a fraction of one carried over)
       empty: 0,           // how long it has been empty, held up
-      tip: null, from: null, speed: 0, mark: -1, marks: 0, heap: null, spot: null,
+      tip: null, from: null, speed: 0, mark: -1, heap: null, spot: null,
       spoke: 0, ringed: 0, wet: 0, sand: 0, floor: 0, at: null,
       pushed: -1, epoch: 0, bounce: 0, lastK: null, pour: null, tipped: 0,
     });
@@ -248,16 +250,17 @@ export class Hand {
     if (this.streams) this.streams.visible = false;
     if (this.lying) this.lying.visible = false;
     this.sim?.empty(); this.open = 0.3; this.real = false;
-    shared.uTouchCount.value = 0; shared.uLeg.value[2].z = 0;
+    // (The marks in the sand are one list for both hands.)
+    Hand.marks = 0; shared.uTouchCount.value = 0; if (this.side > 0) shared.uLeg.value[2].z = 0;
     if (this.mesh) this.mesh.visible = false;
   }
 
   /** A new mark in the sand at (x, z): returns its place in the list. */
   stamp(x, z, time, kind, a, b) {
-    const i = this.marks++ % this.count;
+    const i = Hand.marks++ % this.count;
     shared.uTouchSeg.value[i].set(wrap64(x), wrap64(z), wrap64(x), wrap64(z));
     shared.uTouchInfo.value[i].set(time, kind, a, b);
-    shared.uTouchCount.value = Math.min(this.marks, this.count);
+    shared.uTouchCount.value = Math.min(Hand.marks, this.count);
     return i;
   }
 
@@ -291,7 +294,7 @@ export class Hand {
     // press on it; in water the hand goes to the bottom if that is within a hand's length, or under by that much.)
     // (Sitting, your legs lie where it would go: it works beside your right thigh.)
     // (`seated`: how far you are on to your seat, 0..1: the hand's places go over from the one posture's to the other's, not at a jump.)
-    const seated = c.seated ?? (c.sitting ? 1 : 0), far = Math.min(0.6 - 0.15 * seated, Math.max(0.3, Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx = 0.1 + 0.23 * seated, lz = -far;
+    const seated = c.seated ?? (c.sitting ? 1 : 0), far = Math.min(0.6 - 0.15 * seated, Math.max(0.3, Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx = this.side * (0.1 + 0.23 * seated), lz = -far;
     const wx = c.x + lx * c.cy - lz * c.sy, wz = c.z + lx * c.sy + lz * c.cy, g = c.groundAt(wx, wz), depth = Math.max(c.surf - g, 0);
     if (!this.down && this.lift < 0.05 && this.amount < 0.02) this.kind = depth > 0.015 ? 'water' : c.wetAt(wx, wz, g) ? 'wet' : 'dry';
     const y = this.kind === 'water' ? Math.max(g + 0.004, c.surf - 0.17) : this.kind === 'dry' ? g - 0.012 - 0.012 * this.grip : g - 0.003 - 0.006 * this.grip;
@@ -306,10 +309,10 @@ export class Hand {
     // a little higher when you look less far down. Squatting, it is held over your knees.
     const raise = 0.12 * clamp01((c.look + 0.95) / 0.7), low = c.low || 0;
     // (Seated you lean back: it is held out beside your right thigh, the elbow still bent.)
-    const up = [eye[0] + 0.13 + 0.03 * low, eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low], down = [eye[0] + 0.27, eye[1] - 0.36 + raise, eye[2] - 0.15];
+    const up = [eye[0] + this.side * (0.13 + 0.03 * low), eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low], down = [eye[0] + this.side * 0.27, eye[1] - 0.36 + raise, eye[2] - 0.15];
     const wrist = [0, 1, 2].map(i => up[i] + (down[i] - up[i]) * seated);
     // (A hand held out is never quite still: it rises and falls a little with your breath.)
-    wrist[1] += 0.003 * Math.sin(c.time * 1.45); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1);
+    wrist[1] += 0.003 * Math.sin(c.time * 1.45 + this.side); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1 + this.side);
     // (No lower than the arm can hold it level, crouched: above your knees.)
     wrist[1] = Math.max(wrist[1], Math.min(c.body - 0.22, 0.36));
     // How far the fingers are parted: as you have set them (the wheel), wide while you send it all down.
@@ -321,11 +324,11 @@ export class Hand {
       // pours (faster the wider they are), as a hand does to keep sand running; closed again, it comes level.
       if (dt > 0) this.tipped = this.open > 0.05 && this.amount > 0.002 && held > 0.9 ? Math.min(0.8, this.tipped + dt * (0.06 + 0.4 * this.open)) : Math.max(0, this.tipped - dt * 1.2);
       const tip = (0.1 + 0.25 * this.open + this.tipped) * held, st = Math.sin(tip), ct = Math.cos(tip);
-      dir = [-0.3, -st, -ct]; palm = [0.06, ct, -st]; cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
+      dir = [-0.3 * this.side, -st, -ct]; palm = [0.06 * this.side, ct, -st]; cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
     } else {
       // (The figure of tubes: the palm up and turned a little towards you, tipping forward as it empties.)
       const tip = 0.25 + 0.3 * (1 - this.amount) * held;
-      dir = [-0.3, L[1] * 0.92 + U[1] * 0.12, L[2] * 0.92 + U[2] * 0.12]; palm = [0.06, U[1] - L[1] * tip, U[2] - L[2] * tip];
+      dir = [-0.3 * this.side, L[1] * 0.92 + U[1] * 0.12, L[2] * 0.92 + U[2] * 0.12]; palm = [0.06 * this.side, U[1] - L[1] * tip, U[2] - L[2] * tip];
       cupped = 0.5 - 0.16 * (1 - this.amount); spread = this.lift * (this.kind === 'water' ? 0.3 : 0.5) * (0.15 + 0.85 * (1 - this.amount));
     }
     const full = this.grip;
@@ -350,7 +353,7 @@ export class Hand {
    *   turn(v): a direction of it, eye (the camera: x, y, z), material (the body's, for the wet and sandy hand)
    */
   act(dt, c) {
-    const touching = c.joints.touching, tip = touching ? c.world(touching.tip) : null, sandy = this.kind !== 'water', time = c.time;
+    const touching = this.side > 0 ? c.joints.touching : c.joints.touchingL, tip = touching ? c.world(touching.tip) : null, sandy = this.kind !== 'water', time = c.time;
     if (tip && dt > 0) this.speed = this.tip ? Math.hypot(tip[0] - this.tip[0], tip[2] - this.tip[2]) / dt : 0;
     // (A frame drawn without time passing, for a picture, changes nothing in what the hand is doing.)
     const pressing = (c.want && c.canReach) || (dt === 0 && this.down);
@@ -406,7 +409,7 @@ export class Hand {
     }
     this.tip = tip;
     if (this.at) this.floor = this.kind === 'water' ? c.surf : this.at.ground;
-    shared.uLeg.value[2].set(tip ? wrap64(tip[0]) : 0, tip ? wrap64(tip[2]) : 0, tip && this.down && !sandy ? 1 : 0, this.speed);
+    if (this.side > 0) shared.uLeg.value[2].set(tip ? wrap64(tip[0]) : 0, tip ? wrap64(tip[2]) : 0, tip && this.down && !sandy ? 1 : 0, this.speed);
 
     // Held up: what is in the palm, and its running out between the fingers.
     const palm = touching?.palm;
@@ -450,11 +453,11 @@ export class Hand {
     this.flow(dt, c, running > 0 && this.kind !== 'wet' ? this.pour : null, running);
     // (A wet hand dries in a minute or so in this sun and wind; dry sand falls off it sooner.)
     if (dt > 0 && !this.down && this.amount < 0.02) { this.wet = Math.max(0, this.wet - dt / 70); this.sand = Math.max(0, this.sand - dt / (this.wet > 0.3 ? 60 : 6)); }
-    const wrist = c.joints.wrists[1], end = c.joints.fingertips[1];
+    const which = this.side > 0 ? 1 : 0, wrist = c.joints.wrists[which], end = c.joints.fingertips[which], u = c.material.uniforms;
     if (wrist && end) {
       const mid = c.world([(wrist[0] + end[0]) / 2, (wrist[1] + end[1]) / 2, (wrist[2] + end[2]) / 2]);
-      c.material.uniforms.uHandWet.value.set(mid[0] - c.eye.x, mid[1], mid[2] - c.eye.z, this.wet);
-      c.material.uniforms.uHandSand.value = this.sand;
+      (this.side > 0 ? u.uHandWet : u.uHandWetL).value.set(mid[0] - c.eye.x, mid[1], mid[2] - c.eye.z, this.wet);
+      (this.side > 0 ? u.uHandSand : u.uHandSandL).value = this.sand;
     }
   }
 

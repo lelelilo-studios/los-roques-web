@@ -68,6 +68,8 @@ uniform vec4 uBodyWet;      // wet up to this height (x) by this much (y, drying
 uniform float uBodySand;    // sand stuck to your feet, 0..1
 uniform vec4 uHandWet;      // the hand that touched: where it is (x, z relative to the camera, y absolute) and how wet
 uniform float uHandSand;    // and how much sand is on it
+uniform vec4 uHandWetL;     // the same for your left hand
+uniform float uHandSandL;
 in float vUp;
 in vec3 vRel;
 in vec3 vNormal;
@@ -128,16 +130,16 @@ void main() {
   float weave = 0.9 + 0.1 * sin(vRest.x * 2600.0) * sin(vRest.y * 2600.0) + 0.06 * (lrNoise(vRest.xy * 400.0 + vRest.z * 300.0) - 0.5);
   // (The skin beside the edge is a little shaded by it, for a few millimetres; the cloth is darker along its hem.)
   vec3 albedo = mix(skin * 0.75 * (1.0 - 0.22 * hem), uClothColour * weave * 0.82 * (1.0 - 0.12 * hem), cloth);
-  float nearHand = distance(vRel, uHandWet.xyz);
+  float nearHand = distance(vRel, uHandWet.xyz), nearLeft = distance(vRel, uHandWetL.xyz);
   float soaked = max(uBodyWet.y * (1.0 - smoothstep(uBodyWet.x - 0.04, uBodyWet.x + 0.015, vRel.y)), uBodyWet.w * (1.0 - smoothstep(uBodyWet.z - 0.03, uBodyWet.z + 0.01, vRel.y)));
-  soaked = max(soaked, uHandWet.w * (1.0 - smoothstep(0.17, 0.24, nearHand)));
+  soaked = max(soaked, max(uHandWet.w * (1.0 - smoothstep(0.17, 0.24, nearHand)), uHandWetL.w * (1.0 - smoothstep(0.17, 0.24, nearLeft))));
   // (Grains: the body at rest cut into cubes two thirds of a millimetre across, each with a grain in it or not,
   // so that they are specks whichever way the skin faces. Smoothed noise drew a web of cracks; squares seen from
   // one side, dashes.)
   vec3 cube = floor(vRest * 1500.0);
   float grains = lrHash12(cube.xy + cube.z * vec2(37.0, 17.0) + 3.0);
   float line = 0.02 + 0.05 * uBodySand * (0.4 + lrNoise(vRest.xz * 70.0));
-  float stuck = max(step(1.0 - 0.7 * uBodySand * (1.0 - smoothstep(0.4 * line, line, vUp)), grains), step(1.0 - 0.32 * uHandSand * (1.0 - smoothstep(0.085, 0.125, nearHand)), grains)) * (1.0 - cloth);
+  float stuck = max(step(1.0 - 0.7 * uBodySand * (1.0 - smoothstep(0.4 * line, line, vUp)), grains), max(step(1.0 - 0.32 * uHandSand * (1.0 - smoothstep(0.085, 0.125, nearHand)), grains), step(1.0 - 0.32 * uHandSandL * (1.0 - smoothstep(0.085, 0.125, nearLeft)), grains))) * (1.0 - cloth);
   // (Wet cloth goes much darker; wet skin a little, and it shines. Sand on it does not.)
   albedo *= 1.0 - soaked * mix(0.12, 0.34, cloth);
   albedo = mix(albedo, vec3(0.66, 0.62, 0.54) * (0.75 + 0.5 * lrHash12(cube.xy + cube.z * vec2(11.0, 29.0) + 19.0)), stuck);
@@ -254,7 +256,7 @@ export class Figure {
     this.mesh = new THREE.Mesh(geometry, new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.FrontSide, defines: { LR_SHADOW_TAPS: shadowTaps },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
-        uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, ...state,
+        uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, uHandWetL: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSandL: { value: 0 }, ...state,
         uShowHead: { value: 0 }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
