@@ -20,7 +20,7 @@ import { shared } from '../core/uniforms.js';
 import { skinningGLSL } from '../world/figure.js';
 
 export const PATCH_LENGTH = 4;                     // metres across (64 / 16)
-const GRID = 13, EVENTS = 4;
+const GRID = 13, EVENTS = 4, POURS = 8;
 /** lrScoop on the CPU (see the shader), and the area it is worth: a depth times this is the volume taken. */
 export function scoopShape(lx, ly) {
   const cx = lx + 0.085, cy = ly - 0.01, ease = t => (t = Math.min(Math.max(t / 0.5, 0), 1), t * t * (3 - 2 * t));
@@ -43,6 +43,9 @@ uniform vec2 uCentre;         // where the window's middle is (detail coordinate
 uniform float uL, uN, uDt, uFeetWet;
 uniform vec2 uHop;            // this frame's hop for sand in transit (texels): a new length and direction every frame
 uniform vec4 uDrop[${EVENTS}];        // sand arriving (or taken): where (detail coordinates), over what radius (m), how fast at its middle (m/s)
+uniform vec4 uPour[${POURS}];         // what was let fall and lands this frame: where, over what radius (m), how much height at its middle (m)
+uniform vec4 uPourWet[${POURS}];      // x: the dampness it brings
+uniform float uTick;                  // a number that changes every frame
 uniform vec4 uDropWet[${EVENTS}];     // x: dampness arriving per second; y: 1 = a right foot's print pressed in, 2 = a left foot's, 3 = a right hand's scoop, 4 = a left hand's, pointing the way zw says
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
@@ -103,7 +106,9 @@ void main() {
     float dh = h - nb.r, most = talus(max(g.g, 0.5 * (c.g + nb.g)), under) * cell * (i < 4 ? 1.0 : 1.4142);
     give += sign(dh) * max(abs(dh) - most, 0.0) * (i < 4 ? 1.0 : 0.7071);
   }
-  h -= 0.16 * give;
+  // (By the second, not by the frame: on a screen that draws 144 times a second a heap slumped two and a half
+  // times as fast as on one that draws sixty.)
+  h -= min(0.16 * uDt * 60.0, 0.2) * give;
 
   // What your body has pushed out from under itself travels until there is room for it: a hop of a centimetre
   // or so each frame, a new length and a new direction every frame (uHop), to four sides at once. So it leaves
@@ -166,6 +171,19 @@ void main() {
     if (uDrop[i].w > 0.0) pressed *= 1.0 - k * min(1.0, uDt * 30.0);             // (fresh sand lies loose)
   }
 
+  // What was let fall from a hand and lands now: each stream where it comes down, a mound of exactly what fell
+  // (or a damp spot). (They were all set down together at the middle of where they fell: three streams from
+  // between four fingers made one heap, never three little ones that grow together.)
+  for (int i = 0; i < ${POURS}; i++) {
+    if (uPour[i].z <= 0.0) continue;
+    vec2 o = mod(d - uPour[i].xy + 0.5 * uL, uL) - 0.5 * uL;
+    float o2 = dot(o, o) / (uPour[i].z * uPour[i].z);
+    if (o2 > 6.0) continue;
+    float k = exp(-2.0 * o2);
+    h += uPour[i].w * k; damp += uPourWet[i].x * k;
+    if (uPour[i].w > 0.0) pressed *= 1.0 - k * 0.5;             // (fresh sand lies loose)
+  }
+
   // Your body. Where skin is lower than the sand, the sand is where the skin is: of what it displaced, damp
   // sand packs nearly all, dry sand sends a third aside. Where there is room, sand in transit settles.
   float surface = g.r + h;
@@ -183,6 +201,9 @@ void main() {
   if (tool < g.r + h + 5e-4) pressed = 2.0;
   // (Dampness that was added dries; what the sea keeps wet is not in this number.)
   damp *= exp(-uDt / 40.0);
+  // (Kept to the nearest of the numbers the patch can hold, by chance in proportion: drying a little each frame,
+  // a spot that always rounded back to what it was never dried at all on a fast screen.)
+  { float step_ = exp2(floor(log2(max(damp, 1e-5))) - 10.0), n = damp / step_, r = fract(sin(dot(gl_FragCoord.xy + uTick * vec2(0.731, 1.913), vec2(12.9898, 78.233))) * 43758.5453); damp = (floor(n) + step(r, fract(n))) * step_; }
   outColor = vec4(clamp(h, -0.08, 0.2), drained > 0.003 ? -min(drained, 1.0) : clamp(damp, 0.0, 1.0), max(moving, 0.0), clamp(pressed, 0.0, 2.0));
 }`;
 
@@ -241,6 +262,7 @@ export class SandPatch {
     this.pass = new FullscreenPass(simFragment, {
       tPrev: { value: null }, tTool: { value: this.tool.texture }, tGround: { value: this.grid }, uCentre: { value: new THREE.Vector2() }, uL: { value: this.L }, uN: { value: size },
       uDt: { value: 0 }, uFeetWet: { value: 0 }, uHop: { value: new THREE.Vector2(4, 0) }, uDrop: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) }, uDropWet: { value: Array.from({ length: EVENTS }, () => new THREE.Vector4()) },
+      uPour: { value: Array.from({ length: POURS }, () => new THREE.Vector4()) }, uPourWet: { value: Array.from({ length: POURS }, () => new THREE.Vector4()) }, uTick: { value: 0 },
     });
     /** (Shared with sim/ripples.js: the window's middle relative to the camera, the base height, half its length.) */
     this.toolUniforms = { uToolC: { value: new THREE.Vector3() }, uToolHalf: { value: this.L / 2 } };
@@ -262,7 +284,7 @@ export class SandPatch {
     const { renderer } = this, previous = renderer.getRenderTarget();
     for (const t of this.targets) { renderer.setRenderTarget(t); renderer.getContext().clearBufferfv(renderer.getContext().COLOR, 0, this.clearPatch); }
     renderer.setRenderTarget(previous);
-    this.events.length = 0; this.falling.length = 0;
+    this.events.length = 0; this.falling.length = 0; this.tick = 0; this.poured = 0;
     shared.uPatch.value.w = 0;
   }
 
@@ -277,8 +299,8 @@ export class SandPatch {
     this.events.push({ x, z, r, rate, wet, foot, left: seconds });
   }
   /**
-   * Sand (cubic metres) and dampness (units) let fall towards (x, z), to land `fall` seconds from now. Whatever
-   * lands in the same frame is set down together.
+   * Sand (cubic metres) and dampness (units) let fall towards (x, z), to land `fall` seconds from now: each where
+   * it comes down, a mound of just that much over radius r (m). (`poured`: the cubic metres set down since reset.)
    */
   pour(x, z, r, volume, wet, fall, time) { this.falling.push({ x, z, r, volume, wet, at: time + fall }); }
   /**
@@ -325,16 +347,28 @@ export class SandPatch {
       this.gridData[o] = half(s[0] - c.base); this.gridData[o + 1] = half(s[1]); this.gridData[o + 2] = half(Math.max(s[2], 0)); this.gridData[o + 3] = half(1);
     }
     this.grid.needsUpdate = true;
-    // What was let fall and lands now: one arrival.
+    // What was let fall and lands now: each where it comes down. (Eight places a frame: what lands within a
+    // finger's breadth of another is set down with it, and beyond eight the nearest are put together.)
+    const u = this.pass.material.uniforms, landing = [];
     if (this.falling.length) {
-      let v = 0, w = 0, x = 0, z = 0, r = 0, n = 0;
-      this.falling = this.falling.filter(f => { if (f.at > c.time) return true; v += f.volume; w += f.wet; x += f.x; z += f.z; r += f.r; n++; return false; });
-      if (n) { const rr = r / n; this.drop(x / n, z / n, rr, v / (Math.PI * rr * rr / 2) / dt, dt * 0.5, w / dt); }       // (for this frame only)
+      this.falling = this.falling.filter(f => {
+        if (f.at > c.time) return true;
+        let to = landing.find(q => Math.hypot(q.x - f.x, q.z - f.z) < 0.006);
+        if (!to && landing.length >= POURS) to = landing.reduce((a, q) => (Math.hypot(q.x - f.x, q.z - f.z) < Math.hypot(a.x - f.x, a.z - f.z) ? q : a));
+        if (to) { const all = Math.abs(to.volume) + Math.abs(f.volume) + 1e-12, k = Math.abs(f.volume) / all; to.x += (f.x - to.x) * k; to.z += (f.z - to.z) * k; to.r = Math.max(to.r, f.r); to.volume += f.volume; to.wet += f.wet; }
+        else landing.push({ ...f });
+        return false;
+      });
+    }
+    for (let i = 0; i < POURS; i++) {
+      const q = landing[i];
+      // (A mound exp(-2 d2 / r2) of height H holds H pi r2 / 2.)
+      if (q) { u.uPour.value[i].set(wrap(q.x), wrap(q.z), q.r, q.volume / (Math.PI * q.r * q.r / 2)); u.uPourWet.value[i].set(q.wet, 0, 0, 0); this.poured += q.volume; } else u.uPour.value[i].set(0, 0, 0, 0);
     }
     // (2) The patch moves on.
-    const u = this.pass.material.uniforms;
     u.tPrev.value = this.targets[this.now].texture; u.uCentre.value.set(wrap(c.x), wrap(c.z)); u.uDt.value = Math.min(dt, 0.05); u.uFeetWet.value = c.feetWet || 0; 
     // (The hop: lengths between half a centimetre and a centimetre and a half, turned by the golden angle each frame.)
+    u.uTick.value = (this.tick || 0) % 1024;
     { const k = this.tick = ((this.tick || 0) + 1) % 4093, r = [2.6, 5.3, 3.7, 6.9, 4.4, 8.1, 3.1][k % 7] * this.size / 2048 + 0.5, a = k * 2.399963; u.uHop.value.set(r * Math.cos(a), r * Math.sin(a)); }
     for (let i = 0; i < EVENTS; i++) {
       const e = this.events[i];

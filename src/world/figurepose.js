@@ -139,6 +139,13 @@ export class FigureRig {
     return { wrist, bases, knuckles, centre, half: len(sub(knuckles, wrist)) / 2, f, N, A, us: bases.map(b => dot(sub(b, centre), A)) };
   }
 
+  /** The rods that stand for the skin of hand i's fingers, thumb and palm, where they are posed now (the body's frame): { fingers, thumb, palm }, or null before fitHands. */
+  handCaps(i) {
+    if (!this.fit) return null;
+    const s = this.sides[i], rods = this.fit[i].rods, rod = name => { const b = this.need(name), r = rods[name]; return { a: this.carry(b, r.head), b: this.carry(b, r.tail), r: r.r, w: r.w, t: r.t }; };
+    return { fingers: s.names.fingers.map(f => f.map(rod)), thumb: s.names.thumb.map(rod), palm: s.names.palm.map(rod) };
+  }
+
   /**
    * Hand i (0 left, 1 right) as it is posed now, measured as a hand is (handpose.js), in the body's frame: what
    * hand(i) gives, and { shoulder, elbow; sup, flex, dev: how far the forearm is turned palm up and the wrist bent

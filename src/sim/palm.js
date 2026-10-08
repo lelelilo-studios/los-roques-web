@@ -18,6 +18,10 @@ export class Palm {
     this.leak = new Float32Array(NU * NV);        // how fast a cell lets go downwards, 0..1 (the gaps between the fingers)
     this.gap = new Int8Array(NU * NV).fill(-1);   // which gap a cell drains through (0..2), -1 none
     this.next = new Float32Array(NU * NV);
+    // How the stuff on top is moving, for the picture of it: how far the grains at each cell have been carried
+    // (m, along u and along v), and how fast they are going now.
+    this.shiftU = new Float32Array(NU * NV); this.shiftV = new Float32Array(NU * NV); this.runU = new Float32Array(NU * NV); this.runV = new Float32Array(NU * NV);
+    this.fingers = null;
     this.kind = 'dry'; this.knuckle = 0.045; this.shape(0.45, 0.3);
     /** 0..1: how hard the fingers are working what they hold: worked, dry sand stands at a lower slope and runs on. */
     this.work = 0;
@@ -29,7 +33,30 @@ export class Palm {
    * are along v; `us`: where each finger's root is across the hand (index to little).
    */
   shape(curl, open, knuckle = this.knuckle, us = this.us || FINGERS) {
+    this.fingers = null; this.build(curl, open, knuckle, us);
+  }
+
+  /**
+   * The hand's shape under the stuff, from her own fingers as they are held: `fingers`, index to little, each
+   * { pts: the middle of the finger at its root, its two joints and its tip ([u, v, w] in palm coordinates),
+   * hw: half its width at each of its three bones, th: half its thickness }. The gap between two fingers is as
+   * wide, at every place along them, as the two really are apart there: part one finger and that gap opens; curl
+   * one out of the way and what lay on it falls. (`open` is kept for how loose the fingers work the sand.)
+   */
+  setHand(fingers, open, knuckle = this.knuckle, us = this.us || FINGERS) {
+    this.fingers = fingers; this.build(0.45, open, knuckle, us);
+  }
+
+  build(curl, open, knuckle, us) {
     this.knuckle = knuckle; this.curl = curl; this.open = open; this.us = us;
+    const F = this.fingers;
+    /** The middle of finger q where it crosses the row v: { u, w, hw, th }, or null beyond its tip. */
+    const cross = (q, v) => {
+      const p = F[q].pts;
+      if (v <= p[0][1]) return { u: p[0][0], w: p[0][2], hw: F[q].hw[0], th: F[q].th[0] };
+      for (let i = 0; i < 3; i++) if (p[i + 1][1] - p[i][1] > 1e-4 && v <= p[i + 1][1]) { const t = Math.max(0, (v - p[i][1]) / (p[i + 1][1] - p[i][1])); return { u: p[i][0] + (p[i + 1][0] - p[i][0]) * t, w: p[i][2] + (p[i + 1][2] - p[i][2]) * t, hw: F[q].hw[i], th: F[q].th[i] }; }
+      return null;
+    };
     // (The fingers slope up from the knuckles by about half their curl: a cupped hand's are nearly level at the root.)
     const rise = Math.tan(Math.min(1.1, 0.5 * curl)), reach = 0.058, half = Math.abs(us[0] - us[3]) / 2 + HALF_FINGER + 0.004, mid = (us[0] + us[3]) / 2;
     for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
@@ -39,6 +66,18 @@ export class Palm {
         // The palm: a hollow, with the ball of the thumb and the heel of the hand as its walls.
         const edge = Math.abs(u - mid) / half, back = Math.max(0, (-v - 0.02) / 0.04);
         if (edge <= 1 && v > V0 + CELL) f = 0.013 * edge * edge * (u > mid ? 1.25 : 1) + 0.012 * back * back + 0.002 * clamp01(1 + along / 0.02);
+      } else if (F) {
+        // Her fingers: each where it is. On a finger, its own rounded top; between two, the valley they make, and
+        // the gap there as wide as they are apart; beyond the outermost or past a fingertip, nothing.
+        const at = [cross(0, v), cross(1, v), cross(2, v), cross(3, v)];
+        let near = Infinity, n = -1;
+        for (let q = 0; q < 4; q++) if (at[q]) { const d = Math.abs(u - at[q].u); if (d < near) { near = d; n = q; } }
+        if (n >= 0) {
+          const a = at[n], other = u > a.u ? n - 1 : n + 1, b = other >= 0 && other <= 3 ? at[other] : null;
+          if (near <= a.hw + 0.5 * CELL) f = a.w + a.th * Math.sqrt(Math.max(0, 1 - (near / (a.hw + 0.001)) ** 2));
+          else if (b) f = Math.min(a.w + a.th, b.w + b.th) - 0.008;
+          if (b && near > a.hw - 0.75 * CELL) { leak = clamp01((Math.abs(a.u - b.u) - a.hw - b.hw) / 0.004); gap = Math.min(n, other); }
+        }
       } else if (along < reach) {
         // The fingers: four of them side by side (touching when they are together), each going its own way as they part.
         const at = q => us[q] + along * Math.tan((1.5 - q) * 0.13 * open);
@@ -59,7 +98,7 @@ export class Palm {
 
   /** A handful of `kind` ('dry', 'wet' sand or 'water') lying in the hand. */
   fill(kind, volume = HANDFUL) {
-    this.kind = kind; this.s.fill(0);
+    this.kind = kind; this.s.fill(0); this.shiftU.fill(0); this.shiftV.fill(0); this.runU.fill(0); this.runV.fill(0);
     // (Heaped over the hollow of the palm; it finds its own shape in the next few frames.)
     let sum = 0;
     for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
@@ -85,7 +124,11 @@ export class Palm {
     const { s, floor, leak, gap, next } = this, water = this.kind === 'water', wet = this.kind === 'wet';
     // The slope it stands at. Dry sand: 32 degrees in a still hand; fingers that are parting work it loose, and it
     // creeps at half that. Wet sand from the wash is a slurry: it sags slowly. Water stands at none.
-    const talus = water ? 0.01 : wet ? 0.3 * (1 - 0.5 * this.work) : (0.62 - 0.36 * Math.min(1, this.open * 1.4)) * (1 - 0.75 * this.work), rate = water ? 0.11 : wet ? 0.08 : 0.2, out = { gaps: [0, 0, 0], edge: 0, at: [0, 0] };
+    const talus = water ? 0.01 : wet ? 0.3 * (1 - 0.5 * this.work) : (0.62 - 0.36 * Math.min(1, this.open * 1.4)) * (1 - 0.75 * this.work), rate = water ? 0.11 : wet ? 0.08 : 0.2;
+    // (`slots`: for each gap, where what fell through it left the hand: the middle of it across and along, the
+    // stretch of the gap it fell from, and the height of the hand there.)
+    const out = { gaps: [0, 0, 0], edge: 0, at: [0, 0], slots: [0, 1, 2].map(() => ({ n: 0, u: 0, v: 0, w: 0, v0: Infinity, v1: -Infinity })) }, fu = this.fu ??= new Float32Array(NU * NV), fv = this.fv ??= new Float32Array(NU * NV);
+    fu.fill(0); fv.fill(0);
     // (A step is a sixtieth of a second's worth; a slow frame takes more than one.)
     // (Water finds its level quickly: it gets three rounds of running to one of leaking.)
     const frames = Math.max(1, Math.min(4, Math.round(dt * 60))), rounds = frames * (water ? 3 : 1);
@@ -103,7 +146,7 @@ export class Palm {
           const drop = here - there - talus * CELL;
           if (drop <= 0) continue;
           const move = Math.min(s[k] * 0.24, rate * drop / Math.max(tilt[2], 0.3));
-          next[k] -= move;
+          next[k] -= move; fu[k] += di * move; fv[k] += dj * move;
           if (off) { out.edge += move * CELL * CELL; out.at[0] += u * move; out.at[1] += v * move; } else next[n] += move;
         }
       }
@@ -117,11 +160,24 @@ export class Palm {
         if (through <= 0 || next[k] <= 0) continue;
         const gone = Math.min(next[k], (water ? 0.0018 : 0.0011) * through + next[k] * 0.06 * through);
         next[k] -= gone;
-        if (gap[k] >= 0) out.gaps[gap[k]] += gone * CELL * CELL;
+        if (gap[k] >= 0) {
+          out.gaps[gap[k]] += gone * CELL * CELL;
+          const sl = out.slots[gap[k]], i = k % NU, v = V0 + ((k - i) / NU + 0.5) * CELL;
+          sl.n += gone; sl.u += gone * (U0 + (i + 0.5) * CELL); sl.v += gone * v; sl.w += gone * floor[k]; sl.v0 = Math.min(sl.v0, v); sl.v1 = Math.max(sl.v1, v);
+        }
       }
       s.set(next);
     }
     if (out.edge > 0) { const w = out.edge / (CELL * CELL); out.at[0] /= w; out.at[1] /= w; }
+    for (const sl of out.slots) if (sl.n > 0) { sl.u /= sl.n; sl.v /= sl.n; sl.w /= sl.n; }
+    // How the top of it is moving: what went from each cell towards each side, over a layer three millimetres deep.
+    // The grains drawn on it are carried along at that speed (eased over a twelfth of a second: it does not jitter).
+    const k = 1 - Math.exp(-dt / 0.08), most = 0.25;
+    for (let c = 0; c < fu.length; c++) {
+      const u = Math.max(-most, Math.min(most, fu[c] * CELL / 0.003 / dt)), v = Math.max(-most, Math.min(most, fv[c] * CELL / 0.003 / dt));
+      this.runU[c] += (u - this.runU[c]) * k; this.runV[c] += (v - this.runV[c]) * k;
+      this.shiftU[c] += this.runU[c] * dt; this.shiftV[c] += this.runV[c] * dt;
+    }
     return out;
   }
 

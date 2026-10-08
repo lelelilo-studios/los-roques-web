@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { landTime } from '../sim/fall.js';
+import { patchGLSL } from '../sim/patch.js';
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -20,6 +21,7 @@ uniform vec4 uShadowP;
 uniform highp sampler2D tShadowB;
 uniform vec4 uShadowB;
 uniform vec2 uShadowBP;
+${patchGLSL}
 uniform float uNow;        // seconds since the moment births are counted from
 uniform float uShutter;    // how long the eye's picture of a moving thing lasts (s): a frame
 uniform vec2 uAir;         // the breeze where they fall (east, south; m/s)
@@ -54,8 +56,27 @@ void main() {
   float age = uNow - aBirth.w, land = aLand.x, kind = floor(aMore.w + 0.02), dense = fract(aMore.w + 0.02) / 0.45;
   gl_Position = vec4(2.0, 2.0, 2.0, 1.0); vColor = vec3(0.0); vShape = vec4(0.0); vGlint = vec3(0.0);
   // (Not let go yet, or landed and gone.)
-  if (age < 0.0 || age > land + 0.02 || aMore.x <= 0.0) return;
-  vec3 A = lrFallAt(clamp(age - uShutter, 0.0, land)), B = lrFallAt(min(age, land));
+  if (age < 0.0 || age > land + 0.25 || aMore.x <= 0.0) return;
+  // Where it lands the sand may stand higher than the beach: the heap it is building. It lands on that, a moment sooner.
+  vec3 end = lrFallAt(land);
+  float tau = aVel.w, falling = 9.81 * tau - (aVel.y + 9.81 * tau) * exp(-land / tau);          // (how fast it comes down, m/s)
+  if (uPatch.w > 0.5) {
+    vec2 at = mod(end.xz + uCamMod.xy, 64.0);
+    land = clamp(land - lrPatchIn(at) * lrPatchHeight(at) / max(falling, 0.3), 0.0, land);
+    end = lrFallAt(land);
+  }
+  vec3 A, B;
+  if (age <= land) { A = lrFallAt(clamp(age - uShutter, 0.0, land)); B = lrFallAt(age); }
+  else {
+    // Landed. Most grains stay where they fall; one in three hops: up a few millimetres to a centimetre or two
+    // and out a little way, and is down again in a twentieth of a second. (Sand alone: not clots, not drops.)
+    float h1 = lrHash12(vec2(aLand.w * 13.1 + 2.0, aLand.w * 5.7)), h2 = lrHash12(vec2(aLand.w * 29.3, 7.0 + aLand.w)), h3 = lrHash12(vec2(4.0 + aLand.w * 3.3, aLand.w * 41.0));
+    float up = (0.05 + 0.13 * h2) * falling, t = age - land;
+    if (h1 < 0.65 || kind > 2.5 || t > 2.0 * up / 9.81) return;
+    float az = 6.2832 * h3, out_ = 0.04 + 0.22 * fract(h1 * 7.0), t0 = max(t - uShutter, 0.0);
+    A = end + vec3(cos(az) * out_ * t0, up * t0 - 4.905 * t0 * t0, sin(az) * out_ * t0);
+    B = end + vec3(cos(az) * out_ * t, up * t - 4.905 * t * t, sin(az) * out_ * t);
+  }
   vec4 a = projectionMatrix * viewMatrix * vec4(A, 1.0), b = projectionMatrix * viewMatrix * vec4(B, 1.0);
   if (a.w < 0.02 || b.w < 0.02) return;
   // The streak, in pixels: from where it was a frame ago to where it is, as wide as the grain (and a pixel and a
@@ -122,7 +143,7 @@ export class Falling {
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, depthWrite: false, transparent: true,
       // (Each grain's light for the part it covers, the picture for the rest; the frame's fourth channel, which says what lies where, is left alone.)
       blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.shadow], { uNow: { value: 0 }, uShutter: { value: 1 / 60 }, uAir: { value: new THREE.Vector2() } }),
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.shadow, 'tPatch', 'uPatch'], { uNow: { value: 0 }, uShutter: { value: 1 / 60 }, uAir: { value: new THREE.Vector2() } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false;
     let seed = 97531;

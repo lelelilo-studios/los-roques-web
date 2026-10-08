@@ -815,8 +815,9 @@ export async function start(canvas, onProgress = () => {}) {
         figure.mesh.visible = !you.folded; figure.setPose(figureRig.pose(over.joints, you.eyeUp), over.raw ? (body.joints.eye ? body.joints.eye[1] : you.eyeUp) : over.joints.eye[1]); figure.place(offX, you.y, offZ, you.heading);
         figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
-        if (body.joints.touching && !you.folded) body.joints.touching.palm = figureRig.hand(1);
-        if (body.joints.touchingL && !you.folded) body.joints.touchingL.palm = figureRig.hand(0);
+        // (And her fingers as rods, where they are: what she holds lies on them, and falls between them.)
+        if (body.joints.touching && !you.folded) body.joints.touching.palm = { ...figureRig.hand(1), caps: figureRig.handCaps(1) };
+        if (body.joints.touchingL && !you.folded) body.joints.touchingL.palm = { ...figureRig.hand(0), caps: figureRig.handCaps(0) };
       }
       // What comes of it. (Points of the body are turned to your heading and stood on your feet.)
       // (The breeze where your hand is: a fifth of what blows at mast height, less down near the sand in your own lee.)
