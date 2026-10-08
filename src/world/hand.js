@@ -163,7 +163,10 @@ void main() {
   col += wet * uSunE * lit * 0.5 * pow(lrSaturate(dot(reflect(-V, n), uSunDir)), 60.0);
   // Water: the palm seen through it (darker the deeper), the sky in it, the sun's glint; its surface trembles.
   float tremble = lrNoise(vLocal.xz * 180.0 + uTime * 3.0), fresnel = 0.02 + 0.98 * pow(1.0 - lrSaturate(dot(n, V)), 5.0), shallow = 1.0 - smoothstep(0.0, 0.003, vDepth);
-  float sky = max(fresnel, 0.05 + 0.14 * tremble * tremble + 0.25 * shallow);
+  // (Water in a hand is seen by the sky in it and by the bright line where it climbs the skin at its edge: without
+  // those it was only a wet palm.)
+  float rim = smoothstep(0.0006, 0.0012, vDepth) * (1.0 - smoothstep(0.0012, 0.0032, vDepth));
+  float sky = max(fresnel, 0.12 + 0.16 * tremble * tremble + 0.25 * shallow + 0.5 * rim);
   vec3 pool = vec3(0.5, 0.37, 0.29) * exp(-vDepth * 30.0) * (uSunE * lrSaturate(uSunDir.y) * lit + uSkyE) / PI * (1.0 - sky) + sky * uSkyE / PI * 1.5
             + uSunE * lit * 4.0 * pow(lrSaturate(dot(reflect(-V, normalize(n + 0.12 * vec3(tremble - 0.5, 0.0, lrNoise(vLocal.zx * 180.0 - uTime * 2.6) - 0.5))), uSunDir)), 500.0);
   outColor = vec4(mix(col, pool, water), -1000.0);
@@ -268,7 +271,7 @@ export class Hand {
    * Before the body is posed: what the hand is to do this frame. Returns poseBody's `touch`, or null.
    * @param {number} dt
    * @param {object} c  want (the button is held), canReach (crouched, on sand or in shallow water), open (how far
-   *   the fingers are parted, 0..1), time, look,
+   *   the fingers are parted, 0..1), together (0..1: your other hand holds something too), time, look,
    *   body (eye height over your feet), feet (their height), x, z, cy, sy (cos and sin of your heading),
    *   groundAt(x, z), surf (the sea surface here), wetAt(x, z, ground): whether the sand there is wet
    */
@@ -309,7 +312,10 @@ export class Hand {
     // a little higher when you look less far down. Squatting, it is held over your knees.
     const raise = 0.12 * clamp01((c.look + 0.95) / 0.7), low = c.low || 0;
     // (Seated you lean back: it is held out beside your right thigh, the elbow still bent.)
-    const up = [eye[0] + this.side * (0.13 + 0.03 * low), eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low], down = [eye[0] + this.side * 0.27, eye[1] - 0.36 + raise, eye[2] - 0.15];
+    // (`together`: both your hands hold something. Then they come together before you, side by side, little
+    // fingers almost touching, the palms turned a little towards each other: one bowl of two hands.)
+    const tog = c.together || 0;
+    const up = [eye[0] + this.side * (0.13 + 0.03 * low - 0.072 * tog), eye[1] - 0.4 + raise + 0.2 * low, eye[2] - 0.27 + 0.03 * low - 0.03 * tog], down = [eye[0] + this.side * (0.27 - 0.208 * tog), eye[1] - 0.36 + raise, eye[2] - 0.15 - 0.15 * tog];
     const wrist = [0, 1, 2].map(i => up[i] + (down[i] - up[i]) * seated);
     // (A hand held out is never quite still: it rises and falls a little with your breath.)
     wrist[1] += 0.003 * Math.sin(c.time * 1.45 + this.side); wrist[0] += 0.0015 * Math.sin(c.time * 0.83 + 1 + this.side);
@@ -324,7 +330,8 @@ export class Hand {
       // pours (faster the wider they are), as a hand does to keep sand running; closed again, it comes level.
       if (dt > 0) this.tipped = this.open > 0.05 && this.amount > 0.002 && held > 0.9 ? Math.min(0.8, this.tipped + dt * (0.06 + 0.4 * this.open)) : Math.max(0, this.tipped - dt * 1.2);
       const tip = (0.1 + 0.25 * this.open + this.tipped) * held, st = Math.sin(tip), ct = Math.cos(tip);
-      dir = [-0.3 * this.side, -st, -ct]; palm = [0.06 * this.side, ct, -st]; cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
+      // (Together, the fingers of both point straight ahead: they do not cross.)
+      dir = [-0.3 * this.side * (1 - tog), -st, -ct]; palm = [(0.06 - 0.2 * tog) * this.side, ct, -st]; cupped = 0.5 - 0.12 * this.open; spread = this.lift * this.open;
     } else {
       // (The figure of tubes: the palm up and turned a little towards you, tipping forward as it empties.)
       const tip = 0.25 + 0.3 * (1 - this.amount) * held;

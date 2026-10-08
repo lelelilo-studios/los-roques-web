@@ -572,6 +572,9 @@ export async function start(canvas, onProgress = () => {}) {
     const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
     const reachable = { want: !!input.hand, open: input.open ?? 0.3, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
       x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
+    // (Both hands holding something, held up: they come together.)
+    if (dt > 0) you.together = (you.together || 0) + ((hand.lift > 0.3 && handL.lift > 0.3 && hand.amount > 0.004 && handL.amount > 0.004 ? 1 : 0) - (you.together || 0)) * (1 - Math.exp(-dt * 4));
+    reachable.together = you.together || 0;
     const reach = hand.plan(dt, reachable), reachL = handL.plan(dt, { ...reachable, want: !!input.hand2 });
     // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
     const firm = walker.depth > 0.005 || ground.shoreAt(walker.x, walker.z) > -1.5, sink = deck ? 0 : (firm ? 0.005 : patch ? 0.018 : 0.011) + sunk;
