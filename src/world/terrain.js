@@ -235,6 +235,18 @@ float lrGlints(vec2 d, float px, vec3 N, vec3 H) {
   return g;
 }
 
+// The glare of the sun on wet sand is made of grains: the film lies over them unevenly, and each mirrors more of
+// the sun or less. Cells a pixel and a half across, as for the glints, so it neither pops nor shimmers; it
+// averages one. (Drawn smooth, the glare was a round glow on the sand, like a lamp held over it.)
+float lrFilmSparkle(vec2 d, float px) {
+  float level = log2(max(px * 1.5, 2e-4)), l0 = floor(level), s = 0.0;
+  for (int k = 0; k < 2; k++) {
+    float size = exp2(l0 + float(k)), h = lrHash12(mod(floor(d / size), 64.0 / size) + 5.0 + 0.61 * float(k));
+    s += (k == 0 ? 1.0 - (level - l0) : level - l0) * (0.2 + 2.4 * h * h);
+  }
+  return s;
+}
+
 float lrDepthFromViewZ(float z) {
   float n = uNearFar.x, f = uNearFar.y;
 #ifdef USE_REVERSED_DEPTH_BUFFER
@@ -501,7 +513,8 @@ void main() {
     n = normalize(vec3(n.x - grad.x, n.y, n.z - grad.y));
     patchSteep = smoothstep(0.08, 0.35, length(grad));
     // (On wet sand: where a foot has squeezed the water out, and, once it is back, the print it stands in.)
-    if (wetness > 0.0) { patchDrained = inPatch * lrSaturate(-P.g); patchPool = inPatch * smoothstep(0.0015, 0.005, -h) * (1.0 - patchDrained); }
+    // (Drained sand has an edge: pale, and then not. Drawn in proportion, its faint outer reach was a glow.)
+    if (wetness > 0.0) { patchDrained = inPatch * smoothstep(0.06, 0.5, -P.g); patchPool = inPatch * smoothstep(0.0015, 0.005, -h) * (1.0 - patchDrained); }
     // (Soaked sand was darkened above; drained, it is three quarters of the way back to its dry colour.)
     if (patchDrained > 0.0 && !covered) albedo *= mix(1.0, LR_SOAKED, fine * wetness * (1.0 - 0.75 * patchDrained)) / mix(1.0, LR_SOAKED, fine * wetness);
     // (And the floor of a print in wet sand, lower than the sand about it, is where the water comes back to first
@@ -623,7 +636,7 @@ void main() {
     mirror.y = abs(mirror.y) + 0.01;
     // (Drained sand is paler: most of the way back to dry.)
     col *= mix(vec3(1.0), lrWetSand(albedo * light / lit), wetAll * (1.0 - 0.8 * patchDrained)) * mix(1.0, (1.0 - fresnel) / 0.979, gloss);
-    col += gloss * (fresnel * lrEnv(normalize(mirror), rough) + uSunE * min(lrSunGlitter(V, nf, uSunDir, vec2(rough)), 400.0) * step(0.0, uSunDir.y) * shade);
+    col += gloss * (fresnel * lrEnv(normalize(mirror), rough) + uSunE * min(lrSunGlitter(V, nf, uSunDir, vec2(rough)), 400.0) * mix(1.0, lrFilmSparkle(d, px), 1.0 - gloss * gloss) * step(0.0, uSunDir.y) * shade);
     // What the sheet leaves behind: its last bubbles, bursting within a second or so, and a line of them at the
     // top of each wave's run (this wave's, and fainter the one before).
     if (px < 0.3 && sw.top > 1e-4) {

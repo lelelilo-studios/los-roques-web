@@ -127,15 +127,20 @@ void main() {
   float drained = 0.0;
   if (g.g > 0.5 && under < 0.5) {
     float near = c.a > 1.5 ? 1.0 : 0.0;
+    // (Uneven over a few centimetres; the numbers repeat with the patch, every four metres.)
+    float keep = 0.5 + 0.07 * (sin(d.x * 113.1 + 1.3 * sin(d.y * 70.69)) + sin(d.y * 122.52 + 1.7 * sin(d.x * 84.82)));
     for (int i = 0; i < 6; i++) {
       // (Six ways, turned differently every frame: looked for the same six ways each time, it spread as a lattice of stripes.)
       float t = 1.0472 * float(i) + atan(uHop.y, uHop.x);
-      // (From sand that skin is on, nearly all of it; from sand that is drained, seven tenths of what it has: so it
-      // falls away over a hand's breadth.)
+      // (From sand that skin is on, nearly all of it; from sand that is drained, about half of what it has, more
+      // here and less there: so it falls away over a hand's breadth, to an uneven edge. At seven tenths, the
+      // same everywhere, it reached a foot and a half from your foot as a round glow, like a lamp held to the
+      // sand.)
       vec4 by = textureLod(tPrev, vUv + vec2(cos(t), sin(t)) * ((0.014 + 0.004 * float(i)) / uL), 0.0);
-      near = max(near, by.a > 1.5 ? 0.85 : 0.7 * max(-by.g, 0.0));
+      near = max(near, by.a > 1.5 ? 0.85 : keep * max(-by.g, 0.0));
     }
-    drained = max(max(-c.g, 0.0) * exp(-uDt / 0.8), near);
+    // (And the water is back within a second of your foot's leaving.)
+    drained = max(max(-c.g, 0.0) * exp(-uDt / 0.45), near);
   }
   damp = max(damp, 0.0);
 
