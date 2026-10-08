@@ -756,6 +756,27 @@ export async function start(canvas, onProgress = () => {}) {
         const high = 0.45 * breeze.z * gust * (1 + 0.25 * Math.sin(clock.time * 7.3) * Math.sin(clock.time * 3.1)), wx = breeze.x * high, wz = breeze.y * high, rx = Math.cos(yaw), rz = Math.sin(yaw);
         figure.swing(dt, [you.tieA[0] * rx + you.tieA[1] * rz, you.tieA[0] * bx + you.tieA[1] * bz], [wx * rx + wz * rz, wx * bx + wz * bz]);
       }
+      // Water runs off a hand that has been in the sea: drops from the fingertips, three a second at first and
+      // fewer every second, for a quarter of a minute: a dozen or so from each hand. Each leaves a dark spot on dry sand
+      // (it dries), or a ring where it falls back into the sea.
+      if (dt > 0) {
+        you.drip ??= [{ t: 99, owed: 0 }, { t: 99, owed: 0 }];
+        for (const [i, h] of [[0, handL], [1, hand]]) {
+          const at = body.joints.fingertips?.[i], d = you.drip[i];
+          if (!at) continue;
+          const tip = toWorld(at), g = footing.heightAt(tip[0], tip[2]), surf = surfaceAt(tip[0], tip[2]), sea = surf - g > 0.01;
+          if ((sea && tip[1] < surf) || (h.kind === 'water' && (h.down || h.amount > 0.02))) { d.t = 0; continue; }
+          d.t += dt;
+          if (d.t > 15) continue;
+          d.owed += dt * 3.2 * Math.exp(-d.t / 4.5);
+          for (; d.owed >= 1; d.owed--) {
+            const r = spray.random, floor = Math.max(g, sea ? surf : g), fall = Math.sqrt(Math.max(tip[1] - floor, 0.01) / 4.9), x = tip[0] + (r() - 0.5) * 0.03, z = tip[2] + (r() - 0.5) * 0.03;
+            spray.put(wrap64(x), tip[1], wrap64(z), floor, clock.time, [walker.vx * 0.5, -0.05, walker.vz * 0.5], 0.0022 + 0.0016 * r(), true);
+            if (sea) ripples?.drop(x + walker.vx * 0.5 * fall, z + walker.vz * 0.5 * fall, clock.time + fall, 0.14, 0.014);
+            else patch?.pour(x + walker.vx * 0.5 * fall, z + walker.vz * 0.5 * fall, 0.011, 0, 1.3, fall, clock.time);
+          }
+        }
+      }
       const doing = { wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] };
       handL.act(dt, { ...you.reachable, want: !!lastInput.hand2, ...doing });
       hand.act(dt, { ...you.reachable, wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] });
@@ -984,6 +1005,8 @@ export async function start(canvas, onProgress = () => {}) {
     outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false) { rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}) }; },
     /** For tests: the ripples at a place: [height (m), speed, crossing]; how far your feet have sunk in the wash. */
     rippleAt: (x, z) => (ripples ? ripples.read(x, z) : null), sunk: () => sunk,
+    /** For tests: as if both hands had just come out of the sea (they drip). */
+    wetHands() { you.drip = [{ t: 0.01, owed: 0 }, { t: 0.01, owed: 0 }]; },
     /** For tests: how far the tail of her hair has swung from where it hangs: { x: to her right, z: back } (m). */
     figureTail: () => (figure?.tail ? { x: figure.tail.x, z: figure.tail.z } : null),
     /** For tests: [how wet, how sandy] the skin is at a texture coordinate of the body. */
