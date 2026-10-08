@@ -67,8 +67,14 @@ export class FigureRig {
         const b = this.bones[this.need(`finger${n}-${j}.${s}`)], d = unit(sub(b.tail, b.head));
         return { bone: this.id.get(b.name), curl: Math.atan2(dot(d, N), dot(d, f)) };          // (how far it is curled towards the palm at rest)
       }));
+      // The thumb. The body is modelled with it held out in front of the palm, as a hand about to take hold of
+      // something; a hand at ease, or cupped, has it lying along the side of the first finger. `thumb`: its first
+      // bone, and the turn (an axis in the body at rest, and an angle) that lays it there.
+      const t1 = this.need(`finger1-1.${s}`), t3 = this.bones[this.need(`finger1-3.${s}`)], out0 = unit(sub(t3.tail, this.bones[t1].head));
+      const along = unit([0, 1, 2].map(c => 0.95 * f[c] + 0.27 * Ax[c] + 0.14 * N[c])), swing = cross(out0, along);
+      const thumb = { bone: t1, axis: unit(swing), angle: Math.asin(Math.min(1, len(swing))) };
       return {
-        side, H, K, A, S, E, W, f, Ax, N, fingers, thigh: len(sub(K, H)), shin: len(sub(A, K)), upper: len(sub(E, S)), fore: len(sub(W, E)),
+        side, H, K, A, S, E, W, f, Ax, N, fingers, thumb, thigh: len(sub(K, H)), shin: len(sub(A, K)), upper: len(sub(E, S)), fore: len(sub(W, E)),
         armPlane: unit(cross(sub(E, S), sub(W, E))),
         bone: Object.fromEntries(['upperleg01', 'lowerleg01', 'foot', 'clavicle', 'shoulder01', 'upperarm01', 'lowerarm01', 'lowerarm02', 'wrist'].map(n => [n, this.need(`${n}.${s}`)])),
         toes: this.bones.map((b, j) => (new RegExp(`^toe\\d-1\\.${s}$`).test(b.name) ? j : -1)).filter(j => j >= 0),
@@ -186,6 +192,8 @@ export class FigureRig {
       this.hinge(s.bone.lowerarm01, mul(about(along, 0.15 * twist), Rfore));
       this.hinge(s.bone.lowerarm02, mul(about(along, 0.6 * twist), Rfore));
       this.hinge(s.bone.wrist, Rhand);
+      // (The thumb lies in beside the first finger; it comes away a little as the fingers part.)
+      this.hinge(s.thumb.bone, mul(Rhand, about(s.thumb.axis, s.thumb.angle * (0.85 - 0.4 * (h.spread || 0)))));
       // Fingers: each bone curled towards the palm as far as the solver's hand is, and fanned apart.
       const axis = s.Ax.map(c => c * s.side);
       s.fingers.forEach((finger, n) => {
