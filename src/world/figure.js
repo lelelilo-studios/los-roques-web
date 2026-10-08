@@ -44,12 +44,13 @@ out float vUp;          // how high the point is above her feet as she is posed 
 out vec2 vUv;
 out float vCloth;
 out float vThin;
+out vec3 vRestN;        // and which way the skin faces there, at rest
 void main() {
   mat4 skin = lrSkin();
   vec4 posed = skin * vec4(position, 1.0), wp = modelMatrix * posed;
   vUp = posed.y;
   vNormal = mat3(modelMatrix) * (mat3(skin) * normal);
-  vRel = wp.xyz; vRest = position; vUv = uv; vCloth = aCloth; vThin = aThin; vPart = aPart;
+  vRel = wp.xyz; vRest = position; vRestN = normal; vUv = uv; vCloth = aCloth; vThin = aThin; vPart = aPart;
   gl_Position = projectionMatrix * viewMatrix * vec4(wp.x, wp.y - lrCurveDrop(wp.xz), wp.z, 1.0);
 }`;
 
@@ -73,6 +74,28 @@ in vec3 vNormal;
 in vec3 vRest;
 in vec2 vUv;
 in float vCloth;
+in vec3 vRestN;
+uniform vec4 uCloth;        // the bikini's measures on her: the crotch's height, where front meets back (z), the underbust's height, the base of the neck's
+uniform vec3 uApex[2];      // the point of each breast
+float lrFromLine(vec2 p, vec2 a, vec2 b) { vec2 ab = b - a, ap = p - a; return length(ap - ab * clamp(dot(ap, ab) / dot(ab, ab), 0.0, 1.0)); }
+// Where the bikini lies, worked out at every point of the skin at rest: metres inside its edge (pipeline/body/
+// build.mjs has the same shape, vertex by vertex: that one only says roughly where to look, because a line
+// drawn from vertex to vertex has the mesh's corners in it).
+float lrCloth(vec3 p, vec3 n) {
+  // The bottom: a band low on the hips; the leg openings rise from the crotch to the hip bones, higher in front.
+  float back = smoothstep(uCloth.y - 0.03, uCloth.y + 0.03, p.z);
+  float f = min(uCloth.x + 0.165 - p.y, p.y - (uCloth.x + 0.012 + mix(1.02, 0.72, back) * max(abs(p.x) - mix(0.028, 0.04, back), 0.0)));
+  if (p.y < uCloth.x + 0.22) return f;
+  // The top: a cup over each breast, a band under the bust all the way round, straps up to the back of the neck.
+  for (int i = 0; i < 2; i++) {
+    vec3 a = uApex[i], d = p - a;
+    float side = sign(a.x);
+    float cup = n.z < 0.35 ? min(0.074 - length(d * vec3(1.02, 0.92, 0.6)), 0.058 - 0.74 * abs(d.x - 0.006 * side) - 0.5 * d.y) : -1.0;
+    float strap = n.z < 0.5 && p.y > a.y ? 0.0065 - lrFromLine(p.xy, vec2(a.x + 0.006 * side, a.y + 0.07), vec2(0.052 * side, uCloth.w + 0.03)) : -1.0;
+    f = max(f, max(cup, strap));
+  }
+  return max(f, max(0.0065 - abs(p.y - uCloth.z), n.z > 0.3 && abs(p.x) < 0.07 ? 0.0065 - abs(p.y - (uCloth.w + 0.035)) : -1.0));
+}
 in float vThin;
 in float vPart;
 layout(location = 0) out vec4 outColor;
@@ -99,9 +122,12 @@ void main() {
   skin.r = min(skin.r, mix(skin.r, skin.g * 1.9, 0.8));
   // The bikini: where the field is positive. Its edge is a line a pixel wide however near you look; the skin
   // beside it is a little shaded by it, and the cloth has a weave.
-  float edge = fwidth(vCloth) + 1e-5, cloth = smoothstep(-edge, edge, vCloth), hem = 1.0 - smoothstep(0.0, 0.25, abs(vCloth));
+  // (Looked for only where the vertices say it is near: not on the arms that hang beside it.)
+  float field = vCloth > -0.019 ? lrCloth(vRest, vRestN) : -1.0;
+  float edge = fwidth(field) + 1e-5, cloth = smoothstep(-edge, edge, field), hem = 1.0 - smoothstep(0.0, 0.004, abs(field));
   float weave = 0.9 + 0.1 * sin(vRest.x * 2600.0) * sin(vRest.y * 2600.0) + 0.06 * (lrNoise(vRest.xy * 400.0 + vRest.z * 300.0) - 0.5);
-  vec3 albedo = mix(skin * (1.0 - 0.25 * hem * (1.0 - cloth)), uClothColour * weave * (1.0 - 0.18 * hem), cloth);
+  // (The skin beside the edge is a little shaded by it, for a few millimetres; the cloth is darker along its hem.)
+  vec3 albedo = mix(skin * 0.75 * (1.0 - 0.22 * hem), uClothColour * weave * 0.82 * (1.0 - 0.12 * hem), cloth);
   float nearHand = distance(vRel, uHandWet.xyz);
   float soaked = max(uBodyWet.y * (1.0 - smoothstep(uBodyWet.x - 0.04, uBodyWet.x + 0.015, vRel.y)), uBodyWet.w * (1.0 - smoothstep(uBodyWet.z - 0.03, uBodyWet.z + 0.01, vRel.y)));
   soaked = max(soaked, uHandWet.w * (1.0 - smoothstep(0.17, 0.24, nearHand)));
@@ -163,6 +189,18 @@ export async function loadFigure(gzip = false) {
   return { info, arrays, texture };
 }
 
+/** The bikini's measures on this body (as pipeline/body/build.mjs takes them): uniforms for lrCloth. */
+function bikini(info, position) {
+  const bone = name => info.bones.find(b => b.name === name), apex = [bone('breast.L').tail, bone('breast.R').tail];
+  // (The crotch: the lowest skin on the middle line between her knees and her navel.)
+  let crotch = Infinity;
+  for (let i = 0; i < position.length; i += 3) if (Math.abs(position[i]) < 0.012 && position[i + 1] > 0.3 * info.height && position[i + 1] < 0.7 * info.height) crotch = Math.min(crotch, position[i + 1]);
+  return {
+    uCloth: { value: new THREE.Vector4(crotch, (bone('upperleg01.L').head[2] + bone('upperleg01.R').head[2]) / 2, Math.min(apex[0][1], apex[1][1]) - 0.062, bone('neck01').head[1]) },
+    uApex: { value: apex.map(a => new THREE.Vector3(a[0], a[1], a[2])) },
+  };
+}
+
 /** Her hair, in the body's frame at rest (the eye at height `eye`, forward -z): a cap over the skull and a tail from the back of the crown. */
 function hairGeometry(eye) {
   const parts = [], put = (centre, radii, tilt = 0, shape = null) => {
@@ -217,7 +255,7 @@ export class Figure {
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.FrontSide, defines: { LR_SHADOW_TAPS: shadowTaps },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
         uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, ...state,
-        uShowHead: { value: 0 }, ...own, tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
+        uShowHead: { value: 0 }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
     // Her hair, tied back: over the skull from the hairline to the nape, gathered at the back of the crown and

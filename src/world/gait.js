@@ -62,7 +62,9 @@ export class Gait {
   update(dt, c) {
     const { prop, feet } = this, h = c.heading, fx = Math.sin(h), fz = -Math.cos(h), rx = Math.cos(h), rz = Math.sin(h);
     const speed = Math.hypot(c.vx, c.vz), moving = speed > 0.07 && !c.hold, crouch = c.crouch || 0, legs = c.legs || 1;
-    const along = moving ? (c.vx * fx + c.vz * fz) / speed : 1, across = moving ? (c.vx * rx + c.vz * rz) / speed : 0;
+    // (Which way you are going, against the way you face: known for as long as you are moving at all, so that
+    // the length of a pace does not jump as you come to rest.)
+    const going = speed > 1e-3, along = going ? (c.vx * fx + c.vz * fz) / speed : 1, across = going ? (c.vx * rx + c.vz * rz) / speed : 0;
     const run = ease(clamp((speed * Math.max(along, 0) - 1.6) / 1.2, 0, 1)), stance = Math.PI * (1.2 - 0.5 * run), pace = Math.max(paceFor(speed, along, across, crouch, legs), 0.05);
     // (Sideways you stand wider: the feet close up and part again, and may not cross.)
     const half = prop.hip + 0.025 + 0.05 * across * across;
@@ -115,6 +117,9 @@ export class Gait {
           // comes down a little short of that: it is the heel that reaches.)
           const lead = moving ? 0.5 * stance / Math.PI * pace : 0, short = moving ? (0.114 - 0.36 * (1.2 - stance / Math.PI) * 0.19) * pace * Math.max(along, 0) ** 2 : 0;
           let tx = bx + rx * f.side * half + (moving ? c.vx / speed * lead : 0) - fx * short, tz = bz + rz * f.side * half + (moving ? c.vz / speed * lead : 0) - fz * short;
+          // (Where it is going can change while it is on its way: you set off, stop, or turn. It changes its mind
+          // smoothly: a foot nearly down was otherwise thrown a hand's breadth sideways in one frame.)
+          if (f.to) { const k = 1 - Math.exp(-dt * 14); tx = f.to.x + (tx - f.to.x) * k; tz = f.to.z + (tz - f.to.z) * k; }
           // (Never across the other foot: at least a hand's breadth to its own side of it.)
           const other = feet[1 - i], mine = (tx - bx) * rx + (tz - bz) * rz, theirs = (other.x - bx) * rx + (other.z - bz) * rz, room = f.side > 0 ? Math.max(mine, theirs + 0.13) : Math.min(mine, theirs - 0.13);
           tx += rx * (room - mine); tz += rz * (room - mine);
@@ -192,6 +197,6 @@ export class Gait {
     // and the hips turn with the stride.
     const apart = clamp((out[1].ahead - out[0].ahead) / (0.75 * legs), -1, 1), swing = 0.3 * clamp(speed / 1.3, 0, 1.5) ** 0.8 * (1 - 0.75 * crouch);
     // (`beat`: 1 as a foot comes down, 0 half way between two footfalls: the hips are lowest at the one, highest at the other.)
-    return { feet: out, shift: this.shift, arm: [apart * swing, -apart * swing], turn: 0.07 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), beat: Math.cos(this.phase) ** 2 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
+    return { feet: out, shift: this.shift, arm: [apart * swing, -apart * swing], turn: 0.07 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), beat: c.hold ? 0 : Math.cos(this.phase) ** 2 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
   }
 }

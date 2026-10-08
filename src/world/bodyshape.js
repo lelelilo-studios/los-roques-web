@@ -595,7 +595,9 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       // hand hanging loose in front of the shin; the elbow is down by the thigh, not out to the side.)
       const over = gait ? [knee[0] - side * 0.035, knee[1] + 0.03, knee[2] - 0.075] : [knee[0] + side * 0.012, knee[1] + 0.035, knee[2] - 0.09];
       for (let i = 0; i < 3; i++) wrist[i] += (over[i] - wrist[i]) * squat;
-      const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, gait ? [side * 0.35, -0.5, 0.8] : [side * 0.8, -0.45, 0.35]);
+      // (The elbow goes down and outward: a direction the line from shoulder to wrist, which runs forward, never
+      // comes near. Asked to go back as well, it swung round that line whenever the knee came up level with the shoulder.)
+      const bent = reach(sh, wrist, PROP.upperArm, PROP.forearm, gait ? [side * 0.7, -0.7, 0.15] : [side * 0.8, -0.45, 0.35]);
       for (let i = 0; i < 3; i++) elbow[i] += (bent[i] - elbow[i]) * squat;
     }
     // Reaching down to touch (the right hand): the shoulder goes forward and down with it, the hand is laid

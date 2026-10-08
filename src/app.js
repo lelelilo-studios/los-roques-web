@@ -543,7 +543,8 @@ export async function start(canvas, onProgress = () => {}) {
     // Seated, the keys that walk you move your legs: S draws them up and W stretches them out, A / D bring your
     // feet together and apart, Space curls your toes.
     // (You sit leaning back a little on your hand; reaching for the sand beside you, you lean forward over it.)
-    if (dt > 0) seated.lean += ((reach && walker.sitting ? 0.22 - 0.34 * reach.amount * (1 - (reach.lift || 0)) : 0.22) - seated.lean) * (1 - Math.exp(-dt * 5));
+    // (Eased both ways, like any movement of the trunk.)
+    if (dt > 0) { const to = reach && walker.sitting ? 0.22 - 0.34 * reach.amount * (1 - (reach.lift || 0)) : 0.22; seated.leanV = (seated.leanV || 0) + (36 * (to - seated.lean) - 12 * (seated.leanV || 0)) * dt; seated.lean += seated.leanV * dt; }
     if (walker.sitting && dt > 0) {
       seated.draw = Math.min(1, Math.max(0, seated.draw + input.fwd * -dt * 0.9)); seated.splay = Math.min(1, Math.max(0, seated.splay + input.right * dt * 0.9));
       seated.wiggle += ((input.up ? 0.45 * Math.sin(clock.time * 9) - 0.15 : 0) - seated.wiggle) * (1 - Math.exp(-dt * 12));
