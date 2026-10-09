@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { CASTER_UNIFORMS, casterFragment, casterGLSL, shadowGLSL } from './shadow.js';
 import { DATA_ROOT } from '../config.js';
+import { Hair } from './hair.js';
 
 const TYPES = { Float32Array, Int8Array, Uint8Array, Uint16Array, Uint32Array };
 
@@ -211,7 +212,10 @@ export async function loadFigure(gzip = false) {
   for (const [name, part] of Object.entries(info.layout)) arrays[name] = new TYPES[part.type](buffer, part.offset, part.count);
   const texture = await new THREE.TextureLoader().loadAsync(url(info.skin));
   Object.assign(texture, { colorSpace: THREE.NoColorSpace, anisotropy: 8, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping });
-  return { info, arrays, texture };
+  // (Her hair's picture: its colour, and where it is clear between the strands.)
+  const hair = await new THREE.TextureLoader().loadAsync(url(info.hair.picture));
+  Object.assign(hair, { colorSpace: THREE.NoColorSpace, anisotropy: 8, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, premultiplyAlpha: false });
+  return { info, arrays, texture, hair };
 }
 
 /** A map that says dry and clean everywhere, until there is a real one. */
@@ -229,43 +233,13 @@ function bikini(info, position) {
   };
 }
 
-/** Her hair, in the body's frame at rest (the eye at height `eye`, forward -z): a cap over the skull and a tail from the back of the crown. */
-function hairGeometry(eye) {
-  const parts = [], put = (centre, radii, tilt = 0, shape = null) => {
-    const g = new THREE.SphereGeometry(1, 20, 14), p = g.attributes.position, c = Math.cos(tilt), s = Math.sin(tilt);
-    for (let i = 0; i < p.count; i++) {
-      let x = p.getX(i) * radii[0], y = p.getY(i) * radii[1], z = p.getZ(i) * radii[2];
-      if (shape) [x, y, z] = shape(x, y, z, p.getX(i), p.getY(i), p.getZ(i));
-      p.setXYZ(i, centre[0] + x, centre[1] + y * c - z * s, centre[2] + y * s + z * c);
-    }
-    g.computeVertexNormals(); parts.push(g);
-  };
-  // The cap: the skull is 16 cm wide, 19 cm front to back, its top 10.5 cm over the eye. In front it stops at
-  // the hairline (what would cover the face is tucked inside the head).
-  put([0, eye + 0.036, 0.07], [0.089, 0.079, 0.102], 0, (x, y, z, ux, uy, uz) => (uz < -0.25 && uy < 0.55 ? [x * 0.7, y * 0.7, z * 0.7] : [x, y, z]));
-  // Where it is tied, and the tail hanging from there to the base of the neck.
-  put([0, eye + 0.062, 0.166], [0.03, 0.03, 0.028]);
-  put([0, eye - 0.03, 0.2], [0.036, 0.098, 0.032], -0.2);
-  const tailCount = parts[2].attributes.position.count;
-  const n = parts.reduce((a, g) => a + g.attributes.position.count, 0), position = new Float32Array(n * 3), normal = new Float32Array(n * 3), index = [];
-  let o = 0;
-  for (const g of parts) { position.set(g.attributes.position.array, o * 3); normal.set(g.attributes.normal.array, o * 3); for (const i of g.index.array) index.push(i + o); o += g.attributes.position.count; g.dispose(); }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(position, 3).setUsage(THREE.DynamicDrawUsage)); out.setAttribute('normal', new THREE.BufferAttribute(normal, 3)); out.setIndex(index);
-  // (The tail: its vertices, where they hang at rest, and how far down it each is, 0 where it is tied .. 1 at its end.)
-  const first = n - tailCount, top = eye + 0.066, hang = new Float32Array(tailCount);
-  for (let i = 0; i < tailCount; i++) hang[i] = Math.min(1, Math.max(0, (top - position[(first + i) * 3 + 1]) / 0.19));
-  out.userData.tail = { first, count: tailCount, rest: position.slice(first * 3), hang, length: 0.19 };
-  return out;
-}
-
 export class Figure {
   /**
-   * @param {{info: object, arrays: object, texture: THREE.Texture}} data  from loadFigure()
+   * @param {{info: object, arrays: object, texture: THREE.Texture, hair: THREE.Texture}} data  from loadFigure()
    * @param {number} shadowTaps
    * @param {object} state  uniforms to share for what is on the skin (uBodyWet, uBodySand, uHandWet, uHandSand)
    */
-  constructor({ info, arrays, texture }, shadowTaps = 8, state = {}) {
+  constructor({ info, arrays, texture, hair }, shadowTaps = 8, state = {}) {
     this.info = info; this.bones = info.bones;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(arrays.position, 3));
@@ -291,25 +265,10 @@ export class Figure {
         uShowHead: { value: 0 }, uShowUnder: { value: 1 }, uWaterY: { value: -1e9 }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
-    // Her hair, tied back: over the skull from the hairline to the nape, gathered at the back of the crown and
-    // hanging from there in a tail to the base of the neck. You never see it yourself, only its outline in
-    // your shadow: a head with hair, not a bare skull with ears. It goes with the head bone.
-    this.hair = new THREE.Mesh(hairGeometry(info.eyeHeight), new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3, side: THREE.DoubleSide, uniforms: uniformsFor(CHUNK_UNIFORMS.common, {}),
-      vertexShader: /* glsl */`
-#include <lr_common>
-out vec3 vN;
-void main() { vN = mat3(modelMatrix) * normal; gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */`
-#include <lr_common>
-in vec3 vN;
-layout(location = 0) out vec4 outColor;
-void main() {
-  vec3 n = normalize(vN);
-  outColor = vec4(vec3(0.085, 0.05, 0.03) * (uSunE * (0.25 + 0.75 * lrSaturate(dot(n, uSunDir))) + uSkyE * (0.6 + 0.4 * n.y)) / PI, -1000.0);
-}`,
-    }));
-    this.hair.frustumCulled = false; this.hair.matrixAutoUpdate = false; this.hair.visible = false;
+    // Her hair (hair.js): tied back, a tail down her back. From her own eyes you see it only in your shadow;
+    // from behind her it is most of what you see of her head.
+    this.hairModel = new Hair({ info, arrays, hair }, shadowTaps, this.mesh.material.uniforms);
+    this.hair = this.hairModel.mesh;
     this.headBone = info.bones.findIndex(b => b.name === 'head'); this.lift = 0;
     /** What draws it into a shadow map (Shadows.render looks for this). */
     this.mesh.userData.caster = new THREE.ShaderMaterial({
@@ -319,33 +278,12 @@ void main() {
   }
 
   /**
-   * The tail of her hair is a pendulum hung from the back of her head: it lags as the head starts off, swings on
-   * as it stops, sways with each pace, and leans downwind, fluttering. (You see it only in your shadow.)
-   * @param {number} dt
-   * @param {number[]} accel  how the place where it is tied is accelerating, in the head's own frame: [to the right, back] (m/s2)
-   * @param {number[]} wind  the breeze there in the same frame (m/s)
+   * Her hair on her head as she is now posed and placed (after setPose and place), and its tail moved on.
+   * @param {number} dt  @param {number[]} origin  the camera's place in the world: [x, z]
+   * @param {number[]} wind  the air's speed at her head, in the world (m/s)
+   * @param {number} afloat  0 in the air .. 1 her head is under water
    */
-  swing(dt, accel, wind) {
-    const tail = this.hair.geometry.userData.tail, t = this.tail ??= { x: 0, z: 0, vx: 0, vz: 0, shown: [9, 9] };
-    if (dt > 0) {
-      // (A pendulum 19 cm long swings 1.1 times a second; hair is well damped. A breeze of 3 m/s holds it 2 cm off.)
-      const w2 = 9.81 / tail.length, damp = 2 * 0.3 * Math.sqrt(w2), step = Math.min(dt, 1 / 30);
-      for (const [k, v, a, b] of [['x', 'vx', accel[0], wind[0]], ['z', 'vz', accel[1], wind[1]]]) {
-        t[v] += (-w2 * t[k] - damp * t[v] - 0.42 * Math.max(-9, Math.min(9, a)) + w2 * 0.007 * b) * step;
-        t[k] = Math.max(-0.1, Math.min(0.1, t[k] + t[v] * step));
-      }
-      // (Forward, her neck is in the way: the tail comes to rest against it.)
-      if (t.z < -0.012) { t.z = -0.012; t.vz = Math.max(t.vz, 0); }
-    }
-    if (Math.abs(t.x - t.shown[0]) + Math.abs(t.z - t.shown[1]) < 2e-4) return;
-    t.shown = [t.x, t.z];
-    const p = this.hair.geometry.attributes.position, rise = (t.x * t.x + t.z * t.z) / (2 * tail.length);
-    for (let i = 0; i < tail.count; i++) {
-      const h = tail.hang[i] * tail.hang[i], o = i * 3;
-      p.setXYZ(tail.first + i, tail.rest[o] + t.x * h, tail.rest[o + 1] + rise * h, tail.rest[o + 2] + t.z * h);
-    }
-    p.needsUpdate = true;
-  }
+  swing(dt, origin, wind, afloat = 0) { this.hairModel.update(this.matrices, this.mesh.matrix, origin, dt, wind, afloat); }
 
   /** Every bone where it is at rest. */
   rest() {
@@ -360,8 +298,5 @@ void main() {
   place(x, y, z, yaw, pitch = 0) {
     const m = this.mesh;
     m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix);
-    // (Her hair goes with her head: wherever the rig has turned that bone.)
-    const b = this.matrices, o = this.headBone * 12, h = this.hair.matrix.set(b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7], b[o + 8], b[o + 9], b[o + 10], b[o + 11], 0, 0, 0, 1);
-    h.premultiply(m.matrix); this.hair.matrixWorld.copy(h);
   }
 }

@@ -15,7 +15,7 @@ export const BOOM = {
   follow: [12, 6],                     // how quickly it follows her eye, sideways and up and down (1/s)
   fov: 55,                             // degrees across the short side of the picture (her own eyes: 65)
   tilt: 0.105,                         // and it looks this much lower than she does (6 degrees): she stands in the lower half of the picture, feet and all, the horizon over her head
-  headNear: [0.15, 0.3],               // her head is not drawn within the first, and is whole beyond the second (m from her eye)
+  headNear: [0.28, 0.45],              // her head is not drawn within the first, and is whole beyond the second (m from her eye): it comes in with her hair, not before it
 };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v)), ease = t => t * t * t * (t * (6 * t - 15) + 10);
 

@@ -400,6 +400,11 @@ export async function start(canvas, onProgress = () => {}) {
   rig.floorAt = (x, z) => ({ ground: footing.heightAt(x, z), sea: surfaceAt(x, z) });
   /** How much of her head is drawn: none from inside it (her own eyes), all of it from a forearm's length off; between, it thins out. */
   const headSeen = () => (rig.outside ? 1 : Math.min(1, Math.max(0, (rig.away - BOOM.headNear[0]) / (BOOM.headNear[1] - BOOM.headNear[0]))));
+  /** And of her hair, which comes in with it. */
+  const hairSeen = () => (rig.outside ? 1 : Math.min(1, Math.max(0, (rig.away - BOOM.headNear[0]) / (BOOM.headNear[1] + 0.05 - BOOM.headNear[0]))));
+  /** How wet her hair is, 0..1: soaked the moment her head goes under, dry again in about three minutes (sooner in a wind). */
+  let hairWet = 0;
+  const wetHair = dt => { hairWet = walker.under ? 1 : Math.max(0, hairWet - dt / (200 / (1 + 0.08 * waves.wind.speed))); return hairWet; };
   // Your feet (world/gait.js): each planted where it was put, or on its way to the next place. And you, as last
   // posed: where the body's own frame stands in the world (x, z, the height of the ground it stands on), which
   // way it faces, how far the hips are down for the legs to reach (`dip`), where the ground under your weight
@@ -656,7 +661,6 @@ export async function start(canvas, onProgress = () => {}) {
     const heading = walker.heading, cy = Math.cos(heading), sy = Math.sin(heading), feetY = walker.eyeY - walker.body, deck = onDeck(walker.x, walker.z);
     const turn = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), state = walker.sitting ? 'sit' : 'stand';
     // (Put down somewhere, come out of the water, sat down or got up: your feet are under you.)
-    if (!you.on || walker.placed) you.tie = null;
     if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand')) { gait.reset(walker.x, walker.z, heading); you.dip = you.dipV = you.deep = you.deepS = you.peak = you.shallow = 0; }
     you.was = state; walker.placed = false;
     // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
@@ -841,7 +845,7 @@ export async function start(canvas, onProgress = () => {}) {
         const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
         // (Folded into the deepest squat she is left out of her own eyes' picture; from behind she is there to be seen.)
         figure.mesh.visible = !you.folded || rig.out > 0.02; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading);
-        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = rig.outside ? !you.folded : rig.away > BOOM.headNear[1] + 0.2;      // (her hair, which cannot thin out, a little later: not a wall of it across the picture)
+        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hairModel.show(figure.mesh.visible ? hairSeen() : 0, wetHair(dt));
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         // (And her fingers as rods, where they are: what she holds lies on them, and falls between them.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = { ...figureRig.hand(1), caps: figureRig.handCaps(1), skin: () => figureRig.handSkin(1) };
@@ -854,16 +858,10 @@ export async function start(canvas, onProgress = () => {}) {
       const breeze = shared.uWind.value, lee = 0.2 * breeze.z * (1 - 0.45 * walker.crouched) * gust;
       you.air = [breeze.x * lee, breeze.y * lee];
       if (figure) {
-        // The tail of her hair (figure.js swing): where it is tied to her head, a hand's breadth behind the eye,
-        // in the world; how that place is accelerating; and the breeze up there, stronger than at the hand.
-        const yaw = walker.yaw, bx = -Math.sin(yaw), bz = Math.cos(yaw), tie = [rig.own.x + bx * 0.17, rig.own.z + bz * 0.17], was = you.tie;
-        let ax = 0, az = 0;
-        if (dt > 0 && was && was.length === 4) { ax = (tie[0] - 2 * was[0] + was[2]) / (dt * dt); az = (tie[1] - 2 * was[1] + was[3]) / (dt * dt); }
-        if (dt > 0) you.tie = was ? [tie[0], tie[1], was[0], was[1]] : [tie[0], tie[1]];
-        // (Smoothed: two frames' difference of a position is a rough measure.)
-        you.tieA = [(you.tieA?.[0] || 0) * 0.7 + ax * 0.3, (you.tieA?.[1] || 0) * 0.7 + az * 0.3];
-        const high = 0.45 * breeze.z * gust * (1 + 0.25 * Math.sin(clock.time * 7.3) * Math.sin(clock.time * 3.1)), wx = breeze.x * high, wz = breeze.y * high, rx = Math.cos(yaw), rz = Math.sin(yaw);
-        figure.swing(dt, [you.tieA[0] * rx + you.tieA[1] * rz, you.tieA[0] * bx + you.tieA[1] * bz], [wx * rx + wz * rz, wx * bx + wz * bz]);
+        // The tail of her hair (hair.js): moved on in the world, where she now is, in the breeze up there,
+        // which is stronger than at the hand and flutters.
+        const high = 0.45 * breeze.z * gust * (1 + 0.25 * Math.sin(clock.time * 7.3) * Math.sin(clock.time * 3.1));
+        figure.swing(dt, [rig.eye.x, rig.eye.z], [breeze.x * high, 0, breeze.y * high]);
       }
       // Water runs off a hand that has been in the sea: drops from the fingertips, three a second at first and
       // fewer every second, for a quarter of a minute: a dozen or so from each hand. Each leaves a dark spot on dry sand
@@ -901,7 +899,8 @@ export async function start(canvas, onProgress = () => {}) {
         // (Just lifted off your feet: part of the way over from standing still, in the frame you stood in.)
         const over = goingOver(dt, body.joints, 'swim', { x: sx, y: walker.eyeY + walker.bob, z: sz, yaw: walker.yaw, pitch: under * walker.look });
         figure.setPose(figureRig.pose(over.joints, 0), over.raw ? 0 : over.joints.eye[1]); figure.place(over.frame.x, over.frame.y, over.frame.z, over.frame.yaw, over.frame.pitch || 0);
-        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.hair.visible = !!rig.outside || rig.away > BOOM.headNear[1] + 0.2;
+        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.hairModel.show(hairSeen(), wetHair(dt));
+        figure.swing(dt, [rig.eye.x, rig.eye.z], [0, 0, 0], walker.under ? 1 : 0);
         // (Afloat, what of you is under the surface is seen through it, as your legs are when you wade: your arms
         // working under the water in front of you. It was painted over by the sea: a head floating by itself.)
         figure.mesh.material.uniforms.uWaterY.value = walker.surf; figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0;
