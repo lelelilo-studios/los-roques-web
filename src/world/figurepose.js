@@ -298,11 +298,12 @@ export class FigureRig {
     const lean = aim(sub(this.chest0, this.hip0), across, sub(chest, j.hip), across), trunk = this.trunk, along = unit(sub(chest, j.hip));
     // (And her pelvis lists with each pace, the hip of the leg in the air dropping (`list`), her shoulders
     // tilting the other way (`tiltTop`): about the line from her back to her front, a part at each joint of her spine.)
-    const list = j.list || 0, tiltTop = j.tiltTop || 0, fore = unit(cross(across, along));
+    const list = j.list || 0, tiltTop = j.tiltTop || 0, fore = unit(cross(across, along)), breathing = j.breath || 0;
     const low = j.pelvis || 0, high = -0.6 * low - 0.3 * (j.headTurn || 0), Rp = mul(about(fore, list), mul(about(along, low), lean));
     const trunkAt = (shift, bend = bent) => {
       this.drive(trunk, Rp, add(add(j.hip, shift), turn(Rp, sub(this.bones[trunk].head, this.hip0))));
-      this.spine.forEach((b, k) => { const part = fraction(bend, (k + 1) / 5); this.hinge(b, mul(about(fore, list + (tiltTop - list) * (k + 1) / 5), mul(about(turn(part, along), low + (high - low) * (k + 1) / 5), mul(part, lean)))); });
+      // (And she breathes: as her chest fills, her upper back straightens a degree and her breastbone comes up.)
+      this.spine.forEach((b, k) => { const part = fraction(bend, (k + 1) / 5); this.hinge(b, mul(about(across, 0.018 * breathing * Math.max(0, k - 1) / 3), mul(about(fore, list + (tiltTop - list) * (k + 1) / 5), mul(about(turn(part, along), low + (high - low) * (k + 1) / 5), mul(part, lean))))); });
     };
     // A shoulder goes out to what the hand reaches for (`reached`: how far the solver has moved it for that),
     // and her back takes it there. The collar bone gives a finger's breadth; beyond that her shoulders turn
@@ -319,23 +320,28 @@ export class FigureRig {
       for (const [i, sd] of this.sides.entries()) {
         // (And as much further as the arm was short of its hand's place when she was posed a moment ago: `more`.)
         const d = turn(round, j.reached[i]), far = len(d), ask = add(far > GIRDLE_GIVE ? d.map(v => v * (1 - GIRDLE_GIVE / far)) : [0, 0, 0], this.more[i]);
-        if (len(ask) >= 1e-5) asks.push({ at: sd.S, top: this.bones[sd.bone.clavicle].parent, ask });
+        // (`weight`: how much this hand is at work, 0..1. A hand that is not asks nothing and holds nothing
+        // back: counted in or out all at once, as its reach began or ended, the other hand's share of her
+        // back jumped, and her eye with it.)
+        const weight = Math.min(1, far / 0.03);
+        if (weight > 1e-4) asks.push({ at: sd.S, top: this.bones[sd.bone.clavicle].parent, ask, weight: weight * weight * (3 - 2 * weight) });
       }
       if (asks.length) {
+        const heavy = asks.reduce((a, q) => a + q.weight, 0);
         const backOf = p => { const by = Math.hypot(p[1], p[2], p[3]), R = by > 1e-6 ? about([p[1] / by, p[2] / by, p[3] / by], by) : IDENTITY; return Math.abs(p[0]) > 1e-6 ? mul(R, about(along, p[0])) : R; };
         const carried = p => { this.frame++; trunkAt([0, 0, 0], backOf(p)); return asks.map(a => this.carry(a.top, a.at)); };
         // (Only across the line from her hips to the shoulder: along that line a back neither lengthens nor
         // shortens. On her feet, most of that part is her hips': she rocks forward over her feet towards what she
         // reaches for, as far as her legs let her (`rock`, below). The rest is the collar bone's, as far as it
         // swings, and the arm's.)
-        const want = carried([0, 0, 0, 0]).map((q, k) => { const line = unit(sub(q, j.hip)), a = asks[k].ask, along = dot(a, line); rock = add(rock, line.map(v => v * along * ROCK[0] * (1 - seat) / asks.length)); return add(q, sub(a, line.map(v => v * along))); }), p = [0, 0, 0, 0], H = 0.02;
+        const want = carried([0, 0, 0, 0]).map((q, k) => { const line = unit(sub(q, j.hip)), a = asks[k].ask, along = dot(a, line); rock = add(rock, line.map(v => v * along * ROCK[0] * (1 - seat) * asks[k].weight / Math.max(heavy, 1))); return add(q, sub(a, line.map(v => v * along))); }), p = [0, 0, 0, 0], H = 0.02;
         { const far = len(rock); if (far > ROCK[1]) rock = rock.map(v => v * ROCK[1] / far); }
         for (let step = 0; step < 5; step++) {
           const now = carried(p), e = [];
-          for (const [k, q] of now.entries()) e.push(...sub(want[k], q));
+          for (const [k, q] of now.entries()) e.push(...sub(want[k], q).map(v => v * asks[k].weight));
           if (Math.hypot(...e) < 0.0003) break;
           const J = e.map(() => [0, 0, 0, 0]);
-          for (let c = 0; c < 4; c++) { const q = p.slice(); q[c] += H; for (const [k, m] of carried(q).entries()) for (let a = 0; a < 3; a++) J[k * 3 + a][c] = (m[a] - now[k][a]) / H; }
+          for (let c = 0; c < 4; c++) { const q = p.slice(); q[c] += H; for (const [k, m] of carried(q).entries()) for (let a = 0; a < 3; a++) J[k * 3 + a][c] = (m[a] - now[k][a]) / H * asks[k].weight; }
           const A = [0, 1, 2, 3].map(() => [0, 0, 0, 0]), b = [0, 0, 0, 0];
           for (let r = 0; r < e.length; r++) for (let c = 0; c < 4; c++) { b[c] += J[r][c] * e[r]; for (let q = 0; q < 4; q++) A[c][q] += J[r][c] * J[r][q]; }
           // (Turned as far as shoulders turn, and still asked for more: the rest is for her back to bend.)

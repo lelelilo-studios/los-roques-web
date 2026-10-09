@@ -224,7 +224,9 @@ export async function start(canvas, onProgress = () => {}) {
   // Sitting: how far your legs are drawn up (0..1), how wide your feet (0..1), and your toes (radians, curling).
   const seated = { draw: 0, splay: 0, wiggle: 0, lean: 0.22 };
   const flow = [0, 0];
-  const figureReady = tierName === 'low' || params.tubes ? Promise.resolve(false) : loadFigure(manifest.compressed === 'gzip').then(data => {
+  // (Her, on every setting: the simplest one used to show the figure of tubes in a shirt and shorts. That one is
+  // now only for when her files cannot be had, or `?tubes=1`.)
+  const figureReady = params.tubes ? Promise.resolve(false) : loadFigure(manifest.compressed === 'gzip').then(data => {
     const u = body.mesh.material.uniforms;
     figure = new Figure(data, tier.fp.shadowTaps || 4, { uBodyWet: u.uBodyWet, uBodySand: u.uBodySand, uHandWet: u.uHandWet, uHandSand: u.uHandSand, uHandWetL: u.uHandWetL, uHandSandL: u.uHandSandL }); figureRig = new FigureRig(data.info);
     // (The round rods that stand for the skin of her fingers, measured from the mesh: to tell how far apart they are.)
@@ -680,9 +682,13 @@ export async function start(canvas, onProgress = () => {}) {
     walkInput?.steering?.(hand.steering || handL.steering);
     // (Your weight presses a planted foot a centimetre or two into dry sand, less into wet.)
     const firm = walker.depth > 0.005 || wetSandAt(walker.x, walker.z, footing.heightAt(walker.x, walker.z)), sink = deck ? 0 : (firm ? 0.008 : patch ? 0.018 : 0.011) + sunk;
+    // (Her hips as her skeleton has them: a few millimetres from where the solver put them, up or down, by
+    // what it took to bring her eye to its height. A heel that comes up as the leg needs it has to know: told
+    // only the solver's hips, it came up late whenever hers were higher, and the eye was jolted as the foot left.)
+    const lifted = figureRig?.shiftNow && you.on ? figureRig.shiftNow[1] : 0;
     const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, wish: walker.sitting ? null : walker.wish, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: (x, z) => footing.heightAt(x, z), sink, hold: walker.sitting, time: clock.time,
       // (Your hip joints as last posed, carried on by how far you have come since.)
-      hips: you.on && body.joints?.hips && !walker.sitting && walker.seated < 0.02 ? body.joints.hips.map(q => { const w = toWorld(q); return [w[0] + walker.vx * dt, w[1], w[2] + walker.vz * dt]; }) : null });
+      hips: you.on && body.joints?.hips && !walker.sitting && walker.seated < 0.02 ? body.joints.hips.map(q => { const w = toWorld(q); return [w[0] + walker.vx * dt, w[1] + lifted, w[2] + walker.vz * dt]; }) : null });
     // Your toes, standing: Space curls them up and digs them into the sand, as it does when you sit; and left to
     // themselves, standing a while, the toes of one foot and then the other lift and settle again every few
     // seconds, as bare feet do on sand. (They press what they touch: the patch of real sand takes their marks.)
@@ -725,7 +731,7 @@ export async function start(canvas, onProgress = () => {}) {
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
     if (k >= 1) body.pose(sit);
-    else body.pose({ gait: g, bank: walker.bank || 0, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
+    else body.pose({ gait: g, bank: walker.bank || 0, time: clock.time, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
     const j = body.joints;
     // The hips ride down to each footfall and up over the standing leg, smoothly: as far down as the legs have
     // needed lately (`deep`), in time with the feet. (Left to the legs alone they came down all at once as the
@@ -756,7 +762,11 @@ export async function start(canvas, onProgress = () => {}) {
     const eyeIs = figure && figureRig ? (figureRig.pose(j, eyeUp), you.rigFor = j, figureRig.eyeNow) : j.eye;
     // (For her hands, next frame: where her eye would be were she not leaning to anything. A hand held before
     // her eyes and the lean that hand asks of her would otherwise chase one another.)
-    you.eyeAt = figure && figureRig ? figureRig.eyeFree : null;
+    // (Said as how far her eye is from where the solver reckons an eye, above the middle of its own frame: that
+    // holds whichever frame the pose was made in. Getting up or sitting down the pose is a mixture of two, made
+    // about another middle, and her eye's place in that one, handed to her hands as if in theirs, sent a
+    // handful she was holding a forearm's length behind her for as long as the change took.)
+    you.eyeAt = figure && figureRig && figureRig.eyeFree && j.eyeLevel ? [figureRig.eyeFree[0] - j.eyeLevel[0], figureRig.eyeFree[1] - j.eyeLevel[1], figureRig.eyeFree[2] - j.eyeLevel[2]] : null;
     const calm = 1 - walker.bobAmount, ex = eyeIs[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = eyeIs[1] + calm * 0.92 * (you.dip - (g.ride || 0) + 0.05 * (g.run || 0)), ez = eyeIs[2];
     if (!folded) {
       const head = [you.x + ex * cy - ez * sy, feetY + ey, you.z + ex * sy + ez * cy];
@@ -844,6 +854,8 @@ export async function start(canvas, onProgress = () => {}) {
         body.joints.ankles.forEach((a, i) => { const o = body.joints.feet[i]?.out || 0, fx = Math.sin(o), fz = -Math.cos(o); put(i * 2, [a[0] - fx * 0.02, a[1] - 0.025, a[2] - fz * 0.02], 0.05); put(i * 2 + 1, [a[0] + fx * 0.11, Math.max(a[1] - 0.05, 0.02), a[2] + fz * 0.11], 0.045); });
         body.joints.wrists.forEach((w, i) => { const t = body.joints.fingertips[i] || w; put(4 + i, [(w[0] + t[0]) / 2, (w[1] + t[1]) / 2, (w[2] + t[2]) / 2], 0.05); });
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
+        // (On the simplest setting she has no shadow map: a soft dark on the sand under her trunk stands for her shadow, so that she is not pasted on.)
+        if (!shadows.enabled) { const h = body.joints.hip; put(6, [h[0], Math.max(0.3, h[1] * 0.6), h[2]], 0.44); put(7, [h[0], Math.max(0.45, h[1] * 1.15), h[2]], 0.5); }
         // (Just set down by the sea: part of the way over from swimming still.)
         const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
         // (Folded into the deepest squat she is left out of her own eyes' picture; from behind she is there to be seen.)

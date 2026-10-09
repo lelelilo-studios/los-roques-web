@@ -444,7 +444,7 @@ export class Hand {
     const sl = Math.sin(c.look), cl = Math.cos(c.look), held = clamp01(this.lift * 2 - 1);
     // (Her own eye, where her head carries it: crouched it is a hand's breadth ahead of where she stands, and a
     // handful held "before her eyes" is held before those.)
-    const L = [0, sl, -cl], U = [0, cl, sl], eye = c.eyeAt ? c.eyeAt.slice() : [0, c.body, 0];
+    const L = [0, sl, -cl], U = [0, cl, sl], eye = c.eyeAt ? [c.eyeAt[0], c.body + c.eyeAt[1], c.eyeAt[2]] : [0, c.body, 0];
     const raise = 0.12 * clamp01((c.look + 0.95) / 0.7), low = c.low || 0;
     // (Seated you lean back: it is held out beside your thigh, the elbow still bent.)
     // (`together`: both your hands hold something. Then they come together before you, side by side, little
