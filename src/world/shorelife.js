@@ -19,6 +19,18 @@ function coralBits() {
   return s.geometry();
 }
 
+/** An Atlantic ghost crab (Ocypode quadrata): sand-coloured, a square shell 5 cm across, eyes on stalks, legs out to the sides. */
+function ghostCrab() {
+  const s = new Shape(), sand = [0.72, 0.66, 0.52], pale = [0.82, 0.78, 0.66], dark = [0.05, 0.05, 0.05];
+  s.ball(0, 0.022, 0, 0.022, 0.012, 0.026, 3, 8, sand);
+  for (const side of [-1, 1]) {
+    for (let k = 0; k < 4; k++) { const z = side * 0.022, x = 0.012 - k * 0.009, out = side * (0.05 + 0.006 * k); s.tube([[x, 0.02, z], [x - 0.004, 0.03, out * 0.7], [x - 0.01, 0.002, out]], [0.003, 0.0025, 0.001], 4, pale, [0, 0.5, 1]); }
+    s.tube([[0.018, 0.022, side * 0.012], [0.034, 0.016, side * 0.02], [0.04, 0.012, side * 0.008]], [0.004, 0.005, 0.003], 4, pale);
+    s.tube([[0.016, 0.03, side * 0.01], [0.018, 0.045, side * 0.011]], [0.0015, 0.0015], 4, sand); s.ball(0.018, 0.047, side * 0.011, 0.003, 0.004, 0.003, 2, 5, dark);
+  }
+  return s.geometry(true);
+}
+
 /** Small shells: a snail's cone, half a clam, a flake or two of dried Halimeda. */
 function shells() {
   const s = new Shape(), cream = [0.78, 0.7, 0.56], pink = [0.8, 0.56, 0.5], weed = [0.62, 0.66, 0.5];
@@ -82,6 +94,16 @@ export function buildShoreLife(textures, fp) {
     make({ casts: true, geometry: gull(), cell: 9.0, grid: n(14), seed: 24, size: [0.72, 0.88], lift: 0.0,
       rule: `${SAND} keep = sand * step(0.03, -water) * step(-water, 0.4) * step(-12.0, shore) * 0.08;`,
       move: `turn = atan(-uWind.y, -uWind.x) + (h.x - 0.5) * 0.9 + 0.3 * sin(t * 0.21 + h.y * 9.0); p.y += 0.004 * sin(t * 2.3 + h.x * 30.0) * step(0.1, position.y);` }),
+    // Ghost crabs, on the dry sand above the wash: still, then a run sideways; come within four metres and one is down its hole.
+    make({ geometry: ghostCrab(), cell: 2.4, grid: n(30), seed: 29, size: [0.8, 1.4], lift: 0.0,
+      rule: `${SAND} keep = sand * step(0.1, -water) * step(-water, 0.9) * step(-14.0, shore) * 0.35;`,
+      move: `float cycle = t * 0.12 + h.x * 20.0, leg = fract(cycle), dash = smoothstep(0.0, 0.06, leg) * (1.0 - smoothstep(0.06, 0.1, leg)), where = floor(cycle);
+        vec2 from = (lrHash22(vec2(where, h.y * 50.0)) - 0.5) * 1.6, to = (lrHash22(vec2(where + 1.0, h.y * 50.0)) - 0.5) * 1.6, at = mix(from, to, smoothstep(0.0, 0.1, leg));
+        turn = atan(to.y - from.y, to.x - from.x) + 1.5708;
+        shift = vec3(at.x, 0.0, at.y);
+        p.y += bend * 0.006 * sin(t * 40.0 + position.x * 300.0) * dash;
+        { vec3 off = vec3(rel.x + at.x - uYou.x, 0.0, rel.y + at.y - uYou.y); p *= smoothstep(2.5, 4.5, length(off)); }`,
+    }),
     // Lizards: still for a while, then a dash of a metre, tail swinging.
     make({ geometry: lizard(), cell: 3.5, grid: n(22), seed: 25, size: [0.8, 1.25], lift: 0.001,
       rule: `keep = step(0.45, -water) * (0.04 + 0.25 * smoothstep(0.1, 0.5, land.g)) * (1.0 - smoothstep(0.3, 0.6, land.r)) * (1.0 - step(0.5, land.b));`,

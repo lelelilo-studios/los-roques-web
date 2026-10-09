@@ -985,7 +985,7 @@ export async function start(canvas, onProgress = () => {}) {
       if (!walker.diving) L.up = false;
       // Bubbles: a few from your mouth every few seconds while you are down (more as the want grows), a stream on the way up when you are out of air.
       const mouth = rig.own, ahead = [Math.sin(walker.yaw) * 0.08, -Math.cos(walker.yaw) * 0.08];
-      if (dived) { L.puff -= dt; if (L.puff <= 0 || L.up) { L.puff = L.up ? 0.12 : 2.5 + 3 * bubbles.random() - 2 * L.want; bubbles.let(mouth.x + ahead[0], mouth.y - 0.09, mouth.z + ahead[1], L.up ? 3 : 2 + Math.round(4 * bubbles.random()), 0.02, 0.0035); if (!L.up) sound.breath('bubbles'); } }
+      if (dived) { L.puff -= dt; if (L.up && L.puff > 0.12) L.puff = 0.12; if (L.puff <= 0) { L.puff = L.up ? 0.12 : 2.5 + 3 * bubbles.random() - 2 * L.want; bubbles.let(mouth.x + ahead[0], mouth.y - 0.09, mouth.z + ahead[1], L.up ? 3 : 2 + Math.round(4 * bubbles.random()), 0.02, 0.0035); if (!L.up) sound.breath('bubbles'); } }
       // Going under, the air your body carries down with it; coming up, the snorkel blown clear and, after a long one, a gasp.
       if (walker.diving && !L.was) { for (let k = 0; k < 4; k++) bubbles.let(mouth.x - ahead[0] * (2 + 3 * k), mouth.y - 0.15 - 0.1 * k, mouth.z - ahead[1] * (2 + 3 * k), 12, 0.16, 0.003, [0, -0.5, 0]); }
       if (!walker.diving && L.was) { sound.breath('blast'); if (L.air < 30) sound.breath('gasp'); }
@@ -1210,7 +1210,9 @@ export async function start(canvas, onProgress = () => {}) {
     landmarks.update(rig.eye, night);
     graph.starTurn = env.hours / 24 * 2 * Math.PI;
     boats.update(rig.eye, clock.time, shared.uSeaLevel.value);
-    birds.update(rig.eye, clock.time);
+    birds.update(rig.eye, clock.time, shared.uSeaLevel.value);
+    // (A pelican gone into the sea: the splash of it, heard as far as it is.)
+    for (const q of birds.splashes) { const far = Math.hypot(q.x - rig.own.x, q.z - rig.own.z); if (far < 250) { spray.burst(wrap64(q.x), shared.uSeaLevel.value, wrap64(q.z), clock.time, [0, 0], 60, true, 2.2); sound.slap(1.8, 1 / (1 + (far / 30) ** 2)); for (let k = 0; k < 3; k++) bubbles.let(q.x, shared.uSeaLevel.value - 0.3 - 0.2 * k, q.z, 14, 0.25, 0.004); } }
     for (const kind of life) kind.update(rig.eye);
     turtle.update(rig.eye, clock.time, shared.uSeaLevel.value);
     shared.uWaveHere.value.fromArray(boats.weightsAt(rig.eye.x, rig.eye.z, 3));
@@ -1850,7 +1852,7 @@ void main() { outColor = vec4(lrRagged(uPts[int(gl_FragCoord.x)]), 0.0, 0.0, 1.0
         tier: tierName, data: manifest.version, reversedDepth: R.reversed,
         gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
         size: { ...R.size }, dynamicScale: dynamic.scale, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
-        frames, time: clock.time, memory: { ...renderer.info.memory }, contextLost: gl.isContextLost(), mode: rig.mode, sound: !!sound.on, soundState: sound.ctx?.state || 'none', soundError: sound.error || null, software, pace: dynamic.pace, nearestBird: birds.nearest,
+        frames, time: clock.time, life: life.length, memory: { ...renderer.info.memory }, contextLost: gl.isContextLost(), mode: rig.mode, sound: !!sound.on, soundState: sound.ctx?.state || 'none', soundError: sound.error || null, software, pace: dynamic.pace, nearestBird: birds.nearest,
         terrain: terrain.clipmap.stats, water: water.clipmap.stats, programs: renderer.info.programs?.length,
         places: places.map(p => p.id), labels: (features.labels || []).length, boats: boats.count, birds: birds.count, landmarks: landmarks.group.children.length,
       };

@@ -134,7 +134,7 @@ export class Walker {
     // then a long glide, 0.65 m/s (hurried 0.9). At the surface: face down with a slow kick, 0.5 m/s; head up,
     // breaststroke, 0.8; hurried, 1.1. And each stroke surges: fastest as the kick ends, slowest as the knees
     // are drawn up for the next.
-    const surge = this.afloat || this.diving ? 1 + 0.12 * (1 - (this.swimFloat || 0)) * Math.cos(this.stroke - (this.diving ? 0.9 : 6.1)) : 1;
+    const surge = this.afloat || this.diving ? 1 + (this.diving ? 0.1 : 0.12) * (1 - (this.swimFloat || 0)) * Math.cos(this.stroke - (this.diving ? 0.9 : 6.1)) : 1;
     if (this.diving) {
       speed = (input.run ? 0.9 : 0.65) * surge;
       const cl = Math.cos(this.look);

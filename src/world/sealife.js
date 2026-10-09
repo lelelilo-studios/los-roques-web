@@ -241,7 +241,8 @@ export function fish(long, { deep = 0.34, thick = 0.14, fork = 0.6, fins = 0.3, 
  */
 export function buildSeaLife(textures, fp) {
   if (!fp.life) return [];
-  const n = g => (fp.life > 1 ? g : Math.round(g * 0.7 / 2) * 2), make = o => new Scatter(o, textures, fp.shadowTaps);
+  // (On the simplest setting: the grass, two corals, the sea fans, the fishes about the coral, the silversides and the turtles, on lattices four tenths as wide.)
+  const n = g => (fp.life > 1 ? g : fp.life < 1 ? Math.max(8, Math.round(g * 0.4 / 2) * 2) : Math.round(g * 0.7 / 2) * 2), LITE = [1, 2, 8, 3, 6, 7, 31], make = o => (fp.life < 1 && !LITE.includes(o.seed) ? null : new Scatter(o, textures, fp.shadowTaps));
   // Everything rooted sways with the surge: back and forth along the wind's line, the tips most.
   const surge = `vec2 push = uWind.xy * sin(t * 1.4 + dot(wxz, uWind.xy) * 0.35 + h.y * 2.0) + vec2(-uWind.y, uWind.x) * 0.4 * sin(t * 0.9 + h.x * 6.0);`;
   // A fish: where it is put (`shift`, from its home in its cell), the way it heads, the beat of its tail; and how
@@ -461,5 +462,5 @@ export function buildSeaLife(textures, fp) {
         shift = vec3(cos(turn), 0.0, sin(turn)) * 1.5 * sin(t * 0.17 + sh * 9.0) + vec3(0.0, water * (0.35 + 0.3 * h.w), 0.0);
         ${swim('0.03')} ${shy}`,
     }),
-  ];
+  ].filter(Boolean);
 }
