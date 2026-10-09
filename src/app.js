@@ -57,6 +57,7 @@ import { buildHelm } from './ui/helm.js';
 import { Wake } from './sim/wake.js';
 import { Seaways, Passage } from './sim/route.js';
 import { Bubbles } from './world/bubbles.js';
+import { YOU } from './world/scatter.js';
 import { buildChart } from './ui/chart.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
@@ -1393,6 +1394,8 @@ export async function start(canvas, onProgress = () => {}) {
       shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh, figure.cloth, figure.hair, figure.face.eyes, figure.face.hairs] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     falling?.update(clock.time, dt, you.air || [0, 0]);
+    // (Where you are, for the fishes: they keep off you when you are in the water with them.)
+    YOU.value.set(rig.own.x - rig.eye.x, rig.own.z - rig.eye.z, rig.own.y, rig.mode === 'walk' && (walker.afloat || walker.diving || walker.depth > 0.5) && board.k < 0.5 ? 1 : 0);
     bubbles.update(rig.mode === 'walk' ? dt : 0, rig.eye, surfaceAt, clock.time, R.size.height / (2 * Math.tan(rig.camera.fov * Math.PI / 360)));
     graph.render(opaque, water.mesh, rig.camera, clouds, overlay);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
