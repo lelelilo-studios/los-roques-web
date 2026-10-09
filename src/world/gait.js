@@ -45,7 +45,7 @@ export class Gait {
 
   /** Standing at ease at (x, z), facing `heading`: both feet down, side by side. */
   reset(x, z, heading) {
-    this.feet.forEach((f, i) => { const [hx, hz] = this.home(i, x, z, heading); Object.assign(f, { x: hx, z: hz, yaw: heading + f.side * TOE_OUT, down: true, since: 9, strike: 0, pitch: 0, lift: 0, from: null, to: null, ankle: [hx, this.prop.ankle, hz], planted: 1, ahead: 0, sunk: undefined }); });
+    this.feet.forEach((f, i) => { const [hx, hz] = this.home(i, x, z, heading); Object.assign(f, { x: hx, z: hz, yaw: heading + f.side * TOE_OUT, down: true, since: 9, strike: 0, pitch: 0, lift: 0, pivot: 0, from: null, to: null, ankle: [hx, this.prop.ankle, hz], planted: 1, ahead: 0, sunk: undefined }); });
     this.phase = 0; this.still = 9; this.moving = false; this.shift = 0; this.shiftV = 0; this.settling = -1; this.events.length = 0;
     this.vary = [1, 1]; this.varyTo = [1, 1]; this.late = [0, 0]; this.ride = 0; this.dice = 12345;
   }
@@ -80,10 +80,16 @@ export class Gait {
     if (dt > 0 && !c.hold) {
       // Starting off from rest: the first foot goes at once. Sideways it is the one on the side you are going to;
       // otherwise the one further behind, or the other one from last time.
+      // (Which foot that will be is settled as soon as you wish to go, before you have moved: your weight goes
+      // over the other one first. `c.wish`: the way you wish to go, in the world.)
+      if (!moving && !this.moving && c.wish && !airborne()) {
+        const back = feet.map(f => (f.x - c.x) * c.wish[0] + (f.z - c.z) * c.wish[1]), side = c.wish[0] * rx + c.wish[1] * rz;
+        this.first ??= Math.abs(side) > 0.6 ? (side > 0 ? 1 : 0) : Math.abs(back[0] - back[1]) > 0.04 ? (back[0] < back[1] ? 0 : 1) : this.next;
+      } else if (!moving) this.first = null;
       if (moving && !this.moving && !airborne()) {
         const back = feet.map(f => (f.x - c.x) * c.vx + (f.z - c.z) * c.vz);
-        const first = Math.abs(across) > 0.6 ? (across > 0 ? 1 : 0) : Math.abs(back[0] - back[1]) > 0.04 * speed ? (back[0] < back[1] ? 0 : 1) : this.next;
-        this.phase = stance - (first ? Math.PI : 0) - 1e-4;
+        const first = this.first ?? (Math.abs(across) > 0.6 ? (across > 0 ? 1 : 0) : Math.abs(back[0] - back[1]) > 0.04 * speed ? (back[0] < back[1] ? 0 : 1) : this.next);
+        this.phase = stance - (first ? Math.PI : 0) - 1e-4; this.first = null;
       }
       this.moving = moving;
       if (moving) this.hurry = false;
@@ -145,6 +151,9 @@ export class Gait {
           // A planted foot can be turned only so far against the body before it has to give: spun round faster
           // than you can step, it pivots on its ball, where it stands.
           const twist = wrapPi(h + f.side * TOE_OUT - f.yaw), give = Math.abs(twist) - 0.75;
+          // (And it does so with its heel up, as a foot turns on its ball: the heel begins to come up as the
+          // twist nears what the foot can take, and goes down again when it has come round. `f.pivot`: 0..1.)
+          { const to = ease(clamp((Math.abs(twist) - 0.5) / 0.22, 0, 1)); f.pivot = (f.pivot || 0) + (to - (f.pivot || 0)) * (1 - Math.exp(-dt * (to > (f.pivot || 0) ? 30 : 9))); }
           if (give > 0) {
             const bx = f.x + Math.sin(f.yaw) * 0.126, bz = f.z - Math.cos(f.yaw) * 0.126;
             f.yaw += Math.sign(twist) * give;
@@ -153,6 +162,22 @@ export class Gait {
         }
       });
     }
+    // A run is a bounce: you are lowest as you pass over the foot that bears you, and between one foot and the
+    // next you are off the ground, rising and falling as a thing thrown does. (`ride`: metres up from where
+    // the hips would otherwise be.)
+    let ride = 0;
+    if (run > 0 && moving) {
+      const u = [0, 1].map(i => (((this.phase + (i ? Math.PI : 0)) % TAU) + TAU) % TAU), on = u.findIndex(v => v < stance);
+      if (on >= 0) ride = -0.055 * Math.sin(Math.PI * u[on] / stance);
+      else { const v = clamp(Math.min(...u.map(q => (q - stance) / Math.max(Math.PI - stance, 1e-3)).filter(q => q >= 0)), 0, 1), T = (Math.PI - stance) / Math.max(this.rate || 1e-3, 1e-3); ride = 9.81 * T * T / 8 * 4 * v * (1 - v); }
+      ride *= run;
+    }
+    // (`rose`: how far that has lifted the hips since they were last posed: a heel that comes up as the leg
+    // needs it must know, or it comes up a frame late and the leg is drawn out straight in between.)
+    this.ride ??= 0;
+    const rodeAt = this.ride;
+    if (dt > 0) this.ride += (ride - this.ride) * (1 - Math.exp(-dt * 28));
+    const rose = this.ride - rodeAt;
     // Where each foot is now, in the body's frame.
     const A = prop.ankle, hl = 0.026 + A - 0.06, bl = 0.035 + A - 0.06, L = legs;
     // (The ankle when the foot is tipped up on its heel by t, or down on its ball by f: [forward, up]. bodyshape.js footAt.)
@@ -173,7 +198,7 @@ export class Gait {
         const t = f.strike * (1 - Math.min(1, f.since / 0.11)) ** 2;
         // (By rule, only in the last tenth of its stance, once the other foot is down: from a third of a metre
         // behind you to four tenths, where it leaves the ground. Before that it rises only as the leg needs: below.)
-        let push = Math.max(PUSH * clamp((-f.ahead - 0.33 * L) / (0.115 * L), 0, 1) ** 1.3, 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)));
+        let push = Math.max(PUSH * clamp((-f.ahead - 0.33 * L) / (0.115 * L), 0, 1) ** 1.3, 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)), 0.4 * (f.pivot || 0));
         ground = c.groundAt(f.x, f.z);
         // And the heel comes up as far as the leg needs it to: a leg left behind you does not pull your hips
         // down after it, it goes up on to its ball until, all but straight, it reaches. (c.hips: where your hip
@@ -182,7 +207,7 @@ export class Gait {
         // degrees where a person's is at five.)
         if (c.hips && !c.hold && t <= 0.002 && f.ahead < -0.04 && crouch < 0.3) {
           const H = c.hips[f.side < 0 ? 0 : 1], most = 0.996 * prop.leg;       // (a leg 0.4 % short of straight has its knee bent ten degrees; 1.5 % short, twenty)
-          const far = q => { const [qa, qh] = ballDown(q); return Math.hypot(f.x + dx * qa - H[0], ground + qh - (f.sunk || 0) - H[1], f.z + dz * qa - H[2]); };
+          const far = q => { const [qa, qh] = ballDown(q); return Math.hypot(f.x + dx * qa - H[0], ground + qh - (f.sunk || 0) - H[1] - rose, f.z + dz * qa - H[2]); };
           if (far(push) > most) { let lo = push, hi = PUSH; for (let n = 0; n < 7; n++) { const mid = (lo + hi) / 2; if (far(mid) > most) lo = mid; else hi = mid; } push = hi; }
         }
         const [a, hgt] = t > 0.002 ? heelUp(t) : ballDown(push);
@@ -222,7 +247,9 @@ export class Gait {
     // Your weight goes over the foot that bears it: the hips shift a couple of centimetres that way.
     // (Nobody stands quite still: standing a while, your weight drifts slowly from one foot towards the other.)
     const idle = clamp((this.still - 1.5) / 2, 0, 1) * (c.hold ? 0 : 1) * (1 - crouch), drift = 0.011 * idle * (Math.sin((c.time || 0) * 0.31 + 1.3) + 0.4 * Math.sin((c.time || 0) * 0.83));
-    const bear = feet.map(f => (f.down ? f.planted : 0)), want = drift + (bear[1] - bear[0]) / (bear[0] + bear[1] + 0.3) * 0.024 * clamp(speed / 0.8 + (airborne() ? 0.5 : 0), 0, 1) * (1 - 0.5 * run);
+    // (About to set off: over the foot that will stay down, before the other leaves the sand.)
+    const ready = !moving && this.first !== null && this.first !== undefined && !c.hold ? (this.first ? -0.026 : 0.026) * (1 - crouch) : 0;
+    const bear = feet.map(f => (f.down ? f.planted : 0)), want = drift + ready + (bear[1] - bear[0]) / (bear[0] + bear[1] + 0.3) * 0.024 * clamp(speed / 0.8 + (airborne() ? 0.5 : 0), 0, 1) * (1 - 0.5 * run);
     // (Eased both ways: weight does not jump from one foot to the other.)
     if (dt > 0) { this.shiftV = (this.shiftV || 0) + (81 * (want - this.shift) - 18 * (this.shiftV || 0)) * dt; this.shift += this.shiftV * dt; }
     // The arms swing against the legs (an arm is forward when its own foot is back), further the faster you go;
@@ -251,17 +278,6 @@ export class Gait {
     // over (so it is taken a little ahead of the shift), and nearly level again as you pass over the foot: which
     // is why it hardly lowers the top of each rise (Gard and Childress, 1997).
     const list = clamp((this.shift + 0.3 * (this.shiftV || 0)) / 0.024, -1.6, 1.6) * 0.04;
-    // A run is a bounce: you are lowest as you pass over the foot that bears you, and between one foot and the
-    // next you are off the ground, rising and falling as a thing thrown does. (`ride`: metres up from where
-    // the hips would otherwise be.)
-    let ride = 0;
-    if (run > 0 && moving) {
-      const u = [0, 1].map(i => (((this.phase + (i ? Math.PI : 0)) % TAU) + TAU) % TAU), on = u.findIndex(v => v < stance);
-      if (on >= 0) ride = -0.055 * Math.sin(Math.PI * u[on] / stance);
-      else { const v = clamp(Math.min(...u.map(q => (q - stance) / Math.max(Math.PI - stance, 1e-3)).filter(q => q >= 0)), 0, 1), T = (Math.PI - stance) / Math.max(this.rate || 1e-3, 1e-3); ride = 9.81 * T * T / 8 * 4 * v * (1 - v); }
-      ride *= run;
-    }
-    if (dt > 0) this.ride += (ride - this.ride) * (1 - Math.exp(-dt * 28));
     return { feet: out, shift: this.shift, arm: reach, armLate: this.late.slice(), list, ride: this.ride, run, turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase - 0.08) ** 4 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
   }
 }

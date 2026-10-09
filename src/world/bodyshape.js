@@ -663,7 +663,7 @@ export function reach(hip, target, l1, l2, bend) {
  * The result's `home` is where the gait's origin (the ground under your weight) is in this frame, and `eye`
  * where your eye really is (it goes down with the hips, and round the neck as the head turns).
  */
-export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0, pace = null, sink = 0, touch = null, touchL = null, gait = null, dip = 0, turn = 0, carry = null }) {
+export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {}, slope = [0, 0], wade = 0, detail = false, breath = 0, pace = null, sink = 0, touch = null, touchL = null, gait = null, dip = 0, turn = 0, carry = null, bank = 0 }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   // (You lean into a hill, and back coming down one.)
   const crouch = Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy));
@@ -680,7 +680,8 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   const ride = gait ? gait.ride || 0 : 0, low = gait ? 0.05 * (gait.run || 0) : 0, sunk = dip - ride + low;
   // (Her pelvis lists as her weight goes over one foot, the other hip dropping; her shoulders tilt the other way
   // by half as much, and her head stays level. `list`: left hip lower, positive.)
-  const list = gait ? (gait.list || 0) * (1 - Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy))) : 0, tiltTop = -0.5 * list;
+  // (`bank`: going round a bend she leans into it, all of her up to her neck: to her right, positive.)
+  const list = (gait ? (gait.list || 0) * (1 - Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy))) : 0) - bank, tiltTop = -0.5 * (list + bank) - bank;
   const sy = eye - PROP.eyeToShoulder + 0.004 * breath - (gait ? 0.95 * sunk : 0), shoulder = [0, sy, PROP.back + 0.02];      // (It used to back away from the eye as you looked down, up to 10 cm, to keep out of your view: and the neck was drawn out to it.)
   const joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [], shoulders: [], reached: [], elbows: [], feet: [], hands: [], crouch, lean };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.

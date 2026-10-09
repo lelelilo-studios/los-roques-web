@@ -133,7 +133,23 @@ export class Walker {
     if (this.sitting || this.seated > 0.02) speed = 0;  // (seated, the same keys move your legs: see app.js)
     // (You do not start or stop at once: the first pace takes you up to speed, the last one brings you to rest.)
     const faster = wx * speed * this.vx + wz * speed * this.vz > this.vx * this.vx + this.vz * this.vz, k = 1 - Math.exp(-dt * (onGround ? (this.gaited ? (faster ? 4.2 : 6) : 9) : 3.5));
+    const was = Math.hypot(this.vx, this.vz);
     this.vx += (wx * speed - this.vx) * k; this.vz += (wz * speed - this.vz) * k;
+    // Setting off from standing, your weight goes over one foot before the other leaves the ground (a quarter of
+    // a second, in which you hardly move: world/gait.js shifts the hips), and then you gather speed over two or
+    // three paces, no harder than a walker pushes off (2.4 m/s2). Only how fast you are going is held back so,
+    // not which way: turning as you go is as quick as it was.
+    // (`launch`: seconds since you began to wish to go; already under way, it is as if long ago.)
+    if (onGround && this.gaited) {
+      this.launch = wl > 0.01 && speed > 0 ? (was > 0.35 ? 9 : (this.launch || 0) + dt) : 0;
+      const e = Math.min(1, Math.max(0, (this.launch - 0.22) / 0.2)), most = was + (0.2 + 2.2 * e * e * (3 - 2 * e)) * dt, now = Math.hypot(this.vx, this.vz);
+      if (now > most) { this.vx *= most / now; this.vz *= most / now; }
+      /** Which way you wish to go, on your feet (a direction in the world), or null: the gait shifts your weight for the first step by it. */
+      this.wish = wl > 0.01 && speed > 0 ? [wx / wl, wz / wl] : null;
+      // (Going round a bend you lean into it, as anything does that turns while it travels: a few degrees.)
+      const lean = Math.max(-0.1, Math.min(0.1, 0.8 * now * (this.turnRate || 0) / 9.81));
+      this.bank = (this.bank || 0) + (lean - (this.bank || 0)) * (1 - Math.exp(-dt * 5));
+    } else { this.launch = 0; this.wish = null; this.bank = 0; }
     // Your body's heading. Going anywhere, it comes round to where you look; standing, it stays, and only
     // follows when your head has turned as far as it goes (seated: slowly, shuffling round on your seat).
     {
