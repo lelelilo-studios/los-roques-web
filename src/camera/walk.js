@@ -316,12 +316,15 @@ export class Walker {
       this.kick = (this.kick || 0) + (0.5 + 0.9 * going) * dt * 2 * Math.PI;
       // How you are swimming, each 0..1 and eased: face down and kicking; upright, treading water; under.
       const still = going < 0.25 && Math.abs(input.fwd) < 0.01 && Math.abs(input.right) < 0.01;
-      this.swimFloat = (this.swimFloat || 0) + ((!this.diving && (this.headUp ?? 1) < 0.5 ? 1 : 0) - (this.swimFloat || 0)) * k(0.35);
+      // (Face down at the surface; and hanging still under water, where a diver's arms are by her sides, not held out ahead.)
+      this.swimFloat = (this.swimFloat || 0) + (((!this.diving && (this.headUp ?? 1) < 0.5) || (this.diving && still) ? 1 : 0) - (this.swimFloat || 0)) * k(0.35);
       this.swimTread = (this.swimTread || 0) + ((!this.diving && (this.headUp ?? 1) >= 0.5 && still ? 1 : 0) - (this.swimTread || 0)) * k(0.6);
       this.swimUnder = (this.swimUnder || 0) + ((this.diving ? 1 : 0) - (this.swimUnder || 0)) * k(0.4);
       // (Your body comes round after your look, half a second behind it, and leans into the turn.)
       const off = Math.atan2(Math.sin(this.yaw - (this.swimYaw ?? this.yaw)), Math.cos(this.yaw - (this.swimYaw ?? this.yaw)));
+      // (No further behind it than a neck turns: looking right round, you looked back through your own shoulders.)
       this.swimYaw = (this.swimYaw ?? this.yaw) + off * k(0.45);
+      { const left = Math.atan2(Math.sin(this.yaw - this.swimYaw), Math.cos(this.yaw - this.swimYaw)); if (Math.abs(left) > 0.75) this.swimYaw = this.yaw - Math.sign(left) * 0.75; }
       this.swimBank = (this.swimBank || 0) + (Math.max(-0.45, Math.min(0.45, off * 0.9 * going)) - (this.swimBank || 0)) * k(0.3);
     } else { this.swimFloat = this.swimTread = this.swimUnder = 0; this.swimYaw = this.yaw; this.swimBank = 0; }
     this.stride += ((onGround ? Math.hypot(this.vx, this.vz) / 1.4 : 0) - this.stride) * (1 - Math.exp(-dt * 8));

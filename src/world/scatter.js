@@ -26,6 +26,7 @@ ${casterGLSL}
 #endif
 in vec2 aCell;                // this instance's cell, counted from the middle one
 in float aBend;               // how much this vertex moves with the water or the wind (0 at the root)
+uniform float uCrowd;         // (tests) how many times likelier a cell is to hold its thing: to see the rare ones
 uniform vec4 uYou;            // you, to what lives here: x, z relative to the camera, your eye's height, 1 if you are in the water
 uniform vec4 uBody;           // (fishes) the body's length, depth and thickness at scale 1 (m); how many kinds share this mesh
 out vec3 vN;                  // the surface's own way out (0 if the shape has none: the fragment then makes one from the facets)
@@ -44,6 +45,7 @@ void main() {
   // The kind's rule: how likely a cell like this holds a thing (0..1), from the ground and the maps.
   float keep = 0.0;
   ${rule}
+  keep *= uCrowd;
   float edge = length(aCell) / uKind.y;
   // (Strictly more than the cell's draw: the hash comes out as exactly 0 for one cell in some hundreds, and
   // a rule that says "none here" must mean none.)
@@ -313,14 +315,14 @@ export class Scatter {
         tBenthic: { value: textures.benthic }, tLand: { value: textures.land },
         uLattice: { value: new THREE.Vector4() }, uKind: { value: new THREE.Vector4(cell, grid / 2, seed * 13.7, sway) },
         uSize: { value: new THREE.Vector4(size[0], size[1], lift, 0) }, uLook: { value: new THREE.Vector4(look.twoSided ? 1 : 0, look.gloss || 0, look.through || 0, look.leaf || 0) },
-        uSkin: { value: new THREE.Vector4(skin, bumpy, 0, 0) }, uBody: { value: new THREE.Vector4(...body) }, uYou: YOU,
+        uSkin: { value: new THREE.Vector4(skin, bumpy, 0, 0) }, uBody: { value: new THREE.Vector4(...body) }, uYou: YOU, uCrowd: CROWD,
       }),
     });
     /** The same thing drawn into the shadow map (same vertex shader, so shadows sway with what casts them), or null. */
     this.caster = casts ? new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: vertexShader(rule, move), fragmentShader: casterFragment, vertexColors: true, side: THREE.DoubleSide, defines: { LR_CASTER: 1 },
       uniforms: { ...uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...WAVE_UNIFORMS, ...CASTER_UNIFORMS]),
-        tBenthic: this.material.uniforms.tBenthic, tLand: this.material.uniforms.tLand, uLattice: this.material.uniforms.uLattice, uKind: this.material.uniforms.uKind, uSize: this.material.uniforms.uSize, uYou: YOU, uBody: this.material.uniforms.uBody },
+        tBenthic: this.material.uniforms.tBenthic, tLand: this.material.uniforms.tLand, uLattice: this.material.uniforms.uLattice, uKind: this.material.uniforms.uKind, uSize: this.material.uniforms.uSize, uYou: YOU, uCrowd: CROWD, uBody: this.material.uniforms.uBody },
     }) : null;
     this.mesh = new THREE.Mesh(g, this.material);
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false;
@@ -339,6 +341,8 @@ export class Scatter {
 
 /** Where you are, for whatever lives here and minds you (one for all the kinds): x, z relative to the camera, your eye's height, 1 if you are in the water. app.js sets it. */
 export const YOU = { value: new THREE.Vector4(0, 0, 0, 0) };
+/** (Tests.) How many times likelier every cell is to hold its thing: 1 as it is; more, to have the rare animals close by to look at. */
+export const CROWD = { value: 1 };
 
 /** Collects triangles with a colour and a "bend" per vertex; a small sibling of landmarks.js's MeshBuilder. */
 export class Shape {

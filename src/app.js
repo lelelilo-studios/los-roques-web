@@ -57,7 +57,7 @@ import { buildHelm } from './ui/helm.js';
 import { Wake } from './sim/wake.js';
 import { Seaways, Passage } from './sim/route.js';
 import { Bubbles } from './world/bubbles.js';
-import { YOU } from './world/scatter.js';
+import { YOU, CROWD } from './world/scatter.js';
 import { buildChart } from './ui/chart.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
@@ -1604,6 +1604,10 @@ export async function start(canvas, onProgress = () => {}) {
     passage: () => (passage ? { name: passage.name, s: passage.s, length: passage.way.length, rate: passage.rate, hours: env.hours } : null),
     chart: (on = true) => { chart?.show(on); return !!chart; },
     chartWhere: name => chart?.where(name) || null,
+    /** (Tests.) Makes every kind of living thing so many times likelier in each of its cells: the rare animals are then close by to be looked at. */
+    crowd: (k = 1) => { CROWD.value = k; },
+    /** (Tests.) Brings one kind of living thing close together: the kind made with this seed (world/sealife.js) is given cells of so many metres. Returns whether there is such a kind. */
+    dense(seed, cell) { const k = life.find(q => Math.abs(q.material.uniforms.uKind.value.z - seed * 13.7) < 1e-3); if (!k) return false; k.cell = cell; k.material.uniforms.uKind.value.x = cell; const pos = k.mesh.geometry.attributes.position.array; let bad = 0, far = 0; for (const v of pos) { if (!Number.isFinite(v)) bad++; far = Math.max(far, Math.abs(v)); } return { vertices: pos.length / 3, notNumbers: bad, reach: far, visible: k.mesh.visible, cells: k.grid }; },
     /** What of her is drawn just now (tests): her body, her hair, her mask. */
     wears: () => (figure ? { body: figure.mesh.visible, hair: figure.hair.visible && figure.hair.material.uniforms.uSeen.value > 0.5, mask: figure.mask.mask.visible, maskDown: figure.maskDown } : null),
     /** Your breath (tests): seconds of air left, the want of it, whether your body is taking you up; and how many bubbles there are. */
