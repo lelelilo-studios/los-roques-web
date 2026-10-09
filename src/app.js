@@ -238,7 +238,7 @@ export async function start(canvas, onProgress = () => {}) {
     Object.assign(walker, { stand: p.stand, crouch: 0.54 * p.stand, sit: 0.095 + 0.985 * p.torso + p.eyeToShoulder, legs: (p.thigh + p.shin) / 0.87 });
     gait.prop = { hip: p.hip, ankle: p.ankle, leg: p.thigh + p.shin };
     if (walker.body >= was - 0.01) { walker.eyeY += p.stand - walker.body; walker.body = p.stand; }
-    opaque.add(figure.mesh, figure.hair);
+    opaque.add(figure.mesh, figure.cloth, figure.hair);
     // The sand round you as real sand: your body presses into it (sim/patch.js).
     if (tier.fp.patch && !params.stamps) { patch = new SandPatch(renderer, tier.fp.patch); pressing = patch.toolMaterial(figure.mesh.material.uniforms.tBones);
       ripples = new Ripples(renderer, patch, 512); crossing = ripples.crossMaterial(figure.mesh.material.uniforms.tBones);
@@ -828,7 +828,7 @@ export async function start(canvas, onProgress = () => {}) {
     const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
     // Your body: walking on the bottom, or swimming where the water carries you (tipped along your look when dived).
     body.mesh.visible = walking && !figure;
-    if (figure) figure.mesh.visible = walking;
+    if (figure) figure.mesh.visible = figure.cloth.visible = walking;
     if (standing && you.on) {
       // You were posed before the camera was set (advance): now everything of you is put where it stands,
       // relative to the camera. (Looked at from outside, the camera is not at your eye.)
@@ -977,7 +977,7 @@ export async function start(canvas, onProgress = () => {}) {
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
       const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: rig.own.x - rig.eye.x, y: body.mesh.position.y - 0.3, z: rig.own.z - rig.eye.z }, half: standing ? 1.3 : 2 } : null;
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh, figure.hair] : [])] : [])], [], casters, own);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh, figure.cloth, figure.hair] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     falling?.update(clock.time, dt, you.air || [0, 0]);
     graph.render(opaque, water.mesh, rig.camera, clouds, falling || pools ? overlay : null);

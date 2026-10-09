@@ -92,15 +92,15 @@ float lrCloth(vec3 p, vec3 n) {
   float back = smoothstep(uCloth.y - 0.03, uCloth.y + 0.03, p.z);
   float f = min(uCloth.x + 0.165 - p.y, p.y - (uCloth.x + 0.012 + mix(1.02, 0.72, back) * max(abs(p.x) - mix(0.028, 0.04, back), 0.0)));
   if (p.y < uCloth.x + 0.22) return f;
-  // The top: a cup over each breast, a band under the bust all the way round, straps up to the back of the neck.
+  // The top: a cup over each breast, and a band under the bust all the way round. (The strings up to the
+  // back of her neck are cords of their own now, not paint: pipeline/body/build.mjs.)
   for (int i = 0; i < 2; i++) {
     vec3 a = uApex[i], d = p - a;
     float side = sign(a.x);
     float cup = n.z < 0.35 ? min(0.074 - length(d * vec3(1.02, 0.92, 0.6)), 0.058 - 0.74 * abs(d.x - 0.006 * side) - 0.5 * d.y) : -1.0;
-    float strap = n.z < 0.5 && p.y > a.y ? 0.0065 - lrFromLine(p.xy, vec2(a.x + 0.006 * side, a.y + 0.07), vec2(0.052 * side, uCloth.w + 0.03)) : -1.0;
-    f = max(f, max(cup, strap));
+    f = max(f, cup);
   }
-  return max(f, max(0.0065 - abs(p.y - uCloth.z), n.z > 0.3 && abs(p.x) < 0.07 ? 0.0065 - abs(p.y - (uCloth.w + 0.035)) : -1.0));
+  return max(f, 0.0065 - abs(p.y - uCloth.z));
 }
 in float vThin;
 in float vPart;
@@ -133,8 +133,13 @@ void main() {
   // (How wide a pixel is, in the field's own terms, is taken from the field itself and held to a centimetre:
   // taken after the vertices' say-so it leapt wherever that changed, and a pixel there came out half cloth: thin
   // dashed red lines across her stomach, along the edges of the mesh.)
+#ifdef LR_CLOTH
+  // (The bikini itself, a mesh of its own lifted off the skin: all of it is cloth, and its vertices say how far in from its rim each point is.)
+  float field = vCloth, cloth = 1.0, hem = 1.0 - smoothstep(0.0, 0.005, abs(field));
+#else
   float around = lrCloth(vRest, vRestN), field = vCloth > -0.019 ? around : -1.0;
   float edge = min(fwidth(around), 0.01) + 1e-5, cloth = smoothstep(-edge, edge, field), hem = 1.0 - smoothstep(0.0, 0.004, abs(field));
+#endif
   // (The weave is two and a half millimetres from thread to thread: seen from further off than a pixel can
   // show that, or at a slant, it is left out. Drawn regardless it made rings and stripes across the cloth.)
   float thread = 1.0 - smoothstep(0.0005, 0.0012, max(fwidth(vRest.x), fwidth(vRest.y)));
@@ -265,6 +270,24 @@ export class Figure {
         uShowHead: { value: 0 }, uShowUnder: { value: 1 }, uWaterY: { value: -1e9 }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
+    // Her bikini, as cloth: the skin where it lies, cut out, lifted off the body and drawn taut
+    // (pipeline/body/build.mjs). It is skinned by the same bones and drawn by the same shader as the skin
+    // under it, told that all of it is cloth; it is wet where she is wet, shaded where she is shaded.
+    {
+      const g = new THREE.BufferGeometry(), n = arrays['cloth.position'].length / 3;
+      g.setAttribute('position', new THREE.BufferAttribute(arrays['cloth.position'], 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(arrays['cloth.normal'], 3, true));
+      g.setAttribute('uv', new THREE.BufferAttribute(arrays['cloth.uv'], 2, true));
+      g.setAttribute('aJoints', new THREE.BufferAttribute(arrays['cloth.joints'], 4, false));
+      g.setAttribute('aWeights', new THREE.BufferAttribute(arrays['cloth.weights'], 4, true));
+      g.setAttribute('aCloth', new THREE.BufferAttribute(Float32Array.from(arrays['cloth.cloth'], v => v / 127 * info.clothScale), 1));
+      g.setAttribute('aThin', new THREE.BufferAttribute(new Float32Array(n).fill(info.thinScale), 1));
+      g.setAttribute('aPart', new THREE.BufferAttribute(new Uint8Array(n), 1, false));
+      g.setIndex(new THREE.BufferAttribute(arrays['cloth.index'], 1));
+      const of = this.mesh.material;
+      this.cloth = new THREE.Mesh(g, new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, LR_CLOTH: 1 }, uniforms: of.uniforms }));
+      this.cloth.frustumCulled = false; this.cloth.matrixAutoUpdate = false; this.cloth.visible = false;
+    }
     // Her hair (hair.js): tied back, a tail down her back. From her own eyes you see it only in your shadow;
     // from behind her it is most of what you see of her head.
     this.hairModel = new Hair({ info, arrays, hair }, shadowTaps, this.mesh.material.uniforms);
@@ -298,5 +321,7 @@ export class Figure {
   place(x, y, z, yaw, pitch = 0) {
     const m = this.mesh;
     m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix);
+    // (Her bikini is where she is, and seen when she is.)
+    this.cloth.matrix.copy(m.matrix); this.cloth.matrixWorld.copy(m.matrix); this.cloth.visible = m.visible;
   }
 }
