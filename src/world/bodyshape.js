@@ -935,16 +935,20 @@ const ease = (a, b, v) => { const k = Math.min(1, Math.max(0, (v - a) / (b - a))
  * @param {object} p
  * @param {number} p.stroke  phase of the stroke, radians (2 pi per stroke)
  * @param {number} [p.under]  0 at the surface (the body slopes down behind the head), 1 dived (it lies along the way you look)
+ * @param {number} [p.float]  0..1: lying face down at the surface, arms trailing at your sides, the legs kicking up and down in turn (`kick`: their phase)
+ * @param {number} [p.tread]  0..1: upright, treading water: the hands sculling out before you, the legs turning under you
  */
-export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
+export function poseSwim(t, h, { stroke, under = 0, float = 0, tread = 0, kick = 0, detail = false }) {
   const SKIN = SKIN0, SHIRT = SHIRT0, SHORTS = SHORTS0;
   t.n = 0; h.n = 0;
-  const u = stroke / (2 * Math.PI) - Math.floor(stroke / (2 * Math.PI));
+  // (Under water the stroke is a pull and a kick in the first third of it, and a glide, arms ahead, for the rest.)
+  const turn = stroke / (2 * Math.PI) - Math.floor(stroke / (2 * Math.PI)), u = under > 0.5 ? (turn < 0.36 ? 0.38 + turn / 0.36 * 0.62 : 0) : turn;
   // (At the surface only the head is out of the water: the shoulders ride a hand's breadth under it, and the
   // arms work below the surface, seen through it. Dived, the body lies in line with the head.)
   // (The shoulders are where a neck can have them: 21 cm under the eye and a little behind it. At 30 cm, as they
   // were, the neck was stretched half as long again: seen from the side, a head on a stalk.)
-  const chest = [0, -0.21 + 0.05 * under, 0.11 + 0.06 * under], sink = 0.34 - 0.3 * under, hip = [0, chest[1] - PROP.torso * sink, chest[2] + PROP.torso * Math.sqrt(1 - sink * sink)];
+  // (Face down the body lies nearly level; treading water it hangs nearly upright.)
+  const chest = [0, -0.21 + 0.05 * under, 0.11 + 0.06 * under], sink = Math.min(0.97, (0.34 - 0.3 * under) * (1 - float) + 0.1 * float + (0.96 - 0.34) * tread * (1 - under)), hip = [0, chest[1] - PROP.torso * sink, chest[2] + PROP.torso * Math.sqrt(1 - sink * sink)];
   const joints = { hips: [], knees: [], ankles: [], shoulders: [], elbows: [], wrists: [], hip, chest };
   // How far through each part of the stroke: the pull (hands out and back), the tuck (hands in under the chest,
   // knees drawn up), the reach (hands shoot forward as the legs kick).
@@ -953,9 +957,12 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
   for (const side of [-1, 1]) {
     // Arms.
     const sh = [side * PROP.shoulder, chest[1] + 0.02, chest[2]];
-    const ahead = [sh[0] - side * 0.11, sh[1] - 0.05, sh[2] - 0.5], out = [sh[0] + side * 0.27, sh[1] - 0.08, sh[2] - 0.24], inn = [sh[0] - side * 0.07, sh[1] - 0.19, sh[2] - 0.13];
-    const target = lerp3(lerp3(lerp3(ahead, out, pull), inn, tuck), ahead, shoot);
-    const elbow = reach(sh, target, PROP.upperArm, PROP.forearm, [side * 0.8, -0.6, 0.1]);
+    const ahead = [sh[0] - side * 0.07, sh[1] - 0.05, sh[2] - 0.5], out = [sh[0] + side * 0.27, sh[1] - 0.08, sh[2] - 0.24], inn = [sh[0] - side * 0.07, sh[1] - 0.19, sh[2] - 0.13];
+    // (Face down: the arms trail at the sides, the hands by the hips. Treading: the hands scull out and in before you, a little under the surface.)
+    const trail = [sh[0] + side * 0.1, sh[1] - 0.05 - 0.02 * Math.sin(kick + side), sh[2] + 0.46];
+    const scull = [sh[0] + side * (0.26 + 0.1 * Math.sin(stroke * 2.2 + side * 0.6)), sh[1] - 0.1 - 0.03 * Math.cos(stroke * 2.2), sh[2] - 0.2 + 0.07 * Math.cos(stroke * 2.2 + side * 0.6)];
+    const target = lerp3(lerp3(lerp3(lerp3(lerp3(ahead, out, pull), inn, tuck), ahead, shoot), trail, float), scull, tread * (1 - under));
+    const elbow = reach(sh, target, PROP.upperArm, PROP.forearm, float > 0.5 ? [side * 0.6, 0.5, 0.5] : [side * 0.8, -0.6, 0.1]);
     const dir = [target[0] - elbow[0], target[1] - elbow[1], target[2] - elbow[2]], dl = Math.hypot(...dir) || 1;
     const tip = [target[0] + dir[0] / dl * HAND, target[1] + dir[1] / dl * HAND, target[2] + dir[2] / dl * HAND];
     const sleeve = lerp3(sh, elbow, 0.3);                               // (short sleeves, pushed up by the water)
@@ -974,7 +981,10 @@ export function poseSwim(t, h, { stroke, under = 0, detail = false }) {
     // Legs: trailing straight, drawn up with the knees apart, kicked back.
     const hipJ = [side * PROP.hip, hip[1], hip[2]], back = [hip[2] - chest[2], hip[1] - chest[1]], bl = Math.hypot(back[0], back[1]) || 1, bz = back[0] / bl, by = back[1] / bl;
     const straight = [hipJ[0] + side * 0.03, hipJ[1] + by * 0.84 + 0.03, hipJ[2] + bz * 0.84], up = [hipJ[0] + side * 0.3, hipJ[1] + by * 0.4 - 0.06, hipJ[2] + bz * 0.4];
-    const ankle = lerp3(straight, up, drawn), knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * 0.9, -0.5, -0.2]);
+    // (Face down the legs kick in turn, from the hip, the knees giving a little. Treading, they turn under you, one after the other.)
+    const beat = Math.sin(kick + (side > 0 ? Math.PI : 0)), flutter = [straight[0], straight[1] + 0.12 * beat, straight[2] - 0.03 * Math.abs(beat)];
+    const round = stroke * 1.9 + (side > 0 ? Math.PI : 0), egg = [hipJ[0] + side * (0.17 + 0.1 * Math.sin(round)), hipJ[1] - 0.6 + 0.07 * Math.cos(round), hipJ[2] - 0.08 + 0.13 * Math.cos(round + 1.3)];
+    const ankle = lerp3(lerp3(lerp3(straight, up, drawn), flutter, float), egg, tread * (1 - under)), knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, tread > 0.5 && under < 0.5 ? [side * 0.5, 0.2, -1] : [side * 0.9 * (1 - float), -0.5, -0.2]);
     const hem = lerp3(hipJ, knee, 0.55), calf = lerp3(knee, ankle, 0.35);
     t.tube(hipJ, hem, [0.088, 0.092], [0.074, 0.076], SHORTS);
     t.tube(hem, knee, [0.07, 0.072], [0.055, 0.057], SKIN);

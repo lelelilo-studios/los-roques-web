@@ -130,14 +130,19 @@ export class Walker {
     const wl = Math.hypot(wx, wz);
     if (wl > 1) { wx /= wl; wz /= wl; }
     let speed;
+    // Swimming (appendix H of the plan: paces a person keeps, not a racer's). Under water: a pull and a kick,
+    // then a long glide, 0.65 m/s (hurried 0.9). At the surface: face down with a slow kick, 0.5 m/s; head up,
+    // breaststroke, 0.8; hurried, 1.1. And each stroke surges: fastest as the kick ends, slowest as the knees
+    // are drawn up for the next.
+    const surge = this.afloat || this.diving ? 1 + 0.12 * (1 - (this.swimFloat || 0)) * Math.cos(this.stroke - (this.diving ? 0.9 : 6.1)) : 1;
     if (this.diving) {
-      speed = input.run ? 1.2 : 0.7;
+      speed = (input.run ? 0.9 : 0.65) * surge;
       const cl = Math.cos(this.look);
       vy = input.fwd * Math.sin(this.look) * speed;
       wx = input.fwd * sy * cl + input.right * cy; wz = -input.fwd * cy * cl + input.right * sy;
     } else {
       // Wading slows with depth; from about waist deep, swimming is quicker than pushing through it.
-      speed = Math.max(wadeSpeed(d, input.run), (input.run ? 1.5 : 0.8) * smooth(0.7, 1.1, d));
+      speed = Math.max(wadeSpeed(d, input.run), (input.run ? 1.1 : 0.5 + 0.3 * (this.headUp ?? 1)) * surge * smooth(0.7, 1.1, d));
     }
     const onGround = !this.diving && !this.afloat;
     // (Crouched you shuffle along at less than half the pace.)
@@ -275,12 +280,16 @@ export class Walker {
         this.eyeY = want + this.eyeOff; this.onFeet = true;
       } else { this.onFeet = false; this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 16 : 10))); }
       // Under we go: with the dive key in water deep enough, or by swimming forward while looking well down.
-      this.diveTimer = this.afloat && this.look < -0.35 && input.fwd > 0.5 ? this.diveTimer + dt : 0;
-      if ((input.down && d >= 0.9) || this.diveTimer > 0.3) this.diving = true;
+      // (Only with the dive key. Swimming forward while you looked well down used to take you under too: now that is
+      // how you swim along face down, looking at the bottom through your mask.)
+      this.diveTimer = 0;
+      if (input.down && d >= 0.9) this.diving = true;
     } else {
-      this.eyeY += (vy + (input.up ? 0.8 : 0) - (input.down ? 0.6 : 0)) * dt;
+      // (Left to yourself you float up, a foot a second near the surface, more slowly the deeper you are: your lungs are squeezed there.)
+      const idle = !input.up && !input.down && Math.abs(input.fwd) < 0.01 && Math.abs(input.right) < 0.01, rise = idle ? 0.3 * Math.exp(-Math.max(0, this.surf - this.eyeY) / 3) : 0;
+      this.eyeY += (vy + (input.up ? 0.8 : 0) - (input.down ? 0.6 : 0) + rise) * dt;
       const lo = g2 + 0.35, hi = this.surf - FLOAT;
-      if (hi < lo + 0.05 || (this.eyeY >= hi && (vy > 0.01 || input.up))) this.diving = false;      // back up through the surface
+      if (hi < lo + 0.05 || (this.eyeY >= hi && (vy > 0.01 || input.up || idle))) this.diving = false;      // back up through the surface
       this.eyeY = Math.min(Math.max(this.eyeY, lo), Math.max(lo, hi));
       this.diveTimer = 0;
     }
@@ -299,7 +308,22 @@ export class Walker {
     if (onGround && travelled < 0.2 * dt && !this.gaited) this.phase += swung * 1.6;
     const stride = onGround ? Math.min(1, Math.hypot(this.vx, this.vz) / 1.2) : 0;
     // Afloat: a stroke every second and a half when swimming along, a slow scull when lying still.
-    if (!onGround) this.stroke += (0.22 + 0.45 * Math.min(1, Math.hypot(this.vx, this.vz) / 0.7)) * dt * 2 * Math.PI;
+    // Afloat: a breaststroke every two seconds (hurried, a little quicker; lying still, a slow scull); under water
+    // one pull and kick in three seconds and a half, most of it glide; face down, the legs kick 1.4 times a second.
+    if (!onGround) {
+      const going = Math.min(1, Math.hypot(this.vx, this.vz) / 0.5), k = v => 1 - Math.exp(-dt / v);
+      this.stroke += (this.diving ? (input.run ? 0.38 : 0.29) * (0.3 + 0.7 * going) : 0.2 + (input.run ? 0.42 : 0.3) * going) * dt * 2 * Math.PI;
+      this.kick = (this.kick || 0) + (0.5 + 0.9 * going) * dt * 2 * Math.PI;
+      // How you are swimming, each 0..1 and eased: face down and kicking; upright, treading water; under.
+      const still = going < 0.25 && Math.abs(input.fwd) < 0.01 && Math.abs(input.right) < 0.01;
+      this.swimFloat = (this.swimFloat || 0) + ((!this.diving && (this.headUp ?? 1) < 0.5 ? 1 : 0) - (this.swimFloat || 0)) * k(0.35);
+      this.swimTread = (this.swimTread || 0) + ((!this.diving && (this.headUp ?? 1) >= 0.5 && still ? 1 : 0) - (this.swimTread || 0)) * k(0.6);
+      this.swimUnder = (this.swimUnder || 0) + ((this.diving ? 1 : 0) - (this.swimUnder || 0)) * k(0.4);
+      // (Your body comes round after your look, half a second behind it, and leans into the turn.)
+      const off = Math.atan2(Math.sin(this.yaw - (this.swimYaw ?? this.yaw)), Math.cos(this.yaw - (this.swimYaw ?? this.yaw)));
+      this.swimYaw = (this.swimYaw ?? this.yaw) + off * k(0.45);
+      this.swimBank = (this.swimBank || 0) + (Math.max(-0.45, Math.min(0.45, off * 0.9 * going)) - (this.swimBank || 0)) * k(0.3);
+    } else { this.swimFloat = this.swimTread = this.swimUnder = 0; this.swimYaw = this.yaw; this.swimBank = 0; }
     this.stride += ((onGround ? Math.hypot(this.vx, this.vz) / 1.4 : 0) - this.stride) * (1 - Math.exp(-dt * 8));
     // The head rises as you pass over the planted leg and is lowest as the next heel comes down (three and a half
     // centimetres at a walk); your weight goes over each foot in turn, the head swinging two centimetres to that

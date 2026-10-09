@@ -57,6 +57,7 @@ export class Ambience {
     this.wade = loop('white', 'bandpass', 1500, 0.7);
     this.rain = loop('white', 'highpass', 2400, 0.3);
     this.deep = loop('brown', 'lowpass', 110, 0.5);
+    this.snorkel = loop('pink', 'bandpass', 600, 1.6);           // your breath in the tube
     this.time = 0; this.nextGull = 18; this.seed = 7;
     // Your boat's outboard (a two-stroke twin: it fires twice a turn, 30 times a second idling and 185 flat out):
     // the firing as a saw and the lumpy half of it under it, through the exhaust's own low-pass; the exhaust
@@ -133,6 +134,15 @@ export class Ambience {
       this.set(this.wash.gain.gain, heard * 0.22 * smooth(0.5, 9, speed) * (b ? b.wet : 0), 0.2); this.set(this.wash.filter.frequency, 500 + 90 * speed, 0.2);
       this.set(this.hiss.gain.gain, heard * 0.05 * smooth(5, 11, speed), 0.2);
     }
+    // In the water. Face down at the surface you hear your own breath through the snorkel, in and out; dived, the
+    // crackle of the reef (the snapping shrimp, everywhere and always) and your own pulse as the want of air
+    // grows. (s.swim: { snorkel: 0..1, reef: 0..1, want: 0..1, beat: true on the frame your heart beats })
+    {
+      const w = s.swim || {}, breathing = w.snorkel || 0, cycle = this.time * 2 * Math.PI / 4.2, air = Math.max(0, Math.sin(cycle)) ** 1.5 + 0.8 * Math.max(0, -Math.sin(cycle + 0.4)) ** 1.5;
+      this.set(this.snorkel.gain.gain, 0.085 * breathing * air, 0.08); this.set(this.snorkel.filter.frequency, Math.sin(cycle) > 0 ? 520 : 760, 0.15);
+      if (under && (w.reef || 0) > 0.05 && this.time > (this.nextSnap || 0)) { this.nextSnap = this.time + 0.04 + 0.22 * this.rnd() / w.reef; this.burst('white', 'bandpass', 3200 + 2600 * this.rnd(), 2.2, 0.035 * w.reef * (0.3 + this.rnd()), 0.001, 0.012 + 0.02 * this.rnd(), this.rnd() * 1.6 - 0.8); }
+      if (w.beat && (w.want || 0) > 0.02) { this.burst('brown', 'lowpass', 70, 1.2, 0.5 * w.want, 0.012, 0.09); this.burst('brown', 'lowpass', 58, 1.2, 0.32 * w.want, 0.012, 0.11, 0, 0.16); }
+    }
     // A laughing gull, somewhere along the beach, every half minute or so by day.
     if (s.day && !under && s.shores.length && this.time > this.nextGull) { this.gull(); this.nextGull = this.time + 22 + 40 * this.rnd(); }
   }
@@ -144,6 +154,13 @@ export class Ambience {
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + attack); g.gain.exponentialRampToValueAtTime(1e-4, t + attack + decay);
     src.connect(filter).connect(g).connect(p).connect(this.out);
     src.start(t, this.rnd() * 4, attack + decay + 0.05);
+  }
+
+  /** Coming up: 'blast', the snorkel blown clear; 'gasp', the first breath after a long one held; 'bubbles', air let go under water. */
+  breath(kind) {
+    if (kind === 'blast') { this.burst('white', 'bandpass', 1500, 0.8, 0.5, 0.02, 0.28); this.burst('pink', 'bandpass', 700, 1.0, 0.3, 0.03, 0.4, 0, 0.05); }
+    else if (kind === 'gasp') { this.burst('pink', 'bandpass', 900, 1.4, 0.32, 0.25, 0.5); this.burst('pink', 'bandpass', 520, 1.4, 0.2, 0.2, 0.7, 0, 0.95); }
+    else for (let k = 0; k < 6; k++) this.burst('pink', 'bandpass', 420 + 500 * this.rnd(), 3.0, 0.1 + 0.1 * this.rnd(), 0.004, 0.05 + 0.05 * this.rnd(), 0, 0.06 * k + 0.05 * this.rnd());
   }
 
   /** Your boat's bottom coming down on the water: `hard`, in g. */
@@ -278,6 +295,7 @@ export class Sound {
   update(dt, scene) { if (this.on && this.ctx.state === 'running') try { this.ambience.update(dt, scene); } catch (e) { this.error ??= String(e?.message || e); } }
   step(info) { if (this.on && this.ctx.state === 'running') try { this.ambience.step(info); } catch (e) { this.error ??= String(e?.message || e); } }
   seat(how, wet) { if (this.on && this.ctx.state === 'running') try { this.ambience.seat(how, wet); } catch (e) { this.error ??= String(e?.message || e); } }
+  breath(kind) { if (this.on && this.ctx.state === 'running') try { this.ambience.breath(kind); } catch (e) { this.error ??= String(e?.message || e); } }
   slap(hard, near) { if (this.on && this.ctx.state === 'running') try { this.ambience.slap(hard, near); } catch (e) { this.error ??= String(e?.message || e); } }
   touch(kind, how, speed, side = 1) { if (this.on && this.ctx.state === 'running') try { this.ambience.touch(kind, how, speed, side); } catch (e) { this.error ??= String(e?.message || e); } }
 }

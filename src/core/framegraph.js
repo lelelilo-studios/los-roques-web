@@ -59,6 +59,7 @@ uniform float uStarTurn;       // radians the star field has turned
 uniform vec3 uWind;
 uniform float uRain;
 uniform float uUnderEye;       // 1 when the eye itself is under the sea surface
+uniform vec4 uMask;            // your mask: how far on, seconds since your face came out of the sea, the want of air, your pulse
 uniform vec4 uLens;            // the sea at the camera as a plane: its height there, its slope east and south; w = 1 when the camera is at the surface (the waterline crosses the lens)
 uniform sampler2D tWaterType;
 
@@ -89,11 +90,42 @@ float lrRain(vec3 dir, float far) {
 }
 uniform vec3 uCamRight, uCamUp, uCamFwd;
 in vec2 vUv;
+// What your mask does to the picture: its soft dark rim, the pocket for your nose at the bottom, the edges of
+// the drops on its glass; and, as the want of air grows, the picture closing in from its edges with your pulse.
+vec3 lrThroughMask(vec3 col, vec2 at, float drops) {
+  if (uMask.x < 0.01 && uMask.z < 0.01) return col;
+  vec2 p = (at - 0.5) * vec2(2.0, 2.0);
+  float rim = smoothstep(0.86, 1.08, pow(pow(abs(p.x) * 0.93, 3.2) + pow(abs(p.y) * 0.98, 3.2), 1.0 / 3.2));
+  float nose = (1.0 - smoothstep(0.0, 1.0, length(vec2(p.x / 0.17, (p.y + 1.02) / 0.3))));
+  col *= 1.0 - uMask.x * min(1.0, 0.94 * rim + 0.9 * smoothstep(0.35, 0.9, nose));
+  col *= 1.0 - 0.35 * drops * uMask.x;
+  float want = uMask.z * (0.55 + 0.45 * uMask.w);
+  col *= 1.0 - want * smoothstep(0.25, 1.15, length(p)) * 0.85;
+  return col;
+}
 layout(location = 0) out vec4 outColor;
 void main() {
-  vec4 scene = texture(tScene, vUv);
-  float depth = texture(tDepth, vUv).r;
-  vec3 ray = uCamFwd + (vUv.x * 2.0 - 1.0) * uCamRight + (vUv.y * 2.0 - 1.0) * uCamUp;
+  // The glass of your mask, just out of the sea: for half a second a sheet of water runs down it, and for a
+  // quarter of a minute a few drops sit on it, each a small lens that shows the world upside down. What is
+  // behind is looked at a little to one side of where it is.
+  vec2 uv = vUv;
+  float wetGlass = 0.0;
+  if (uMask.x > 0.5 && uMask.y < 16.0) {
+    float sheet = (1.0 - smoothstep(0.0, 0.55, uMask.y)) * smoothstep(-0.25, 0.1, vUv.y - (1.0 - uMask.y / 0.5));
+    uv.x += sheet * 0.012 * sin(vUv.y * 70.0 + 9.0 * lrHash12(vec2(floor(vUv.x * 40.0), 2.0)));
+    uv.y += sheet * 0.02;
+    float dry = 1.0 - smoothstep(9.0, 15.0, uMask.y);
+    for (int i = 0; i < 7; i++) {
+      vec2 h = lrHash22(vec2(float(i) * 7.3 + 1.0, 3.7));
+      vec2 at = vec2(0.12 + 0.76 * h.x, 0.25 + 0.6 * h.y - 0.012 * uMask.y * (0.3 + h.x));
+      float size = (0.012 + 0.014 * fract(h.x * 9.7)) * dry, far = length((vUv - at) * vec2(1.6, 1.0)) / max(size, 1e-4);
+      if (far < 1.0) { uv = at - (vUv - at) * 0.7; wetGlass = max(wetGlass, smoothstep(0.75, 1.0, far)); }
+    }
+    uv = clamp(uv, vec2(0.001), vec2(0.999));
+  }
+  vec4 scene = texture(tScene, uv);
+  float depth = texture(tDepth, uv).r;
+  vec3 ray = uCamFwd + (uv.x * 2.0 - 1.0) * uCamRight + (uv.y * 2.0 - 1.0) * uCamUp;
   vec3 dir = normalize(ray);
   vec3 col;
   // Is this pixel looked at through water? Decided per pixel from what was drawn, so the waterline across the
@@ -164,7 +196,7 @@ void main() {
       col += surfaceLight / PI * 0.3 * step(0.72, h.y) * (1.0 - smoothstep(0.0, 0.0018, miss)) * exp(-kd * eyeDepth);
     }
     col = col * (1.0 - 0.55 * meniscus) + glint * 0.12 * surfaceLight / PI;
-    outColor = vec4(col, 1.0);
+    outColor = vec4(lrThroughMask(col, vUv, wetGlass), 1.0);
     return;
   }
   if (lrIsSky(depth)) {
@@ -210,8 +242,8 @@ void main() {
     // The clouds were marched at reduced size with a different starting offset per pixel: a small tent blur
     // turns that grain into soft edges.
     vec2 t = 1.0 / vec2(textureSize(tCloud, 0));
-    vec4 cloud = texture(tCloud, vUv) * 0.4 + 0.15 * (texture(tCloud, vUv + t * vec2(0.9, 0.4)) + texture(tCloud, vUv + t * vec2(-0.4, 0.9))
-               + texture(tCloud, vUv + t * vec2(-0.9, -0.4)) + texture(tCloud, vUv + t * vec2(0.4, -0.9)));
+    vec4 cloud = texture(tCloud, uv) * 0.4 + 0.15 * (texture(tCloud, uv + t * vec2(0.9, 0.4)) + texture(tCloud, uv + t * vec2(-0.4, 0.9))
+               + texture(tCloud, uv + t * vec2(-0.9, -0.4)) + texture(tCloud, uv + t * vec2(0.4, -0.9)));
     col = col * cloud.a + cloud.rgb;
   }
   if (uRain > 0.01) {
@@ -223,7 +255,7 @@ void main() {
     col += uRain * lrRain(dir, lrIsSky(depth) ? 1e5 : far) * uSkyE / PI * 0.55;
   }
   col = col * (1.0 - 0.55 * meniscus) + glint * 0.12 * (uSunE * lrSaturate(uSunDir.y) + uSkyE) / PI;
-  outColor = vec4(col, 1.0);
+  outColor = vec4(lrThroughMask(col, vUv, wetGlass), 1.0);
 }`;
 
 // HDR -> display values (with a little bloom), luma in alpha for the anti-aliasing pass.
@@ -275,7 +307,7 @@ export class FrameGraph {
     const { targets } = R;
     this.copy = new FullscreenPass(copyFragment, { tSrc: { value: targets.scene.texture } });
     this.composite = new FullscreenPass(compositeFragment, uniformsFor(
-      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType', 'uUnderEye', 'uLens', 'tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP', 'tShadowB', 'uShadowB', 'uShadowBP', 'tWaveC', 'uWaveTile', 'uWaveCamMod', 'uWaveCurve', 'uWaveHere'],
+      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType', 'uUnderEye', 'uLens', 'uMask', 'tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP', 'tShadowB', 'uShadowB', 'uShadowBP', 'tWaveC', 'uWaveTile', 'uWaveCamMod', 'uWaveCurve', 'uWaveHere'],
       { tScene: { value: targets.scene.texture }, tDepth: { value: targets.scene.depthTexture }, tCloud: { value: null }, uCloudOn: { value: 0 }, uStarTurn: { value: 0 } }));
     this.bloom = new Bloom(6);
     this.tonemap = new FullscreenPass(tonemapFragment, uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, 'uExposure'],

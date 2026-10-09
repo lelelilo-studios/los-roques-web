@@ -13,6 +13,7 @@
 import * as THREE from 'three';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { CAUSTIC_UNIFORMS } from '../shaders/chunks/caustics.glsl.js';
+import { Mask } from './mask.js';
 import { CASTER_UNIFORMS, casterFragment, casterGLSL, shadowGLSL } from './shadow.js';
 import { DATA_ROOT } from '../config.js';
 import { Hair } from './hair.js';
@@ -319,6 +320,8 @@ export class Figure {
     // from behind her it is most of what you see of her head.
     this.hairModel = new Hair({ info, arrays, hair }, shadowTaps, this.mesh.material.uniforms);
     this.hair = this.hairModel.mesh;
+    // Her diving mask and snorkel (mask.js): on her forehead ashore, over her eyes in the water.
+    this.mask = new Mask(shadowTaps, this.mesh.material.uniforms); this.maskDown = 0;
     this.headBone = info.bones.findIndex(b => b.name === 'head'); this.lift = 0;
     /** What draws it into a shadow map (Shadows.render looks for this). */
     this.mesh.userData.caster = new THREE.ShaderMaterial({
@@ -333,7 +336,10 @@ export class Figure {
    * @param {number[]} wind  the air's speed at her head, in the world (m/s)
    * @param {number} afloat  0 in the air .. 1 her head is under water
    */
-  swing(dt, origin, wind, afloat = 0) { this.hairModel.update(this.matrices, this.mesh.matrix, origin, dt, wind, afloat); }
+  swing(dt, origin, wind, afloat = 0) {
+    this.hairModel.update(this.matrices, this.mesh.matrix, origin, dt, wind, afloat);
+    this.mask.place(this.hairModel.links[0], this.maskDown, this.hair.visible ? this.hair.material.uniforms.uSeen.value : 0);
+  }
 
   /**
    * Her eyes for this frame (face.js): where they look against her head, and a blink when one is due. The skin
@@ -351,9 +357,9 @@ export class Figure {
   setPose(matrices, eye = this.info.eyeHeight) { this.matrices.set(matrices); this.boneTexture.needsUpdate = true; this.lift = eye - this.info.eyeHeight; }
 
   /** Stands the body with its feet at height y, heading `yaw` (as Body.place). `tilt`: a turn of the whole of her after that (her boat's pitch and roll, about her seat). */
-  place(x, y, z, yaw, pitch = 0, tilt = null) {
+  place(x, y, z, yaw, pitch = 0, tilt = null, roll = 0) {
     const m = this.mesh;
-    m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); if (tilt) m.matrix.premultiply(tilt); m.matrixWorld.copy(m.matrix);
+    m.position.set(x, y, z); m.rotation.set(pitch, -yaw, -roll, 'YXZ'); m.updateMatrix(); if (tilt) m.matrix.premultiply(tilt); m.matrixWorld.copy(m.matrix);
     // (Her bikini is where she is, and seen when she is.)
     this.cloth.matrix.copy(m.matrix); this.cloth.matrixWorld.copy(m.matrix); this.cloth.visible = m.visible;
     this.face.place(m.matrix, m.visible ? this.mesh.material.uniforms.uShowHead.value : 0);

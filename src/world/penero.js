@@ -30,7 +30,7 @@ export function breadthAt(x, y) {
   return s.chine + (s.half - s.chine) * (1 - Math.pow(1 - (y - s.chineY) / (s.sheer - s.chineY), 1.8));
 }
 
-class Builder {
+export class Builder {
   constructor() { this.p = []; this.n = []; this.c = []; this.inside = []; this.i = []; }
   vertex(p, n, c, inside = 0) { this.p.push(...p); this.n.push(...n); this.c.push(...c); this.inside.push(inside); return this.p.length / 3 - 1; }
   /** A sheet through rows of points (each row the same length), smooth across it; `colour(r, k)` for each point; faces seen from the side the rows turn clockwise on unless `flip`. */

@@ -56,6 +56,7 @@ import { Penero, ABOARD, hang } from './world/penero.js';
 import { buildHelm } from './ui/helm.js';
 import { Wake } from './sim/wake.js';
 import { Seaways, Passage } from './sim/route.js';
+import { Bubbles } from './world/bubbles.js';
 import { buildChart } from './ui/chart.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
@@ -246,7 +247,7 @@ export async function start(canvas, onProgress = () => {}) {
     Object.assign(walker, { stand: p.stand, crouch: 0.54 * p.stand, sit: 0.095 + 0.985 * p.torso + p.eyeToShoulder, legs: (p.thigh + p.shin) / 0.87 });
     gait.prop = { hip: p.hip, ankle: p.ankle, leg: p.thigh + p.shin };
     if (walker.body >= was - 0.01) { walker.eyeY += p.stand - walker.body; walker.body = p.stand; }
-    opaque.add(figure.mesh, figure.cloth, figure.hair, figure.face.eyes, figure.face.hairs);
+    opaque.add(figure.mesh, figure.cloth, figure.hair, figure.face.eyes, figure.face.hairs, ...figure.mask.meshes);
     // The sand round you as real sand: your body presses into it (sim/patch.js).
     if (tier.fp.patch && !params.stamps) { patch = new SandPatch(renderer, tier.fp.patch); pressing = patch.toolMaterial(figure.mesh.material.uniforms.tBones);
       ripples = new Ripples(renderer, patch, 512); crossing = ripples.crossMaterial(figure.mesh.material.uniforms.tBones);
@@ -259,6 +260,11 @@ export async function start(canvas, onProgress = () => {}) {
   const falling = tier.fp.grains ? new Falling(tier.fp.grains, tier.fp.grainShare) : null, overlay = new THREE.Scene();
   overlay.matrixWorldAutoUpdate = false;
   if (falling) overlay.add(falling.mesh);
+  // The air you let go under water, and what a dive and your kicks carry down (world/bubbles.js).
+  const bubbles = new Bubbles(tier.fp.grains ? 512 : 160); overlay.add(bubbles.points);
+  // Holding your breath: `air` seconds of it left of sixty (it goes 1.65 times as fast when you swim); from
+  // a little over half gone the want of it grows, and when it is gone you go up by yourself.
+  const lungs = { air: 60, want: 0, pulse: 0, beat: 0, up: false, was: false, faceOut: 99, mask: 0, puff: 0 };
   let pools = false;
   // Whether the sand at (x, z), ground height g, is wet from the waves: under the height the swash reaches there.
   // (As lr_shore's lrBeach has it, without the ragged edge: on a beach face the waves climb to their run-up; over
@@ -525,6 +531,8 @@ export async function start(canvas, onProgress = () => {}) {
     return { time: clock.time, shores: shorePoints, reef: seaAt(walker.x, walker.z).reef, wind: waves.wind.speed + (board.k >= 1 ? 0.8 * Math.abs(boat.speed) : 0), rain: shared.uRain.value, under: walker.under,
       depth: walker.depth, speed: Math.hypot(walker.vx, walker.vz), day: status.sunElevation > 2,
       // (Your boat: its engine runs from when you first open the throttle until you get out.)
+      // (In the water: your breath in the snorkel when your face is down, the reef's crackle when you are under near coral, your pulse.)
+      swim: { snorkel: walker.afloat && !walker.diving && walker.under ? 1 : 0, reef: walker.under ? Math.min(1, 0.25 + 1.5 * (ground.coverAt('benthic', walker.x, walker.z, [])[1] || 0)) : 0, want: lungs.want, beat: !!lungs.beatNow },
       boat: afloat.placed ? (q => ({ running: afloat.running, revs: boat.revs, speed: Math.abs(boat.speed), wet: boat.wet, dist: Math.hypot(q[0] - rig.own.x, q[2] - rig.own.z), bearing: Math.atan2(q[0] - rig.own.x, -(q[2] - rig.own.z)) - walker.yaw }))(boat.toWorld([-3.9, 0.6, 0])) : null };
   }
 
@@ -962,7 +970,33 @@ export async function start(canvas, onProgress = () => {}) {
    * You move on by dt: the walker (where you are going), your feet (the gait), and your body posed over them.
    * It is done before the camera is set, because your eye is the posed body's eye.
    */
+  /** Your breath, your mask and your bubbles, moved on by dt; returns the keys as your body lets you use them (out of air, it takes you up). */
+  const breathe = (dt, input) => {
+    const L = lungs, dived = walker.diving && walker.under, swimming = Math.abs(input.fwd) + Math.abs(input.right) > 0.01;      // (holding yourself down is not swimming along)
+    if (dt > 0) {
+      if (dived) L.air = Math.max(0, L.air - dt * (swimming ? 1.65 : 1)); else L.air = Math.min(60, L.air + dt * 14);
+      // (The want of air: nothing for the first half of it, then more and more. Your heart slows as you stay down, as a diver's does.)
+      const gone = 1 - L.air / 60, want = dived ? Math.min(1, Math.max(0, (gone - 0.5) / 0.45)) ** 1.4 : 0;
+      L.want += (want - L.want) * (1 - Math.exp(-dt / (want > L.want ? 0.8 : 0.35)));
+      const rate = (70 - 14 * Math.min(1, gone * 1.3)) / 60, was = L.pulse; L.pulse = (L.pulse + dt * rate) % 1; L.beatNow = L.pulse < was;
+      L.beat = Math.max(0, 1 - L.pulse / 0.22);
+      if (L.air <= 0 && dived) L.up = true;
+      if (!walker.diving) L.up = false;
+      // Bubbles: a few from your mouth every few seconds while you are down (more as the want grows), a stream on the way up when you are out of air.
+      const mouth = rig.own, ahead = [Math.sin(walker.yaw) * 0.08, -Math.cos(walker.yaw) * 0.08];
+      if (dived) { L.puff -= dt; if (L.puff <= 0 || L.up) { L.puff = L.up ? 0.12 : 2.5 + 3 * bubbles.random() - 2 * L.want; bubbles.let(mouth.x + ahead[0], mouth.y - 0.09, mouth.z + ahead[1], L.up ? 3 : 2 + Math.round(4 * bubbles.random()), 0.02, 0.0035); if (!L.up) sound.breath('bubbles'); } }
+      // Going under, the air your body carries down with it; coming up, the snorkel blown clear and, after a long one, a gasp.
+      if (walker.diving && !L.was) { for (let k = 0; k < 4; k++) bubbles.let(mouth.x - ahead[0] * (2 + 3 * k), mouth.y - 0.15 - 0.1 * k, mouth.z - ahead[1] * (2 + 3 * k), 12, 0.16, 0.003, [0, -0.5, 0]); }
+      if (!walker.diving && L.was) { sound.breath('blast'); if (L.air < 30) sound.breath('gasp'); }
+      L.was = walker.diving;
+      // (The glass of your mask: how long since your eyes came out of the water.)
+      const out = !walker.under; L.faceOut = out ? (L.faceWas ? L.faceOut + dt : 0) : 99; L.faceWas = out;
+      L.mask += ((walker.afloat || walker.diving ? 1 : 0) - L.mask) * (1 - Math.exp(-dt / 0.3));
+    }
+    return L.up ? { ...input, up: true, down: false, fwd: 0, right: 0 } : input;
+  };
   function advance(dt, input) {
+    input = breathe(dt, input);
     // (Aboard, or on your way in or out: the keys you walk with are the boat's, and your hands have their work.)
     if (walker.carried) { helmFrom(dt, input); input = NO_INPUT; }
     walker.step(dt, hand.low || handL.low ? { ...input, atWork: Math.max(hand.low, handL.low) } : input);          // (its own footfalls are not used: the gait says when a foot comes down)
@@ -1132,6 +1166,9 @@ export async function start(canvas, onProgress = () => {}) {
     }
     // Rain wets the ground in a quarter of a minute; the sun and the wind take a few minutes to dry it.
     if (dt > 0) { const rain = shared.uRain.value, wet = shared.uWet.value; shared.uWet.value = rain > wet ? wet + (rain - wet) * (1 - Math.exp(-dt / 6)) : Math.max(rain, wet - dt / 200); }
+    // Your mask through your own eyes (its rim, the drops on its glass, the want of air): core/framegraph.js. And on her: world/mask.js.
+    shared.uMask.value.set(rig.mode === 'walk' && !rig.outside ? lungs.mask * (1 - rig.out) : 0, lungs.faceOut, rig.mode === 'walk' ? lungs.want * (1 - rig.out) : 0, lungs.beat);
+    if (figure) figure.maskDown = lungs.mask;
     // (The camera behind her goes under when she dives: not when she floats with her face in the water.)
     rig.dt = dt; rig.under = walker.under && (walker.diving || !walker.afloat);
     // (Behind your boat the camera stands further back and higher, and in the middle.)
@@ -1202,7 +1239,8 @@ export async function start(canvas, onProgress = () => {}) {
         const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
         // (Folded into the deepest squat she is left out of her own eyes' picture; from behind she is there to be seen.)
         figure.mesh.visible = !you.folded || rig.out > 0.02; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading, 0, tilt);
-        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = board.k > 0.5 ? -1e9 : waterOver();      // (in your boat your feet are under the sea's level, and dry) figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hairModel.show(figure.mesh.visible ? hairSeen() : 0, wetHair(dt));
+        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = board.k > 0.5 ? -1e9 : waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hairModel.show(figure.mesh.visible ? hairSeen() : 0, wetHair(dt));
+        // (In your boat your feet are under the sea's level, and dry: nothing of you is in the water then.)
         // Her eyes: her head has nodded six tenths of the way to where you look, and her eyes take the rest. With the
         // camera held round in front of her for a moment (Alt), she glances at it.
         { const j = body.joints, at = rig.behind.held && rig.out > 0.9 ? (you.glance = (you.glance || 0) + dt) : (you.glance = 0);
@@ -1255,14 +1293,15 @@ export async function start(canvas, onProgress = () => {}) {
     else if (walking) {
       if (hand.ik > 0 || hand.amount > 0 || handL.ik > 0 || handL.amount > 0) { hand.reset(); handL.reset(); }          // (swimming: the hands have other work)
       for (const c of shared.uContact.value) c.w = 0;
-      const under = walker.diving ? 1 : 0;
+      // (Going under and coming up are movements: the body tips over into the dive and levels as it comes up, in under a second.)
+      const under = walker.swimUnder ?? (walker.diving ? 1 : 0), heading = walker.swimYaw ?? walker.yaw, bank = walker.swimBank || 0;
       // (Placed from your own eye: which is where the camera is, unless you are being looked at from outside.)
       const sx = rig.own.x - rig.eye.x, sz = rig.own.z - rig.eye.z;
-      body.pose({ swim: true, stroke: walker.stroke, under }); body.place(sx, walker.eyeY + walker.bob, sz, walker.yaw, under * walker.look);
+      body.pose({ swim: true, stroke: walker.stroke, under, float: walker.swimFloat || 0, tread: walker.swimTread || 0, kick: walker.kick || 0 }); body.place(sx, walker.eyeY + walker.bob, sz, heading, under * walker.look);
       if (figure) {
         // (Just lifted off your feet: part of the way over from standing still, in the frame you stood in.)
-        const over = goingOver(dt, body.joints, 'swim', { x: sx, y: walker.eyeY + walker.bob, z: sz, yaw: walker.yaw, pitch: under * walker.look });
-        figure.setPose(figureRig.pose(over.joints, 0), over.raw ? 0 : over.joints.eye[1]); figure.place(over.frame.x, over.frame.y, over.frame.z, over.frame.yaw, over.frame.pitch || 0);
+        const over = goingOver(dt, body.joints, 'swim', { x: sx, y: walker.eyeY + walker.bob, z: sz, yaw: heading, pitch: under * walker.look });
+        figure.setPose(figureRig.pose(over.joints, 0), over.raw ? 0 : over.joints.eye[1]); figure.place(over.frame.x, over.frame.y, over.frame.z, over.frame.yaw, over.frame.pitch || 0, null, bank);
         figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.hairModel.show(hairSeen(), wetHair(dt));
         figure.swing(dt, [rig.eye.x, rig.eye.z], [0, 0, 0], walker.under ? 1 : 0);
         figure.look(dt, 0, 0, 0, faceRandom); figure.face.place(figure.mesh.matrix, headSeen());
@@ -1350,11 +1389,12 @@ export async function start(canvas, onProgress = () => {}) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: Math.max(footing.heightAt(walker.x, walker.z), shared.uSeaLevel.value - 4), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
-      const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: rig.own.x - rig.eye.x, y: body.mesh.position.y - 0.3, z: rig.own.z - rig.eye.z }, half: standing ? 1.3 : 2 } : null;
+      const own = walking ? { meshes: figure ? [figure.mesh, figure.hair, ...figure.mask.meshes] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: rig.own.x - rig.eye.x, y: body.mesh.position.y - 0.3, z: rig.own.z - rig.eye.z }, half: standing ? 1.3 : 2 } : null;
       shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh, figure.cloth, figure.hair, figure.face.eyes, figure.face.hairs] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     falling?.update(clock.time, dt, you.air || [0, 0]);
-    graph.render(opaque, water.mesh, rig.camera, clouds, falling || pools ? overlay : null);
+    bubbles.update(rig.mode === 'walk' ? dt : 0, rig.eye, surfaceAt, clock.time, R.size.height / (2 * Math.tan(rig.camera.fov * Math.PI / 360)));
+    graph.render(opaque, water.mesh, rig.camera, clouds, overlay);
     labels?.update(rig.eye, shared.uViewProj.value, R.size.cssWidth, R.size.cssHeight);
   }
 
@@ -1561,6 +1601,10 @@ export async function start(canvas, onProgress = () => {}) {
     passage: () => (passage ? { name: passage.name, s: passage.s, length: passage.way.length, rate: passage.rate, hours: env.hours } : null),
     chart: (on = true) => { chart?.show(on); return !!chart; },
     chartWhere: name => chart?.where(name) || null,
+    /** What of her is drawn just now (tests): her body, her hair, her mask. */
+    wears: () => (figure ? { body: figure.mesh.visible, hair: figure.hair.visible && figure.hair.material.uniforms.uSeen.value > 0.5, mask: figure.mask.mask.visible, maskDown: figure.maskDown } : null),
+    /** Your breath (tests): seconds of air left, the want of it, whether your body is taking you up; and how many bubbles there are. */
+    lungs: () => ({ air: lungs.air, want: lungs.want, up: lungs.up, mask: lungs.mask, bubbles: bubbles.alive }),
     /** The wake at a place (tests): [height, how fast it changes, slick, foam]. */
     wakeAt: (x, z) => wake.read(x, z),
     /** How deep the still sea is at a place (tests; negative: dry land that much above it). */

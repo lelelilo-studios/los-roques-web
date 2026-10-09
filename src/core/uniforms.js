@@ -79,6 +79,8 @@ export const shared = {
   uUnderEye: { value: 0 },
   // (The sea where the camera is, as a plane: its height there, its slope east and south, and 1 if the camera is near enough to it for that to matter: the waterline across the lens.)
   uLens: { value: new THREE.Vector4(0, 0, 0, 0) },
+  // (Your mask, through your own eyes: x = how far it is on (its rim round the picture), y = seconds since your face came out of the water (the glass drains; a few drops stay), z = how hard the want of air presses (0..1), w = your pulse (0..1, a beat).)
+  uMask: { value: new THREE.Vector4(0, 99, 0, 0) },
   uRain: { value: 0 },
   uWet: { value: 0 },                                         // how wet the rain has left things: 0 dry .. 1 soaked (lags the rain)                                        // 0 dry .. 1 a downpour
   uDebug: { value: new THREE.Vector4() },                     // x: debug view of the water pass (0 = off)
