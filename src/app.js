@@ -652,7 +652,7 @@ export async function start(canvas, onProgress = () => {}) {
     // or seated, on sand or in water no deeper than your knee. (Its frame is the body's, as last posed.)
     const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
     const settling = Math.max(0, walker.body - (walker.bodyWant ?? walker.body)) + (walker.sitting ? Math.abs(seated.lean - (seated.leanTo ?? seated.lean)) * 0.45 : 0);
-    const reachable = { want: !!input.hand, open: input.open, openBy: input.openBy || 0, steerBy: input.steerBy || null, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
+    const reachable = { want: !!input.hand, open: input.open, openBy: input.openBy || 0, steerBy: input.steerBy || null, eyeAt: you.on ? you.eyeAt : null, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
       x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
     // (Both hands holding something, held up: they come together.)
     if (dt > 0) you.together = (you.together || 0) + ((hand.lift > 0.3 && handL.lift > 0.3 && hand.amount > 0.004 && handL.amount > 0.004 ? 1 : 0) - (you.together || 0)) * (1 - Math.exp(-dt * 4));
@@ -732,7 +732,14 @@ export async function start(canvas, onProgress = () => {}) {
     // Where that leaves the body's frame in the world, and your eye. (Your weight is where the walker is.)
     Object.assign(you, { on: true, home: j.home, x: walker.x - (j.home[0] * cy - j.home[2] * sy), y: feetY, z: walker.z - (j.home[0] * sy + j.home[2] * cy), cy, sy, heading, folded, eyeUp, reachable });
     // (Asked for less movement: your eye keeps its height and its line; the body under it still walks.)
-    const calm = 1 - walker.bobAmount, ex = j.eye[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = j.eye[1] + calm * 0.92 * you.dip, ez = j.eye[2];
+    // Your eye is her eye: where her head, on her neck, carries it (figurepose.js). Her skeleton is posed here,
+    // before the camera is put anywhere, and the camera goes to it. (The camera used to be put where the solver
+    // reckoned an eye would be, and her head put on the camera afterwards.)
+    const eyeIs = figure && figureRig ? (figureRig.pose(j, eyeUp), you.rigFor = j, figureRig.eyeNow) : j.eye;
+    // (For her hands, next frame: where her eye would be were she not leaning to anything. A hand held before
+    // her eyes and the lean that hand asks of her would otherwise chase one another.)
+    you.eyeAt = figure && figureRig ? figureRig.eyeFree : null;
+    const calm = 1 - walker.bobAmount, ex = eyeIs[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = eyeIs[1] + calm * 0.92 * you.dip, ez = eyeIs[2];
     if (!folded) {
       const head = [you.x + ex * cy - ez * sy, feetY + ey, you.z + ex * sy + ez * cy];
       you.headOff = [head[0] - floatAt[0], head[1] - floatAt[1], head[2] - floatAt[2]];
@@ -818,7 +825,7 @@ export async function start(canvas, onProgress = () => {}) {
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
         // (Just set down by the sea: part of the way over from swimming still.)
         const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
-        figure.mesh.visible = !you.folded; figure.setPose(figureRig.pose(over.joints, you.eyeUp), over.raw ? (body.joints.eye ? body.joints.eye[1] : you.eyeUp) : over.joints.eye[1]); figure.place(offX, you.y, offZ, you.heading);
+        figure.mesh.visible = !you.folded; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading);
         figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         // (And her fingers as rods, where they are: what she holds lies on them, and falls between them.)
@@ -1137,6 +1144,13 @@ export async function start(canvas, onProgress = () => {}) {
     eyeXZ: () => (you.on ? [you.x, you.z] : [rig.own.x, rig.own.z]),
     /** For tests: your feet as the gait has them (world), the joints as last posed (the body's frame), and where that frame stands. */
     gait: () => ({ feet: gait.feet.map(f => ({ x: f.x, z: f.z, yaw: f.yaw, down: f.down, pitch: f.pitch, ankle: f.ankle.slice() })), heading: walker.heading, yaw: walker.yaw, at: [walker.x, walker.z], you: { x: you.x, y: you.y, z: you.z, heading: you.heading, dip: you.dip }, eye: [rig.own.x, rig.own.y, rig.own.z] }),
+    /**
+     * For tests: her skeleton as posed (FigureRig.probe: what is stretched, the neck's length), with how far the
+     * first-person camera is from where her head carries her eye (metres), or null without her.
+     */
+    bones: () => { if (!figureRig) return null; const p = figureRig.probe(), e = you.on ? toWorld(p.eye) : null; return { ...p, eyeGap: e ? Math.hypot(e[0] - rig.own.x, e[1] - rig.own.y, e[2] - rig.own.z) : null }; },
+    /** For tests: a point of her body's frame as a place in the world (on foot). */
+    toWorld: q => (you.on ? toWorld(q) : null),
     joints: () => (you.on ? JSON.parse(JSON.stringify(body.joints)) : null),
     /** For tests: your joints as last drawn (standing, swimming or between the two), in the world: { ankles, knees, wrists, elbows, hip, eye, over: 0..1 }. */
     drawn() {

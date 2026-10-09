@@ -48,6 +48,35 @@ function fraction(R, k) {
   return len(axis) < 1e-9 ? IDENTITY : about(unit(axis), angle * k);
 }
 
+/**
+ * Her back taking a shoulder to what a hand reaches for: what turning her shoulders round costs, and what
+ * bending over costs, against leaving the shoulder short (m2 for a radian squared: bending 17 degrees is worth
+ * leaving it 2 cm short; the turn is ten times cheaper: it leaves her head where it is).
+ */
+const BACK_HOLD = [0.0004, 0.004];
+/** How nearly straight a working arm is let get before her back is asked to take the shoulder nearer (of its length), unless the solver's own arm is straighter than that. */
+const ARM_MOST = 0.96;
+/** Rocking over her feet towards a reach: the share of what her back cannot give that her hips take, and how far they go at most (m). */
+const ROCK = [0.7, 0.07];
+/** How far her shoulders turn for a reach, and how far her back bends for one (rad). */
+const BACK_MOST = [0.5, 0.6];
+
+/** Solves the four-by-four A x = b (A is changed). */
+function solve4(A, b) {
+  const x = b.slice();
+  for (let c = 0; c < 4; c++) {
+    let best = c;
+    for (let r = c + 1; r < 4; r++) if (Math.abs(A[r][c]) > Math.abs(A[best][c])) best = r;
+    [A[c], A[best]] = [A[best], A[c]]; [x[c], x[best]] = [x[best], x[c]];
+    if (Math.abs(A[c][c]) < 1e-12) return [0, 0, 0, 0];
+    for (let r = c + 1; r < 4; r++) { const k = A[r][c] / A[c][c]; for (let q = c; q < 4; q++) A[r][q] -= k * A[c][q]; x[r] -= k * x[c]; }
+  }
+  for (let c = 3; c >= 0; c--) { for (let q = c + 1; q < 4; q++) x[c] -= A[c][q] * x[q]; x[c] /= A[c][c]; }
+  return x;
+}
+/** How far a shoulder goes out on its collar bone alone, before her back turns to take it further (m). */
+const GIRDLE_GIVE = 0.015;
+
 export class FigureRig {
   /** @param {{bones: {name: string, parent: number, head: number[], tail: number[]}[], eyeHeight: number}} info  body.json */
   constructor(info) {
@@ -178,6 +207,39 @@ export class FigureRig {
   }
 
   /** The rods that stand for the skin of hand i's fingers, thumb and palm, where they are posed now (the body's frame): { fingers, thumb, palm }, or null before fitHands. */
+  /**
+   * The whole skeleton as it is posed now, for checks that nothing is stretched (tools/bodycheck.mjs):
+   * { worst: the bone whose root is furthest from where its parent carries it (metres), gaps: every such bone,
+   * skew: the bone whose turn is furthest from a pure rotation, neck and neckRest: the neck's length now and at
+   * rest, eye: where the head carries her eye (the body's frame), back: how far her back is turned and bent for a reach }.
+   */
+  probe() {
+    const m = this.matrices, out = { worst: { gap: 0, bone: '' }, skew: { by: 0, bone: '' }, gaps: {}, neck: 0, eye: null };
+    for (let b = 0; b < this.bones.length; b++) {
+      this.current(b);
+      const bone = this.bones[b], p = bone.parent, o = b * 12;
+      // (Where the bone's own root is, and where its parent would carry that point: apart, the body is stretched there.)
+      if (p >= 0) {
+        const own = this.carry(b, bone.head), held = this.carry(p, bone.head), gap = Math.hypot(own[0] - held[0], own[1] - held[1], own[2] - held[2]);
+        if (gap > 1e-5) out.gaps[bone.name] = gap;
+        if (gap > out.worst.gap) out.worst = { gap, bone: bone.name };
+      }
+      // (How far its turn is from a pure rotation: rows of length one, at right angles.)
+      const r = [[m[o], m[o + 1], m[o + 2]], [m[o + 4], m[o + 5], m[o + 6]], [m[o + 8], m[o + 9], m[o + 10]]], d = (a, c) => a[0] * c[0] + a[1] * c[1] + a[2] * c[2];
+      const by = Math.max(Math.abs(d(r[0], r[0]) - 1), Math.abs(d(r[1], r[1]) - 1), Math.abs(d(r[2], r[2]) - 1), Math.abs(d(r[0], r[1])), Math.abs(d(r[0], r[2])), Math.abs(d(r[1], r[2])));
+      if (by > out.skew.by) out.skew = { by, bone: bone.name };
+    }
+    // The neck's length: from the root of its first bone to the root of the head (at rest: `neckRest`).
+    const n0 = this.bones[this.neck[0]], h = this.bones[this.head], a = this.carry(this.neck[0], n0.head), c = this.carry(this.head, h.head);
+    out.neck = Math.hypot(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
+    out.neckRest = Math.hypot(h.head[0] - n0.head[0], h.head[1] - n0.head[1], h.head[2] - n0.head[2]);
+    // (Where the head carries her eye: the first-person camera should be exactly there.)
+    out.eye = this.carry(this.head, [0, this.eye, 0]);
+    // (What her back is doing for a reach: her shoulders turned, and her back bent, radians.)
+    out.back = this.backNow ? { turned: this.backNow.twist, bent: len(this.backNow.w) } : null;
+    return out;
+  }
+
   handCaps(i) {
     if (!this.fit) return null;
     const s = this.sides[i], rods = this.fit[i].rods, rod = name => { const b = this.need(name), r = rods[name]; return { a: this.carry(b, r.head), b: this.carry(b, r.tail), r: r.r, w: r.w, t: r.t }; };
@@ -217,20 +279,142 @@ export class FigureRig {
    * @returns {Float32Array} 12 numbers a bone
    */
   pose(j, eye) {
-    this.frame++;
+    // (Posed, and if a hand then falls short of what it was sent to, posed once more with the back bent that much
+    // further towards it: an arm is as long as it is.)
+    this.more = [[0, 0, 0], [0, 0, 0]];
+    let m = this.poseOnce(j, eye);
+    // (From half a millimetre short, so that it does not come in with a jump; three times at most.)
+    for (let again = 0; again < 3 && Math.max(len(this.short[0]), len(this.short[1])) >= 0.0005; again++) { this.more = this.more.map((v, i) => add(v, this.short[i])); m = this.poseOnce(j, eye); }
+    return m;
+  }
+
+  poseOnce(j, eye) {
+    this.frame++; this.short = [[0, 0, 0], [0, 0, 0]];
+    const seat = j.seat ?? (j.sitting ? 1 : 0);                   // how far she is on her seat, 0..1 (between: getting down on to it, or up off it) this.more ??= [[0, 0, 0], [0, 0, 0]];
     const chest = j.shoulder || j.chest, across = [1, 0, 0];
     // The trunk: hips where the solver has them, leaning the way it leans. The hips turn with the stride (the
     // hip of the leading leg forward) and the chest against them; the chest also goes a little way round with
     // the head. The spine takes the difference, a part at each of its five joints.
     const lean = aim(sub(this.chest0, this.hip0), across, sub(chest, j.hip), across), trunk = this.trunk, along = unit(sub(chest, j.hip));
-    const low = j.pelvis || 0, high = -0.6 * low - 0.3 * (j.headTurn || 0), Rp = mul(about(along, low), lean), Rt = mul(about(along, high), lean);
-    this.drive(trunk, Rp, add(j.hip, turn(Rp, sub(this.bones[trunk].head, this.hip0))));
-    this.spine.forEach((b, k) => this.hinge(b, mul(about(along, low + (high - low) * (k + 1) / 5), lean)));
+    const low = j.pelvis || 0, high = -0.6 * low - 0.3 * (j.headTurn || 0), Rp = mul(about(along, low), lean);
+    const trunkAt = (shift, bend = bent) => {
+      this.drive(trunk, Rp, add(add(j.hip, shift), turn(Rp, sub(this.bones[trunk].head, this.hip0))));
+      this.spine.forEach((b, k) => { const part = fraction(bend, (k + 1) / 5); this.hinge(b, mul(about(turn(part, along), low + (high - low) * (k + 1) / 5), mul(part, lean))); });
+    };
+    // A shoulder goes out to what the hand reaches for (`reached`: how far the solver has moved it for that),
+    // and her back takes it there. The collar bone gives a finger's breadth; beyond that her shoulders turn
+    // (about the line of her back: it brings the one shoulder forward, and down too when she is leaning
+    // forward, and her head stays where it is: up to 29 degrees) and her back bends towards it, and her head
+    // comes down with it (reaching for the sand beside you, you lean to it). How far of each is found on her
+    // own skeleton: her back is turned and bent a little each way, to see where that carries the shoulder,
+    // and then by what brings it where it is wanted, the turn before the bend. (The shoulder joint used to be
+    // moved there by itself, off the end of its collar bone.)
+    let bent = IDENTITY, rock = [0, 0, 0];
+    this.backNow = { twist: 0, w: [0, 0, 0] };
+    if (j.reached && j.eye) {
+      const round = about(along, high), asks = [];
+      for (const [i, sd] of this.sides.entries()) {
+        // (And as much further as the arm was short of its hand's place when she was posed a moment ago: `more`.)
+        const d = turn(round, j.reached[i]), far = len(d), ask = add(far > GIRDLE_GIVE ? d.map(v => v * (1 - GIRDLE_GIVE / far)) : [0, 0, 0], this.more[i]);
+        if (len(ask) >= 1e-5) asks.push({ at: sd.S, top: this.bones[sd.bone.clavicle].parent, ask });
+      }
+      if (asks.length) {
+        const backOf = p => { const by = Math.hypot(p[1], p[2], p[3]), R = by > 1e-6 ? about([p[1] / by, p[2] / by, p[3] / by], by) : IDENTITY; return Math.abs(p[0]) > 1e-6 ? mul(R, about(along, p[0])) : R; };
+        const carried = p => { this.frame++; trunkAt([0, 0, 0], backOf(p)); return asks.map(a => this.carry(a.top, a.at)); };
+        // (Only across the line from her hips to the shoulder: along that line a back neither lengthens nor
+        // shortens. On her feet, most of that part is her hips': she rocks forward over her feet towards what she
+        // reaches for, as far as her legs let her (`rock`, below). The rest is the collar bone's, as far as it
+        // swings, and the arm's.)
+        const want = carried([0, 0, 0, 0]).map((q, k) => { const line = unit(sub(q, j.hip)), a = asks[k].ask, along = dot(a, line); rock = add(rock, line.map(v => v * along * ROCK[0] * (1 - seat) / asks.length)); return add(q, sub(a, line.map(v => v * along))); }), p = [0, 0, 0, 0], H = 0.02;
+        { const far = len(rock); if (far > ROCK[1]) rock = rock.map(v => v * ROCK[1] / far); }
+        for (let step = 0; step < 5; step++) {
+          const now = carried(p), e = [];
+          for (const [k, q] of now.entries()) e.push(...sub(want[k], q));
+          if (Math.hypot(...e) < 0.0003) break;
+          const J = e.map(() => [0, 0, 0, 0]);
+          for (let c = 0; c < 4; c++) { const q = p.slice(); q[c] += H; for (const [k, m] of carried(q).entries()) for (let a = 0; a < 3; a++) J[k * 3 + a][c] = (m[a] - now[k][a]) / H; }
+          const A = [0, 1, 2, 3].map(() => [0, 0, 0, 0]), b = [0, 0, 0, 0];
+          for (let r = 0; r < e.length; r++) for (let c = 0; c < 4; c++) { b[c] += J[r][c] * e[r]; for (let q = 0; q < 4; q++) A[c][q] += J[r][c] * J[r][q]; }
+          // (Turned as far as shoulders turn, and still asked for more: the rest is for her back to bend.)
+          // (What it costs her to turn and to bend is weighed against how far short the shoulder is left: she does
+          // not double over for the last centimetre. The arm has that much to give, and is asked: `more`.)
+          for (let c = 0; c < 4; c++) { const hold = BACK_HOLD[c ? 1 : 0]; A[c][c] += hold; b[c] -= hold * p[c]; }
+          // (Turned as far as shoulders turn, and still asked for more: the rest is for her back to bend.)
+          if (Math.abs(p[0]) >= BACK_MOST[0] - 1e-9 && b[0] * p[0] > 0) A[0][0] += 1e3;
+          const by = solve4(A, b);
+          for (let c = 0; c < 4; c++) p[c] += by[c];
+          p[0] = Math.max(-BACK_MOST[0], Math.min(BACK_MOST[0], p[0]));
+          const over = Math.hypot(p[1], p[2], p[3]) / BACK_MOST[1];
+          if (over > 1) for (let c = 1; c < 4; c++) p[c] /= over;
+        }
+        this.frame++;
+        this.backNow = { twist: p[0], w: p.slice(1) };
+        bent = backOf(p);
+      }
+    }
+    const alongTop = turn(bent, along), Rt = mul(about(alongTop, high), mul(bent, lean));
+    // Her head is carried by her neck, and her neck by her chest: each bone turns where its parent holds it, and
+    // none is moved to meet another. So where her eye is, is what the pose makes it. (The head used to be put
+    // on the camera and the neck drawn out between it and the chest: half as long again, looking down.) What
+    // the solver asks is the height of her eye with her head level (`eyeLevel`; swimming, where the eye is,
+    // `eyeAt`): the trunk is set down, the eye it gives is found, and the trunk is moved by the difference.
+    // Looking down or round then moves the eye as a head on a neck moves it.
+    const HEAD = [0.18, 0.4, 0.66];                               // how much of the head's turn each neck bone has made (the head: all)
+    const neckTo = Rh => { const round = mul(transpose(Rt), Rh); this.neck.forEach((b, k) => this.hinge(b, mul(Rt, fraction(round, HEAD[k])))); this.hinge(this.head, Rh); };
+    // (`eyeBase`: where her eye would be with her head level and her back not bent to any reach. `eyeFree`: the
+    // same with her head turned and nodding as it is: what her hands' places are reckoned from, so that leaning
+    // to a place does not move the place she leans to.)
+    const looking = j.eye ? mul(about([0, 1, 0], -(j.headTurn || 0)), about([1, 0, 0], j.headNod || 0)) : IDENTITY;
+    let free = null;
+    if (j.eye) {
+      const Rb = mul(about(along, high), lean), headTo = Rh => { const round = mul(transpose(Rb), Rh); this.neck.forEach((b, k) => this.hinge(b, mul(Rb, fraction(round, HEAD[k])))); this.hinge(this.head, Rh); return this.carry(this.head, [0, this.eye, 0]); };
+      trunkAt([0, 0, 0], IDENTITY);
+      free = headTo(looking); this.frame++;
+      trunkAt([0, 0, 0], IDENTITY);
+      this.eyeBase = headTo(IDENTITY); this.frame++;
+    }
+    const based = this.eyeBase;
+    // (Swimming, a neck bends back no further than a neck does: about sixty degrees from the line of the back.
+    // What is left, the head is tipped down, and the eyes look up for it.)
+    const level = j.eye ? IDENTITY : (() => { const back = Math.acos(Math.max(-1, Math.min(1, along[1]))); return back > 1.05 ? mul(about([1, 0, 0], -(back - 1.05)), IDENTITY) : IDENTITY; })();
+    let shift = [0, 0, 0];
+    if (j.eyeLevel || !j.eye) {
+      trunkAt(shift); neckTo(level);
+      // (On foot: by where her eye would be were she not leaning to anything. Leaning over to reach the sand,
+      // her head comes down with her back: it is not held up at the height asked.)
+      const got = j.eye ? based : this.carry(this.head, [0, this.eye, 0]);
+      // (Seated, her seat is on the ground and stays there: her eye is as high as her back carries it.)
+      shift = j.eye ? [0, j.eyeLevel[1] - got[1], 0] : [-got[0], eye - got[1], -got[2]];
+      // (Her feet come first: the trunk is not lifted further than a leg can still reach the ankle the solver gave it.)
+      if (j.eye && shift[1] > 0) for (const [i, sd] of this.sides.entries()) {
+        const H = this.carry(trunk, sd.H), A = j.ankles[i], L = (sd.thigh + sd.shin) * 0.999, dx = A[0] - H[0], dz = A[2] - H[2];
+        shift[1] = Math.min(shift[1], Math.max(0, A[1] + Math.sqrt(Math.max(L * L - dx * dx - dz * dz, 0)) - H[1]));
+      }
+      // (Going down on to her seat, it is let go of by as much as she is down.)
+      if (j.eye) shift[1] *= 1 - seat;
+      this.frame++;
+    }
+    // (Rocked towards a reach no further than both legs still reach their ankles.)
+    if (len(rock) > 1e-5) {
+      let most = 1;
+      trunkAt(shift);
+      for (const [i, sd] of this.sides.entries()) {
+        const H = this.carry(trunk, sd.H), A = j.ankles[i], L = (sd.thigh + sd.shin) * 0.999;
+        if (len(sub(add(H, rock), A)) > L) { let lo = 0, hi = 1; for (let n = 0; n < 12; n++) { const mid = (lo + hi) / 2; if (len(sub(add(H, rock.map(v => v * mid)), A)) > L) hi = mid; else lo = mid; } most = Math.min(most, lo); }
+      }
+      rock = rock.map(v => v * most);
+      this.frame++;
+    }
+    trunkAt(add(shift, rock));
+    /** How far the whole of her was moved from where the solver had her, to bring her eye where it was asked (swimming: all of her; on foot: her trunk, up or down). */
+    this.shiftNow = shift;
+    this.eyeFree = free ? add(free, shift) : null;
     const carried = p => this.carry(trunk, p), twisted = about(along, high);
+    const moved = p => add(p, shift);
 
     for (const [i, s] of this.sides.entries()) {
       // The leg: from where the trunk has put the hip joint to the solver's ankle, the knee bending the way it bends there.
-      const H = carried(s.H), ankle = j.ankles[i].slice(), kneeTo = sub(j.knees[i], [(H[0] + ankle[0]) / 2, (H[1] + ankle[1]) / 2, (H[2] + ankle[2]) / 2]);
+      const afloat = !j.eye, H = carried(s.H), ankle = afloat ? moved(j.ankles[i]) : j.ankles[i].slice(), kneeTo = sub(j.knees[i], [(H[0] + ankle[0]) / 2, (H[1] + ankle[1]) / 2, (H[2] + ankle[2]) / 2]);
       const K = reach(H, ankle, s.thigh, s.shin, len(kneeTo) > 1e-4 ? kneeTo : [0, 0, -1]);
       let hinge = cross(sub(K, H), sub(ankle, K));
       hinge = len(hinge) > 1e-4 ? unit(hinge) : [-1, 0, 0];
@@ -253,21 +437,35 @@ export class FigureRig {
       // (The solver's shoulders go round with the chest.)
       // The shoulder girdle goes with the arm: with the arm hanging, the collar bone slopes down to the shoulder
       // (the body is modelled with its arms held out, where it is level), and the shoulder joint with it.
-      const S0 = add(chest, turn(twisted, sub(j.shoulders[i], chest))), hang = unit(sub(j.elbows[i], j.shoulders[i])), down = turn(Rt, [0, -1, 0]);
+      const S0 = moved(add(chest, turn(twisted, sub(j.shoulders[i], chest)))), hang = unit(sub(j.elbows[i], j.shoulders[i])), down = turn(Rt, [0, -1, 0]);
       const raised = Math.acos(Math.max(-1, Math.min(1, dot(hang, down)))), drop = 0.11 * (1 - Math.min(1, Math.max(0, (raised - 0.25) / 1.1)));
-      const Rclav = mul(Rt, about([0, 0, 1], -s.side * drop)), c0 = this.bones[s.bone.clavicle].head;
+      const Rdrop = mul(Rt, about([0, 0, 1], -s.side * drop)), c0 = this.bones[s.bone.clavicle].head;
+      // (And the collar bone points to where the solver has the shoulder, as far as a collar bone swings: the
+      // shoulder is on its end, and the arm on the shoulder. The shoulder used to be put where the solver had it
+      // and the collar bone left behind: crouched, seven centimetres of nothing between them.)
+      const cAt = this.carry(this.bones[s.bone.clavicle].parent, c0), asked = add(add(S0, this.more[i]), sub(turn(Rdrop, sub(s.S, c0)), turn(Rt, sub(s.S, c0))));      // (`more`: and as much further as her back was sent for the arm's sake)
+      const from = unit(turn(Rdrop, sub(s.S, c0))), to = unit(sub(asked, cAt)), axis = cross(from, to), sine = len(axis), swung = Math.min(0.45, Math.atan2(sine, dot(from, to)));
+      const Rclav = sine > 1e-6 ? mul(about(axis.map(v => v / sine), swung), Rdrop) : Rdrop;
       this.hinge(s.bone.clavicle, Rclav);
       // (Which way the elbow bends is taken from the solver's own arm, its elbow off the line from its shoulder
       // to its wrist: an arm nearly straight has its elbow a finger's breadth off that line, and against her
       // shoulder, a finger's breadth from the solver's, the way to it swung right round from frame to frame.)
-      const S = add(S0, sub(turn(Rclav, sub(s.S, c0)), turn(Rt, sub(s.S, c0)))), wrist = j.wrists[i].slice(), elbowTo = sub(j.elbows[i], [(j.shoulders[i][0] + wrist[0]) / 2, (j.shoulders[i][1] + wrist[1]) / 2, (j.shoulders[i][2] + wrist[2]) / 2]);
-      const E = reach(S, wrist, s.upper, s.fore, len(elbowTo) > 1e-4 ? elbowTo : [0, -1, 0.3]);
-      let plane = cross(sub(E, S), sub(wrist, E));
-      plane = len(plane) > 1e-4 ? unit(plane) : turn(Rt, s.armPlane);
+      const wrist = afloat ? moved(j.wrists[i]) : j.wrists[i].slice(), elbowTo = sub(j.elbows[i], [(j.shoulders[i][0] + j.wrists[i][0]) / 2, (j.shoulders[i][1] + j.wrists[i][1]) / 2, (j.shoulders[i][2] + j.wrists[i][2]) / 2]);
+      const bend = len(elbowTo) > 1e-4 ? elbowTo : [0, -1, 0.3], armFrom = from0 => { const e = reach(from0, wrist.slice(), s.upper, s.fore, bend);      // (a copy: reach() draws its target in when it is too far)
+        let pl = cross(sub(e, from0), sub(wrist, e)); pl = len(pl) > 1e-4 ? unit(pl) : turn(Rt, s.armPlane); return [e, pl, aim(sub(s.E, s.S), s.armPlane, sub(e, from0), pl)]; };
+      // (The cap of the shoulder goes a third of the way round with the upper arm: it does not stay out where the
+      // arm was. It hangs on the collar bone, and the arm on it: so the arm is found twice, from where the collar
+      // bone has the joint and then from where the cap has it, a finger's breadth away at most.)
+      const [, , Rfirst] = armFrom(this.carry(s.bone.clavicle, s.S)), Rcap = mul(fraction(mul(Rfirst, transpose(Rclav)), 0.35), Rclav);
+      this.hinge(s.bone.shoulder01, Rcap);
+      const S = this.carry(s.bone.shoulder01, s.S), [E, plane, Rupper] = armFrom(S);
+      // (What her back has still to do: from where the shoulder now is, the arm would have to be all but
+      // straight to get the hand to its place, or cannot. She is posed again with her back taking the shoulder
+      // that much further: `pose`.)
+      // (Only for a hand at work: one at rest goes as near to where the solver had it as its arm lets it.)
+      // (It comes in as the reach does, over the first three centimetres the shoulder is sent: not all at once.)
+      if (j.reached) { const work = Math.min(1, len(j.reached[i]) / 0.03), gap = sub(wrist, S), far = len(gap), most = Math.min((s.upper + s.fore) * 0.995, Math.max((s.upper + s.fore) * ARM_MOST, len(sub(j.wrists[i], j.shoulders[i])))); if (work > 0 && far > most) this.short[i] = gap.map(v => v * work * (far - most) / far); }
       s.planeNow = plane;
-      // (The cap of the shoulder goes a third of the way round with the upper arm: it does not stay out where the arm was.)
-      const Rupper = aim(sub(s.E, s.S), s.armPlane, sub(E, S), plane), Rcap = mul(fraction(mul(Rupper, transpose(Rclav)), 0.35), Rclav);
-      this.drive(s.bone.shoulder01, Rcap, add(S, turn(Rcap, sub(this.bones[s.bone.shoulder01].head, s.S))));
       this.drive(s.bone.upperarm01, Rupper, S);
       const Rfore = aim(sub(s.W, s.E), s.armPlane, sub(wrist, this.carry(s.bone.upperarm01, s.E)), plane);
       // The hand: the way the solver holds it; without that (swimming), flat along the forearm, palm down.
@@ -298,26 +496,10 @@ export class FigureRig {
       const model = this.models[i], pose = h.fingers || model.fromCurl(h.curl ?? 0.1, h.spread || 0, this.posed[i]);
       for (const [b, R] of model.solve(pose, this.solved[i]).rot) this.hinge(b, mul(Rhand, R));
     }
-    // The head stays on the eye (the camera is between its eyes), upright; the neck goes between it and the trunk.
-    if (j.eye) {
-      // The head: its eye where the solver has yours, turned and nodding as you look; the neck goes from the
-      // chest to it, each of its three bones a part of the way round.
-      const Rh = mul(about([0, 1, 0], -(j.headTurn || 0)), about([1, 0, 0], j.headNod || 0)), h0 = this.bones[this.head].head, at = add(j.eye, turn(Rh, sub(h0, [0, this.eye, 0])));
-      const between = mul(transpose(Rt), Rh);
-      this.neck.forEach((b, k) => {
-        const w = [0.2, 0.5, 0.8][k], held = add(at, turn(Rh, sub(this.bones[b].head, h0))), hung = this.carry(this.bones[b].parent, this.bones[b].head);
-        this.drive(b, mul(Rt, fraction(between, w)), [0, 1, 2].map(c => hung[c] + (held[c] - hung[c]) * w));
-      });
-      this.drive(this.head, Rh, at);
-    } else {
-      // (Swimming: the head stays on the eye, upright; the neck goes between it and the trunk.)
-      const lift = [0, eye - this.eye, 0];
-      this.drive(this.head, IDENTITY, add(this.bones[this.head].head, lift));
-      const top = this.neck[2];
-      this.drive(top, IDENTITY, add(this.bones[top].head, lift));
-      this.current(this.neck[0]);
-      { const a = this.neck[0] * 12, b = top * 12, o = this.neck[1] * 12; for (let q = 0; q < 12; q++) this.matrices[o + q] = (this.matrices[a + q] + this.matrices[b + q]) / 2; this.stamp[this.neck[1]] = this.frame; }
-    }
+    // The head, turned and nodding as you look, on the neck (above).
+    neckTo(j.eye ? looking : level);
+    /** Where her head carries her eye, in the solver's frame: the first-person camera is there. */
+    this.eyeNow = this.carry(this.head, [0, this.eye, 0]);
     for (let b = 0; b < this.bones.length; b++) this.current(b);
     return this.matrices;
   }

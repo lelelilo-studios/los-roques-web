@@ -51,7 +51,7 @@ export const WRIST = {
   can: { flex: [-70, 80], dev: [-30, 20] },
   flex: [-60, 60], dev: [-25, 15],
   holdBack: 45,                        // holding something up to look at, the wrist is bent back no further than this
-  speed: 250,
+  speed: 300,                          // the fastest it bends, degrees a second (my estimate; scooping water it is about 270)
 };
 export const FOREARM = {
   can: [-80, 80],                      // (other tables give up to 90 palm up)
@@ -73,3 +73,22 @@ export const REACH = {
 // A hand held out is never still: it trembles at 8 to 12 times a second (the stretch reflex going round), a
 // fraction of a millimetre at the fingertip (the size is an estimate; it grows with effort and tiredness).
 export const TREMOR = { hz: [8, 12], tip: 0.0006 };
+
+/**
+ * The whole body in a comfortable walk (about 1.4 m/s), peak to peak over a stride, as measured on people. What
+ * tools/bodycheck.mjs holds her walk against.
+ * - pelvis turning about the upright: 11.7 +- 4.5 degrees (three-dimensional gait analysis of healthy adults,
+ *   PMC3040131, table 3: 5.75 forward, 6.0 back);
+ * - pelvis dropping on the swinging side ("pelvic list"), the body's centre rising and falling about 5 cm and
+ *   moving 4-5 cm from side to side: the determinants of gait (Saunders, Inman and Eberhart 1953, as given in
+ *   D. Thompson, Kinematic analyses of gait, University of Oklahoma HSC); the list is about 5 degrees each way
+ *   in that account, and gait laboratories report 6-10 degrees peak to peak in young adults;
+ * - the arm at the shoulder: 24.6 +- 2.4 degrees; the elbow: 29.7 +- 10.2 degrees (arm swing in gait, Clinics
+ *   in Shoulder and Elbow 2023).
+ * The chest turns against the pelvis, so that the shoulders swing opposite to the hips: about half the
+ * pelvis's turn or more (no single figure found: the range here is the pelvis's, halved to whole).
+ */
+export const STRIDE = {
+  pelvisTurn: [7, 16], pelvisList: [4, 10], rise: [0.03, 0.06], sway: [0.03, 0.06],
+  chestTurn: [4, 12], shoulder: [18, 34], elbow: [15, 45],
+};

@@ -402,7 +402,7 @@ export class Hand {
     // press on it; in water the hand goes to the bottom if that is within a hand's length, or under by that much.)
     // (Sitting, your legs lie where it would go: it works beside your right thigh.)
     // (`seated`: how far you are on to your seat, 0..1: the hand's places go over from the one posture's to the other's, not at a jump.)
-    const seated = c.seated ?? (c.sitting ? 1 : 0), far = Math.min(0.6 - 0.15 * seated, Math.max(0.3, Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx0 = this.side * (0.1 + 0.23 * seated);
+    const seated = c.seated ?? (c.sitting ? 1 : 0), ahead = c.eyeAt ? Math.max(0, -c.eyeAt[2]) : 0, far = Math.min(0.6 + 0.25 * ahead - 0.15 * seated, Math.max(0.3, ahead + Math.cos(c.look) * c.body / Math.max(0.25, -Math.sin(c.look)))), lx0 = this.side * (0.1 + 0.23 * seated);
     // It goes where you look: your head turns on your body (c.headTurn, to the right positive), and the hand's
     // place turns with it about you, so that drawing your look across the sand draws your fingers through it.
     // (Since the body stopped turning with every look, the hand had stayed where it was whatever you looked at.)
@@ -442,7 +442,9 @@ export class Hand {
     // an arm held up in the air: so it was, the hand out at the height of your face). It comes a little higher
     // when you look less far down.
     const sl = Math.sin(c.look), cl = Math.cos(c.look), held = clamp01(this.lift * 2 - 1);
-    const L = [0, sl, -cl], U = [0, cl, sl], eye = [0, c.body, 0];
+    // (Her own eye, where her head carries it: crouched it is a hand's breadth ahead of where she stands, and a
+    // handful held "before her eyes" is held before those.)
+    const L = [0, sl, -cl], U = [0, cl, sl], eye = c.eyeAt ? c.eyeAt.slice() : [0, c.body, 0];
     const raise = 0.12 * clamp01((c.look + 0.95) / 0.7), low = c.low || 0;
     // (Seated you lean back: it is held out beside your thigh, the elbow still bent.)
     // (`together`: both your hands hold something. Then they come together before you, side by side, little
