@@ -552,8 +552,12 @@ void main() {
   vec3 sunIn = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
   // (Asked not at the surface but up to 0.8 m under it, on the ray's way down: what floats draws that much, and
   // asked at the surface a boat's bottom cast nothing: its shadow on the bed was its thwarts and its gunwales.)
-  float asked = min(0.9 * water, 0.8);
-  shade = water > 0.0 ? lrSunThrough(shade, vec3(vRel.x, uSeaLevel - asked, vRel.z) - vec3(sunIn.x, 0.0, sunIn.z) * ((water - asked) / max(-sunIn.y, 0.3)), vec3(0.0, 1.0, 0.0))
+  float asked = min(0.9 * water, 0.8), clouded = shade;
+  // (And once more from just over the bed itself, for what is deeper in the water than that: you, dived. Its
+  // shadow is then laid where the sun's own line would lay it, not the bent one: a foot out, under two metres
+  // of water with the sun at sixty degrees.)
+  float deeper = water > 0.9 ? lrSunThrough(clouded, vec3(vRel.x, uSeaLevel - water + 0.1, vRel.z), vec3(0.0, 1.0, 0.0)) : clouded;
+  shade = water > 0.0 ? min(deeper, lrSunThrough(shade, vec3(vRel.x, uSeaLevel - asked, vRel.z) - vec3(sunIn.x, 0.0, sunIn.z) * ((water - asked) / max(-sunIn.y, 0.3)), vec3(0.0, 1.0, 0.0)))
                       : lrSunThrough(shade, vec3(vRel.x, ground, vRel.z), nG);
   // The sand falling from your hands has its shade: a thin line on the ground from where each stream lands, out
   // away from the sun, as long as the stream is tall, soft at its far end (which is the stream's top). (The map of

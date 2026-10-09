@@ -25,6 +25,7 @@ out vec4 vWeights;   // local height of each wave cascade
 out vec4 vWaveMap;
 out float vWaveY;    // height the cascades add (the swash is added per pixel)
 out float vHs;       // height of the waves arriving here
+uniform vec4 uLens;  // the sea at the camera as a plane (see core/framegraph.js)
 void main() {
   float cell, shore;
   vec2 rel = lrClipmapRel(cell), wxz = uCamXZ + rel;
@@ -39,6 +40,9 @@ void main() {
   float hs = lrWaveHs(raw), a = ground - uSeaLevel;
   LrSwash sw = lrBeach(rel, shore, hs, a, 1.0);
   float y = uSeaLevel + d.y + lrShoreSurface(shore, min(a, 0.0), hs, sw);
+  // Where the camera is at the surface, the sea within two metres of it is the plane the picture judges each
+  // pixel by (core/framegraph.js: the waterline across the lens), and its waves are let in from there outward.
+  if (uLens.w > 0.5) { float close = 1.0 - smoothstep(0.5, 2.0, length(rel)); y = mix(y, uLens.x + dot(uLens.yz, rel), close); d.xz *= 1.0 - close; }
   // (Your boat's wake stands on the sea: the bow's wave, the hollow astern, the crests trailing back.)
   { float wk = lrWakeIn(rel); if (wk > 0.0) y += lrWake(rel).r * wk * smoothstep(0.05, 0.4, -a); }
   // Over the strip of beach the swash can reach, ride just above the sand: the sheet is drawn on this.
@@ -153,7 +157,22 @@ void main() {
     vec3 ab = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon), kd = ab + bb;
     vec3 daylight = (uSunE * lrSaturate(uSunDir.y) * lrCloudShadow(wxz) + uSkyE) * 0.9;
     vec3 mirrored = reflect(up, nd), through = exp(-(ab + 4.0 * bb) * deep / max(-mirrored.y, 0.08));
-    vec3 below = vec3(0.42, 0.40, 0.34) / PI * daylight * exp(-kd * deep) * through + daylight * exp(-kd * deep * 0.5) * bb / kd * 0.5 * (1.0 - through);
+    vec3 glowBelow = daylight * exp(-kd * deep * 0.5) * bb / kd * 0.5 * (1.0 - through);
+    vec3 below = vec3(0.42, 0.40, 0.34) / PI * daylight * exp(-kd * deep) * through + glowBelow;
+    {
+      // What the mirror really shows: the bed where the mirrored look comes down on it, with whatever stands
+      // there (the coral, a fish, yourself), as the picture already has it; seen through the water on the way
+      // down. (It was a flat colour of sand everywhere. Where that place is off the picture, it still is.)
+      vec3 hit = vRel + mirrored * (deep / max(-mirrored.y, 0.08));
+      vec4 clip = uViewProj * vec4(hit.x, hit.y - lrCurveDrop(hit.xz), hit.z, 1.0);
+      vec2 at = clip.xy / max(clip.w, 1e-4) * 0.5 + 0.5, edge = min(at, 1.0 - at);
+      float seenThere = clip.w > 0.1 ? smoothstep(0.0, 0.08, min(edge.x, edge.y)) : 0.0;
+      if (seenThere > 0.0) {
+        vec4 there = textureLod(tRefr, at, 0.0);
+        // (A thing under water is held as what it gives back of the light and how deep it lies: lit here as the bed is.)
+        if (there.a > 0.0) below = mix(below, there.rgb / PI * daylight * exp(-kd * there.a) * through + glowBelow, seenThere);
+      }
+    }
     vec3 c = below;
     if (dot(outDir, outDir) > 0.0) {
       float f = lrFresnel(dot(outDir, -nd));
@@ -418,7 +437,7 @@ export class Water {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-4, 4] });
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4 },
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.ripple, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.wake,
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.ripple, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.wake, 'uLens',
         'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null }, uHullIn: { value: new THREE.Matrix4() }, uHullHalf: { value: new THREE.Vector3(0, 0, 0) } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);

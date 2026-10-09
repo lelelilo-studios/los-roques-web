@@ -66,6 +66,7 @@ void main() {
 const fragmentShader = /* glsl */`
 #include <lr_common>
 #include <lr_cloud_shadow>
+#include <lr_caustics>
 ${shadowGLSL}
 uniform vec4 uLook;           // x = 1: lit from both sides (leaves, blades); y = gloss; z = how much light comes through; w = leaf size, m (0: not foliage)
 in vec3 vRel;
@@ -98,8 +99,10 @@ void main() {
   }
   // Thin things (blades, leaves, fins) glow when the sun is behind them.
   float sun = mix(lrSaturate(facing), 0.35 + 0.65 * abs(facing), uLook.x) + uLook.z * lrSaturate(-facing);
-  // Under water the sunlight has come down through 'water' metres of sea (the terrain's caustics are not repeated here).
+  // Under water the sunlight has come down through 'water' metres of sea, and the waves over it have gathered
+  // it into the same dancing net that lies on the sand beside it.
   vec3 open = max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4));
+  if (water > 0.02 && vFade > 0.2) sun *= lrCausticsHere(vRel.xz, water);
   vec3 light = uSunE * sun * lrSunThrough(lrCloudShadow(uCamXZ + vRel.xz), vRel, n) + uSkyE * (0.55 + 0.45 * n.y) + open * 0.12 * (0.5 - 0.5 * n.y);
   if (water > 0.0) outColor = vec4(albedo * light / open, water);
   else outColor = vec4(albedo * light / PI + uLook.y * uSunE * pow(lrSaturate(dot(reflect(-toEye, n), uSunDir)), 60.0) * 0.05, -1000.0);
@@ -129,7 +132,7 @@ export class Scatter {
     g.instanceCount = grid * grid;
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader: vertexShader(rule, move), fragmentShader, vertexColors: true, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps },
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...WAVE_UNIFORMS, 'uWaveHere', ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
         tBenthic: { value: textures.benthic }, tLand: { value: textures.land },
         uLattice: { value: new THREE.Vector4() }, uKind: { value: new THREE.Vector4(cell, grid / 2, seed * 13.7, sway) },
         uSize: { value: new THREE.Vector4(size[0], size[1], lift, 0) }, uLook: { value: new THREE.Vector4(look.twoSided ? 1 : 0, look.gloss || 0, look.through || 0, look.leaf || 0) },

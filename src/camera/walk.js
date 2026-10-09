@@ -9,6 +9,8 @@
 // `Walker` is pure logic (no DOM, no three) so it can be tested in Node; `attachWalkInput` feeds it.
 
 export const STAND = 1.65, CROUCH = 0.75, FLOAT = 0.12;
+// (Afloat you lie with your face in the water, your eyes this far under its surface, looking down through your mask; you lift your head, to FLOAT, when you look up at the world.)
+export const FACE_DOWN = -0.07;
 
 /** Walking speed in m/s with `depth` metres of water round the legs: 56 % at half a metre, 31 % at one metre. */
 export function wadeSpeed(depth, run = false) {
@@ -253,7 +255,12 @@ export class Walker {
     // standing again in every trough (ten times in the 25 seconds it takes to swim in to where you can stand).
     { const lift = this.surfMean + FLOAT - (g2 + this.body); this.afloat = this.afloat ? lift > -0.06 : lift > 0.04; }
     if (!this.diving) {
-      const target = Math.max(g2 + this.body, this.surf + FLOAT);
+      // (Afloat: face down, or head up, by where you look; a third of a second from the one to the other.)
+      { const up = Math.min(1, Math.max(0, (this.look + 0.2) / 0.22)), want = up * up * (3 - 2 * up); this.headUp = (this.headUp ?? 1) + (want - (this.headUp ?? 1)) * (1 - Math.exp(-dt / 0.3)); }
+      // (Your head rides the sea as it is this tenth of a second, not as it was a quarter of a second ago: on that
+      // it lagged every wavelet, a hand's breadth under the one and over the next.)
+      this.surfQuick = (this.surfQuick ?? this.surf) + (this.surfaceAt(this.x, this.z) - (this.surfQuick ?? this.surf)) * (1 - Math.exp(-dt / 0.07));
+      const target = Math.max(g2 + this.body, this.afloat ? this.surfQuick + FACE_DOWN + (FLOAT - FACE_DOWN) * this.headUp : this.surf + FLOAT);
       // (On your feet with a gait, your eye is exactly your own height over the ground you stand on, the ground
       // followed smoothly: chasing ground-plus-height instead left the whole body behind whenever you crouched or
       // rose, a tenth of a second's worth: it dipped into the sand as you stood up.)
@@ -266,7 +273,7 @@ export class Walker {
         const stood = this.under0 + this.body, floated = this.surf + FLOAT, want = floated < stood - 0.2 ? stood : 0.5 * (stood + floated + Math.sqrt((stood - floated) ** 2 + 0.0016));       // (the greater of the two, the corner between them rounded)
         this.eyeOff = (this.onFeet ? this.eyeOff || 0 : this.eyeY - want) * Math.exp(-dt * 10);
         this.eyeY = want + this.eyeOff; this.onFeet = true;
-      } else { this.onFeet = false; this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 9 : 10))); }
+      } else { this.onFeet = false; this.eyeY += (target - this.eyeY) * (1 - Math.exp(-dt * (this.afloat ? 16 : 10))); }
       // Under we go: with the dive key in water deep enough, or by swimming forward while looking well down.
       this.diveTimer = this.afloat && this.look < -0.35 && input.fwd > 0.5 ? this.diveTimer + dt : 0;
       if ((input.down && d >= 0.9) || this.diveTimer > 0.3) this.diving = true;

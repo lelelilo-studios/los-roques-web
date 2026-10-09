@@ -77,6 +77,8 @@ export const shared = {
   uCamFwd: { value: new THREE.Vector3(0, 0, -1) },
   uExposure: { value: 1 },
   uUnderEye: { value: 0 },
+  // (The sea where the camera is, as a plane: its height there, its slope east and south, and 1 if the camera is near enough to it for that to matter: the waterline across the lens.)
+  uLens: { value: new THREE.Vector4(0, 0, 0, 0) },
   uRain: { value: 0 },
   uWet: { value: 0 },                                         // how wet the rain has left things: 0 dry .. 1 soaked (lags the rain)                                        // 0 dry .. 1 a downpour
   uDebug: { value: new THREE.Vector4() },                     // x: debug view of the water pass (0 = off)

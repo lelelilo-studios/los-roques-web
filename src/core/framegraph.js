@@ -38,6 +38,19 @@ uniform vec4 uWaveTile;
 uniform vec2 uWaveCamMod[4];
 uniform vec4 uWaveCurve;
 uniform vec4 uWaveHere;                // height of each cascade's waves where the camera is
+uniform highp sampler2D tShadow;       // what stands between the sun and a place (world/shadow.js), for the shafts of light under water
+uniform vec3 uShadowC, uShadowR, uShadowU;
+uniform vec4 uShadowP;
+uniform highp sampler2D tShadowB;      // and your own body's map
+uniform vec4 uShadowB;
+uniform vec2 uShadowBP;
+// 0 where something stands between the sun and p (x, z relative to the camera, y absolute), 1 where nothing does. One look, no softening: the shafts are soft themselves.
+float lrSunReaches(vec3 p) {
+  float lit = 1.0;
+  if (uShadowP.z > 0.5) { vec3 q = p - uShadowC; vec2 s = vec2(dot(q, uShadowR), dot(q, uShadowU)) / uShadowP.x; if (max(abs(s.x), abs(s.y)) < 1.0 && textureLod(tShadow, s * 0.5 + 0.5, 0.0).r > dot(q, uSunDir) + 0.08) lit = 0.0; }
+  if (uShadowBP.y > 0.5) { vec3 q = p - uShadowB.xyz; vec2 s = vec2(dot(q, uShadowR), dot(q, uShadowU)) / uShadowB.w; if (max(abs(s.x), abs(s.y)) < 1.0 && textureLod(tShadowB, s * 0.5 + 0.5, 0.0).r > dot(q, uSunDir) + 0.05) lit = 0.0; }
+  return lit;
+}
 uniform sampler2D tScene;
 uniform sampler2D tDepth;
 uniform sampler2D tCloud;      // rgb = cloud radiance, a = how much shows through (1 = no cloud)
@@ -46,6 +59,7 @@ uniform float uStarTurn;       // radians the star field has turned
 uniform vec3 uWind;
 uniform float uRain;
 uniform float uUnderEye;       // 1 when the eye itself is under the sea surface
+uniform vec4 uLens;            // the sea at the camera as a plane: its height there, its slope east and south; w = 1 when the camera is at the surface (the waterline crosses the lens)
 uniform sampler2D tWaterType;
 
 // Falling rain. The drops are streaks on cylinders round the eye whose axis is the way they fall (down, slanted
@@ -87,11 +101,21 @@ void main() {
   // (alpha = its depth, positive; only next to the lens, where the surface is cut by the near plane, or with
   // the eye under water) or the surface seen from below (alpha -3000); empty pixels go by where the eye is.
   bool near = !lrIsSky(depth) && lrViewZ(depth) < 1.0;
-  bool throughWater = (scene.a > 0.0 && (near || uUnderEye > 0.5)) || scene.a < -2500.0 || (lrIsSky(depth) && uUnderEye > 0.5);
+  // The eye at the surface: the sea cuts the lens along a line, and each pixel is over it or under it. (Where
+  // this ray leaves the lens, a hand's breadth before the eye, against the sea as it lies there: world/water.js
+  // bends its mesh to the same plane close by, so that what is drawn and what is judged agree. It was one
+  // switch for the whole picture: above, then below, and the eye jumped a foot between.)
+  vec3 onLens = ray * 0.09;                                 // (a flat glass, 9 cm before the eye: the line across it is straight)
+  float over = uCamY + onLens.y - (uLens.x + dot(uLens.yz, onLens.xz));
+  bool under = uLens.w > 0.5 ? over < 0.0 : uUnderEye > 0.5;
+  // (The line itself: the water climbs the glass a little and stands in a dark edge two or three pixels wide, a bright one over it.)
+  float edge = uLens.w > 0.5 ? over / max(fwidth(over), 1e-6) : 99.0, meniscus = (1.0 - smoothstep(0.0, 3.5, abs(edge + 1.0))), glint = (1.0 - smoothstep(0.0, 1.6, abs(edge - 3.0)));
+  bool throughWater = (scene.a > 0.0 && (near || under)) || scene.a < -2500.0 || (lrIsSky(depth) && under);
   if (throughWater) {
     // Things under water write reflectance and their depth below the surface: light them with what daylight
     // is left at that depth, then let the water between dim them and add its own glow.
-    float lagoon = texture(tWaterType, lrMapUV(uCamXZ)).r;
+    // (The kind of water, lagoon or open sea, here and some way along the look: swimming out of the one, the far water is already the other's blue.)
+    float lagoon = 0.5 * (texture(tWaterType, lrMapUV(uCamXZ)).r + texture(tWaterType, lrMapUV(uCamXZ + dir.xz * min(lrIsSky(depth) ? 60.0 : lrViewZ(depth) * length(ray), 60.0))).r);
     vec3 a = mix(uAbsOcean, uAbsLagoon, lagoon), bb = mix(uBbOcean, uBbLagoon, lagoon), kd = a + bb, c = a + 4.0 * bb;
     vec3 surfaceLight = uSunE * lrSaturate(uSunDir.y) + uSkyE;
     float far = lrIsSky(depth) ? 1e4 : lrViewZ(depth) * length(ray);
@@ -107,20 +131,22 @@ void main() {
       vec3 sunIn = refract(-uSunDir, vec3(0.0, 1.0, 0.0), 1.0 / 1.34);
       vec4 w = uWaveHere;
       float jitter = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))), beams = 0.0, total = 0.0;
-      for (int i = 0; i < 6; i++) {
-        float t = (float(i) + jitter) * 0.55;
+      // (Ten places along the look, closer together near the eye, the last ten metres off; each in the sun or in
+      // the shadow of what floats over it: your boat, yourself.)
+      for (int i = 0; i < 10; i++) {
+        float t = 0.35 * pow(float(i) + jitter, 1.5);
         if (t > far) break;
         vec3 p = vec3(0.0, uCamY, 0.0) + dir * t;
         float under = uSeaLevel - p.y;
         if (under < 0.03) continue;
-        float path = under / max(-sunIn.y, 0.3), kd = 0.254 * path, weight = exp(-0.35 * t);
+        float path = under / max(-sunIn.y, 0.3), kd = 0.254 * path, weight = exp(-0.22 * t) * (0.6 + 0.4 * float(i));
         vec2 entry = p.xz - sunIn.xz * path;
         vec3 h = vec3(0.0);
         for (int k = 2; k < 4; k++) {
           float bend = kd * w[k] * uWaveCurve[k];
           h += w[k] / (1.0 + bend * bend) * textureLod(tWaveC, vec3((entry + uWaveCamMod[k]) / uWaveTile[k], float(k)), log2(max((path * 0.0093 + 0.03) * 256.0 / uWaveTile[k], 1.0))).xyz;
         }
-        beams += weight * min(1.0 / max(abs((1.0 + kd * h.x) * (1.0 + kd * h.y) - kd * kd * h.z * h.z), 0.2), 3.5);
+        beams += weight * lrSunReaches(p) * min(1.0 / max(abs((1.0 + kd * h.x) * (1.0 + kd * h.y) - kd * kd * h.z * h.z), 0.2), 3.5);
         total += weight;
       }
       // (Looking along the light the beams are strongest.)
@@ -137,6 +163,7 @@ void main() {
       float miss = length(q - dir * dot(q, dir)) / 7.0;
       col += surfaceLight / PI * 0.3 * step(0.72, h.y) * (1.0 - smoothstep(0.0, 0.0018, miss)) * exp(-kd * eyeDepth);
     }
+    col = col * (1.0 - 0.55 * meniscus) + glint * 0.12 * surfaceLight / PI;
     outColor = vec4(col, 1.0);
     return;
   }
@@ -195,6 +222,7 @@ void main() {
     col = mix(col, grey, uRain * (1.0 - exp(-far / 2500.0)) * 0.9);
     col += uRain * lrRain(dir, lrIsSky(depth) ? 1e5 : far) * uSkyE / PI * 0.55;
   }
+  col = col * (1.0 - 0.55 * meniscus) + glint * 0.12 * (uSunE * lrSaturate(uSunDir.y) + uSkyE) / PI;
   outColor = vec4(col, 1.0);
 }`;
 
@@ -247,7 +275,7 @@ export class FrameGraph {
     const { targets } = R;
     this.copy = new FullscreenPass(copyFragment, { tSrc: { value: targets.scene.texture } });
     this.composite = new FullscreenPass(compositeFragment, uniformsFor(
-      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType', 'uUnderEye', 'tWaveC', 'uWaveTile', 'uWaveCamMod', 'uWaveCurve', 'uWaveHere'],
+      [...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, 'uCamRight', 'uCamUp', 'uCamFwd', 'uWind', 'uRain', 'tWaterType', 'uUnderEye', 'uLens', 'tShadow', 'uShadowC', 'uShadowR', 'uShadowU', 'uShadowP', 'tShadowB', 'uShadowB', 'uShadowBP', 'tWaveC', 'uWaveTile', 'uWaveCamMod', 'uWaveCurve', 'uWaveHere'],
       { tScene: { value: targets.scene.texture }, tDepth: { value: targets.scene.depthTexture }, tCloud: { value: null }, uCloudOn: { value: 0 }, uStarTurn: { value: 0 } }));
     this.bloom = new Bloom(6);
     this.tonemap = new FullscreenPass(tonemapFragment, uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.optics, 'uExposure'],

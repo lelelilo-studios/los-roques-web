@@ -12,6 +12,7 @@
 // seen: only the outside of the skin is drawn.
 import * as THREE from 'three';
 import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
+import { CAUSTIC_UNIFORMS } from '../shaders/chunks/caustics.glsl.js';
 import { CASTER_UNIFORMS, casterFragment, casterGLSL, shadowGLSL } from './shadow.js';
 import { DATA_ROOT } from '../config.js';
 import { Hair } from './hair.js';
@@ -64,6 +65,7 @@ void main() {
 const fragmentShader = /* glsl */`
 #include <lr_common>
 #include <lr_cloud_shadow>
+#include <lr_caustics>
 ${shadowGLSL}
 uniform sampler2D tSkin;
 uniform vec3 uTone;         // what the skin's own colour is multiplied by: her tan
@@ -186,7 +188,9 @@ void main() {
   // fingers, under her breasts. Baked for her at rest: pipeline/body/build.mjs. The sun is not held back by
   // it: its shadow map does that.)
   float open = mix(0.42, 1.0, vAo);
-  vec3 light = uSunE * sun * (soft + 0.12 * bleed) + (uSkyE * (0.5 + 0.5 * n.y) + bounce) * open;
+  // (What of her is under the sea has the sun as the waves over it have gathered it: the same net of light that lies on the sand.)
+  float dance = uWaterY - vRel.y > 0.02 ? lrCausticsHere(vRel.xz, uWaterY - vRel.y) : 1.0;
+  vec3 light = uSunE * sun * dance * (soft + 0.12 * bleed) + (uSkyE * (0.5 + 0.5 * n.y) + bounce) * open;
   // Light through the thin parts (fingers, toes, the edge of the hand) when the sun is behind them.
   float through = (1.0 - smoothstep(0.006, 0.02, vThin)) * lrSaturate(-nl) * lrSaturate(dot(V, -uSunDir) * 0.5 + 0.5) * (1.0 - cloth);
   light += uSunE * cloud * through * vec3(0.55, 0.14, 0.07);
@@ -206,7 +210,10 @@ void main() {
   // them: bends the view of them at the surface, colours them by the depth of water over them, and lays its
   // own glitter across them. (Drawn as lit skin, like the rest of you, the water simply painted over them:
   // below the knee your legs were gone.)
-  if (below > 0.0 && uShowUnder > 0.5) { outColor = vec4(col * PI / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), below); return; }
+  // (And with your eye under water too: your arms before you are lit by what light is left at their depth and
+  // seen through the water between, as everything else down there is. Drawn as in air, they were the one
+  // thing under the sea still in full daylight.)
+  if (below > 0.0) { outColor = vec4(col * PI / max(uSunE * lrSaturate(uSunDir.y) + uSkyE, vec3(1e-4)), below); return; }
   outColor = vec4(col, -1000.0);
 }`;
 
@@ -282,7 +289,7 @@ export class Figure {
     const own = { tBones: { value: this.boneTexture } };
     this.mesh = new THREE.Mesh(geometry, new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.FrontSide, defines: { LR_SHADOW_TAPS: shadowTaps },
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow, ...CAUSTIC_UNIFORMS], {
         uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, uHandWetL: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSandL: { value: 0 }, ...state,
         uShowHead: { value: 0 }, uShowUnder: { value: 1 }, uWaterY: { value: -1e9 }, uBlink: { value: 0 }, uBlinkBy: { value: info.face.blinkScale }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));

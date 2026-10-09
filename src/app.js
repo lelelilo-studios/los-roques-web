@@ -1132,14 +1132,19 @@ export async function start(canvas, onProgress = () => {}) {
     }
     // Rain wets the ground in a quarter of a minute; the sun and the wind take a few minutes to dry it.
     if (dt > 0) { const rain = shared.uRain.value, wet = shared.uWet.value; shared.uWet.value = rain > wet ? wet + (rain - wet) * (1 - Math.exp(-dt / 6)) : Math.max(rain, wet - dt / 200); }
-    rig.dt = dt; rig.under = walker.under;
+    // (The camera behind her goes under when she dives: not when she floats with her face in the water.)
+    rig.dt = dt; rig.under = walker.under && (walker.diving || !walker.afloat);
     // (Behind your boat the camera stands further back and higher, and in the middle.)
     { const b = rig.behind, e = board.k * board.k * (3 - 2 * board.k), k = dt > 0 ? 1 - Math.exp(-dt * 4) : 1; b.far += (BOOM.far + (7.2 - BOOM.far) * e - b.far) * k; b.above += (BOOM.above + (0.8 - BOOM.above) * e - b.above) * k; b.side += (BOOM.side * (1 - e) - b.side) * k; }
     rig.update(R.size.width / R.size.height, R.reversed);
     drawBoat(dt);
     // (The picture is under water when the camera is: behind her, that is the camera's own height against the sea
     // there. What you hear is still where her ears are: sound.update, above.)
-    shared.uUnderEye.value = rig.mode !== 'walk' ? 0 : rig.out > 0.5 ? (rig.eye.y < surfaceAt(rig.eye.x, rig.eye.z) ? 1 : 0) : walker.under ? 1 : 0;
+    // (And where the camera is within a wave's height of the surface, the sea there as a plane: each pixel is then
+    // judged against it, and the waterline crosses the lens. core/framegraph.js, world/water.js.)
+    { const here = rig.mode === 'walk' ? surfaceAt(rig.eye.x, rig.eye.z) : 0, near = rig.mode === 'walk' && Math.abs(rig.eye.y - here) < 0.6 && here - ground.heightAt(rig.eye.x, rig.eye.z) > 0.3;
+      shared.uUnderEye.value = rig.mode !== 'walk' ? 0 : rig.out > 0.5 || rig.outside || near ? (rig.eye.y < here ? 1 : 0) : walker.under ? 1 : 0;
+      if (near) { const e = 0.2; shared.uLens.value.set(here, (surfaceAt(rig.eye.x + e, rig.eye.z) - surfaceAt(rig.eye.x - e, rig.eye.z)) / (2 * e), (surfaceAt(rig.eye.x, rig.eye.z + e) - surfaceAt(rig.eye.x, rig.eye.z - e)) / (2 * e), 1); } else shared.uLens.value.w = 0; }
     sky.overcast = Math.min(1, Math.max(0, (env.cloud - 0.45) / 0.4));
     sky.update();
     const view = rig.view();
