@@ -11,6 +11,8 @@ export const params = {
   revz: q.get('revz') !== '0',              // revz=0 forces the ordinary depth path (as on Firefox)
   data: q.get('data') || 'real',            // fixture = the small synthetic atoll
   dev: q.has('dev'),
+  intro: q.get('intro'),                    // intro=0: no opening screen (pictures of the simulation itself, the long-run test)
+  as: q.get('as'),                          // for pictures and tests of the opening screen: mobile | nogpu | slow | weak (a device to pretend to be)
   validate: q.get('validate') === '1',
   tubes: q.get('tubes') === '1',
   stamps: q.get('stamps') === '1',          // marks in the sand as stamps (no patch of real sand round you)            // keep the figure of tubes as your body (do not load the real one)

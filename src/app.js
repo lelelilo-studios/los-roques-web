@@ -61,6 +61,8 @@ export async function start(canvas, onProgress = () => {}) {
   addEventListener('error', e => note(String(e.message || e.error)));
   addEventListener('unhandledrejection', e => note(String(e.reason?.message || e.reason)));
 
+  // (When you stepped in from the opening screen; with no opening screen, at the start.)
+  let entered = params.freeze || !params.ui || params.intro === '0' ? performance.now() : 0, trialOn = false;
   registerChunks();
   const R = createRenderer(canvas);
   const { renderer } = R;
@@ -1036,14 +1038,25 @@ export async function start(canvas, onProgress = () => {}) {
         }]);
       }
     }
-    let lastFrame = performance.now(), failures = 0;
+    let lastFrame = performance.now(), failures = 0, slowFor = 0, slowTold = false;
     const loop = now => {
       requestAnimationFrame(loop);                         // (first: nothing that goes wrong below may end the animation)
       const dt = Math.min(0.1, (now - clock.last) / 1000);
       clock.last = now; clock.time += dt;
       if (document.hidden || lost || paceHold) { lastFrame = now; paceHold = false; if (document.hidden || lost) return; }
-      if (params.scale == null && clouds.ready !== false && dynamic.frame((now - lastFrame) / 1000) !== null) resize();
+      if (params.scale == null && !trialOn && clouds.ready !== false && dynamic.frame((now - lastFrame) / 1000) !== null) resize();
       lastFrame = now;
+      // Slow for a quarter of a minute with the picture already at its smallest (under 25 frames a second, where
+      // movement stops looking like movement): this computer is below what the simulation asks, and is told so,
+      // once. (It was tried before you stepped in; this is for what has happened since: another program taking
+      // the graphics card, a laptop gone onto its battery.)
+      if (params.ui && !params.freeze && !slowTold && entered) {
+        slowFor = dynamic.pace > 0.04 && dynamic.scale <= dynamic.min + 1e-3 && now - entered > 8000 ? slowFor + dt : 0;
+        if (slowFor > 15) {
+          slowTold = true;
+          notice(`This computer is not keeping up: about ${Math.round(1 / dynamic.pace)} frames a second, with the picture at its smallest. It is below the recommended requirements for this simulation. Closing other tabs and programs may help.`, ['OK', () => notice('')]);
+        }
+      }
       // Still crawling with the picture at its smallest: this device cannot draw the tier it was given. Start
       // again in the simplest one (once: pickTier reads the note left here).
       if (dynamic.crawling >= 2 && tierName !== 'low' && !params.tier) {
@@ -1075,6 +1088,31 @@ export async function start(canvas, onProgress = () => {}) {
   let cut = null;
   const api = {
     errors,
+    /** What this is being drawn with, and at which quality tier (for the opening screen: main.js). */
+    device: { gpu: gpuName, software, tier: tierName },
+    /** How the frames are coming: the size the picture is drawn at (1 whole .. the smallest), and the last mean interval between frames (s). */
+    pace: () => ({ scale: dynamic.scale, min: dynamic.min, interval: dynamic.pace }),
+    /**
+     * Being tried (main.js, behind the opening screen): the picture is drawn whole and stays whole, however the
+     * frames come, so that how they come says what this computer can do with it. (Left to itself the picture is
+     * made smaller whenever frames come late, and the first frames of all, while the shaders are still being
+     * made, always do: a fast computer was found slow.) `false`: over; the picture follows the frames again.
+     */
+    trial(on) { trialOn = !!on; Object.assign(dynamic, { scale: dynamic.max, sum: 0, count: 0, calm: 0, long: 0, crawling: 0 }); resize(); },
+    setSound: on => app.setSound(on),
+    /**
+     * You step in from the opening screen: the sound starts (that step was the click a browser waits for), the
+     * line of keys at the foot of the page is shown from its beginning (it had faded behind the opening), and
+     * the mouse is yours to look round with if the browser gives it.
+     */
+    enter() {
+      if (rig.mode === 'walk' && !sound.muted) sound.start();
+      const hint = hud?.querySelector('.walk-hint');
+      if (hint) { hint.style.animation = 'none'; void hint.offsetWidth; hint.style.animation = ''; }
+      canvas.focus({ preventScroll: true });
+      if (rig.mode === 'walk') canvas.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      entered = performance.now();
+    },
     /** For tests: where the beach umbrellas stand, and the ground and shore distance the CPU sees at a point. */
     /** For tests: the height of the waves arriving at a place, and how loud the reef is there. */
     seaAt: (x, z) => ({ ...seaAt(x, z) }),

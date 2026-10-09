@@ -11,19 +11,7 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--sea); color: var(--ink); }
 #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
 
-#loader {
-  position: fixed; inset: 0; display: grid; place-items: center; z-index: 20;
-  background: radial-gradient(120% 90% at 50% 35%, #1fa7b8 0%, #0d5f7c 45%, #072a3d 100%);
-  transition: opacity 0.6s ease;
-}
-#loader.done { opacity: 0; pointer-events: none; }
-.loader-box { width: min(22rem, 80vw); text-align: center; }
-.loader-box h1 { margin: 0 0 0.4rem; font-weight: 600; font-size: 2rem; letter-spacing: 0.04em; }
-.loader-box p { margin: 0 0 0.9rem; color: var(--ink-dim); font-size: 0.9rem; min-height: 1.2em; }
-.bar { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; }
-.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s ease; }
-#loader.failed .bar { display: none; }
-#loader.failed p { color: #ffd9c9; }
+/* (The opening screen: css/intro.css.) */
 
 /* ---- controls */
 #ui { position: fixed; inset: 0; pointer-events: none; z-index: 10; font-size: 0.86rem; }
@@ -112,7 +100,7 @@ dialog.about button { font: inherit; padding: 0.4rem 1rem; border-radius: 999px;
   .panel-toggle { padding: 0.6rem 1rem 0.5rem; font-size: 1.05rem; }
   .compare-tag { bottom: auto; top: 0.8rem; }
 }
-@media (prefers-reduced-motion: reduce) { #loader, .bar i, .chip { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .chip { transition: none; } }
 
 /* A line at the foot of the page when something is wrong (app.js: notice). */
 .notice { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 60; max-width: min(620px, calc(100vw - 32px)); padding: 10px 14px;
