@@ -238,7 +238,7 @@ export async function start(canvas, onProgress = () => {}) {
     Object.assign(walker, { stand: p.stand, crouch: 0.54 * p.stand, sit: 0.095 + 0.985 * p.torso + p.eyeToShoulder, legs: (p.thigh + p.shin) / 0.87 });
     gait.prop = { hip: p.hip, ankle: p.ankle, leg: p.thigh + p.shin };
     if (walker.body >= was - 0.01) { walker.eyeY += p.stand - walker.body; walker.body = p.stand; }
-    opaque.add(figure.mesh, figure.cloth, figure.hair);
+    opaque.add(figure.mesh, figure.cloth, figure.hair, figure.face.eyes, figure.face.hairs);
     // The sand round you as real sand: your body presses into it (sim/patch.js).
     if (tier.fp.patch && !params.stamps) { patch = new SandPatch(renderer, tier.fp.patch); pressing = patch.toolMaterial(figure.mesh.material.uniforms.tBones);
       ripples = new Ripples(renderer, patch, 512); crossing = ripples.crossMaterial(figure.mesh.material.uniforms.tBones);
@@ -400,6 +400,9 @@ export async function start(canvas, onProgress = () => {}) {
   rig.floorAt = (x, z) => ({ ground: footing.heightAt(x, z), sea: surfaceAt(x, z) });
   /** How much of her head is drawn: none from inside it (her own eyes), all of it from a forearm's length off; between, it thins out. */
   const headSeen = () => (rig.outside ? 1 : Math.min(1, Math.max(0, (rig.away - BOOM.headNear[0]) / (BOOM.headNear[1] - BOOM.headNear[0]))));
+  /** (What her eyes' small movements and the gaps between her blinks are drawn from: the same each time for a test that seeds it.) */
+  let faceSeed = 12345;
+  const faceRandom = () => (faceSeed = (Math.imul(faceSeed, 1664525) + 1013904223) >>> 0) / 4294967296;
   /** And of her hair, which comes in with it. */
   const hairSeen = () => (rig.outside ? 1 : Math.min(1, Math.max(0, (rig.away - BOOM.headNear[0]) / (BOOM.headNear[1] + 0.05 - BOOM.headNear[0]))));
   /** How wet her hair is, 0..1: soaked the moment her head goes under, dry again in about three minutes (sooner in a wind). */
@@ -828,7 +831,7 @@ export async function start(canvas, onProgress = () => {}) {
     const walking = rig.mode === 'walk', standing = walking && !walker.afloat && !walker.diving;
     // Your body: walking on the bottom, or swimming where the water carries you (tipped along your look when dived).
     body.mesh.visible = walking && !figure;
-    if (figure) figure.mesh.visible = figure.cloth.visible = walking;
+    if (figure) { figure.mesh.visible = figure.cloth.visible = walking; if (!walking) figure.face.place(figure.mesh.matrix, 0); }
     if (standing && you.on) {
       // You were posed before the camera was set (advance): now everything of you is put where it stands,
       // relative to the camera. (Looked at from outside, the camera is not at your eye.)
@@ -846,6 +849,13 @@ export async function start(canvas, onProgress = () => {}) {
         // (Folded into the deepest squat she is left out of her own eyes' picture; from behind she is there to be seen.)
         figure.mesh.visible = !you.folded || rig.out > 0.02; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading);
         figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hairModel.show(figure.mesh.visible ? hairSeen() : 0, wetHair(dt));
+        // Her eyes: her head has nodded six tenths of the way to where you look, and her eyes take the rest. With the
+        // camera held round in front of her for a moment (Alt), she glances at it.
+        { const j = body.joints, at = rig.behind.held && rig.out > 0.9 ? (you.glance = (you.glance || 0) + dt) : (you.glance = 0);
+          let gy = 0, gp = walker.look - (j.headNod || 0);
+          if (at > 0.7) { const dx = rig.eye.x - rig.own.x, dy = rig.eye.y - rig.own.y, dz = rig.eye.z - rig.own.z, to = Math.atan2(dx, -dz), off = Math.atan2(Math.sin(to - walker.yaw), Math.cos(to - walker.yaw)), up = Math.atan2(dy, Math.hypot(dx, dz)) - (j.headNod || 0); if (Math.abs(off) < 0.6 && up > -0.5 && up < 0.42) { gy = off; gp = up; } }
+          you.gaze = (you.gaze || [0, 0]).map((v, c) => v + ((c ? gp : gy) - v) * (1 - Math.exp(-dt * 12)));
+          figure.look(dt, you.gaze[0], you.gaze[1], walker.turnRate || 0, faceRandom); figure.face.place(figure.mesh.matrix, figure.mesh.visible ? headSeen() : 0); }
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         // (And her fingers as rods, where they are: what she holds lies on them, and falls between them.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = { ...figureRig.hand(1), caps: figureRig.handCaps(1), skin: () => figureRig.handSkin(1) };
@@ -901,6 +911,7 @@ export async function start(canvas, onProgress = () => {}) {
         figure.setPose(figureRig.pose(over.joints, 0), over.raw ? 0 : over.joints.eye[1]); figure.place(over.frame.x, over.frame.y, over.frame.z, over.frame.yaw, over.frame.pitch || 0);
         figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.hairModel.show(hairSeen(), wetHair(dt));
         figure.swing(dt, [rig.eye.x, rig.eye.z], [0, 0, 0], walker.under ? 1 : 0);
+        figure.look(dt, 0, 0, 0, faceRandom); figure.face.place(figure.mesh.matrix, headSeen());
         // (Afloat, what of you is under the surface is seen through it, as your legs are when you wade: your arms
         // working under the water in front of you. It was painted over by the sea: a head floating by itself.)
         figure.mesh.material.uniforms.uWaterY.value = walker.surf; figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0;
@@ -977,7 +988,7 @@ export async function start(canvas, onProgress = () => {}) {
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
       const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: rig.own.x - rig.eye.x, y: body.mesh.position.y - 0.3, z: rig.own.z - rig.eye.z }, half: standing ? 1.3 : 2 } : null;
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh, figure.cloth, figure.hair] : [])] : [])], [], casters, own);
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh, figure.cloth, figure.hair, figure.face.eyes, figure.face.hairs] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     falling?.update(clock.time, dt, you.air || [0, 0]);
     graph.render(opaque, water.mesh, rig.camera, clouds, falling || pools ? overlay : null);
@@ -1171,6 +1182,8 @@ export async function start(canvas, onProgress = () => {}) {
     swing: (yaw = 0, pitch = 0, hold = true) => { rig.behind.held = hold; if (hold) { rig.behind.swing = [0, 0]; rig.behind.swingBy(yaw * Math.PI / 180, pitch * Math.PI / 180); } },
     /** Where the camera is and what is under it: { at, own (her eye), out (0 her eyes .. 1 behind her), away, ground, sea (heights there), under (the picture is the underwater one), diving } */
     camera: () => { const f = rig.floorAt(rig.eye.x, rig.eye.z); return { at: [rig.eye.x, rig.eye.y, rig.eye.z], own: [rig.own.x, rig.own.y, rig.own.z], out: rig.out, away: rig.away, ground: f.ground, sea: f.sea, under: shared.uUnderEye.value > 0.5, diving: !!walker.under, length: rig.behind.len, lift: rig.behind.lift, block: rig.behind.block, fov: rig.camera.fov }; },
+    /** How many times she has blinked (tests). */
+    blinks: () => (figure ? figure.face.blinks : null),
     bones: () => { if (!figureRig) return null; const p = figureRig.probe(), e = you.on ? toWorld(p.eye) : null; return { ...p, eyeGap: e ? Math.hypot(e[0] - rig.own.x, e[1] - rig.own.y, e[2] - rig.own.z) : null }; },
     /** For tests: a point of her body's frame as a place in the world (on foot). */
     toWorld: q => (you.on ? toWorld(q) : null),
@@ -1209,7 +1222,7 @@ export async function start(canvas, onProgress = () => {}) {
     palm: (side = 1) => { const h = side > 0 ? hand : handL, q = h.sim; return q ? { floor: Array.from(q.floor), s: Array.from(q.s), leak: Array.from(q.leak), gap: Array.from(q.gap), drops: h.drops || 0, hang: (h.hang || []).slice(), last: h.lastDrop || null, lift: h.lift, fresh: !!h.fresh, up: h.upNow || null, lost: q.lost ? Array.from(q.lost) : null, trace: () => { q.lost = new Float32Array(q.s.length); }, edgeBy: h.edgeBy || null, open: h.open, tipped: h.tipped, worked: h.worked || 0, began: h.began || 0, flow: h.running_ || 0 } : null; },
     handful: (side = 1) => { const h = side > 0 ? hand : handL; return { kind: h.kind, amount: h.amount, open: h.open, rates: h.rates.slice(), ...h.ledger, gaps: h.ledger.gaps.slice() }; },
     /** For tests: chance begins again from `n`: the same doing then gives the same grains and drops. */
-    seed(n = 1) { spray.seed(n); hand.seed(n + 1); handL.seed(n + 2); falling?.seed(n + 3); },
+    seed(n = 1) { spray.seed(n); hand.seed(n + 1); handL.seed(n + 2); falling?.seed(n + 3); faceSeed = (n + 77) >>> 0; },
     /** For tests: a place to hold a handful (from the eye: x to the hand's own side, y up, z back; metres) and how far the fingers point inward (radians), to try; null: as it is. */
     holdAt(tune = null) { Hand.tune = tune; },
     /** For tests: how many grains are in the air now, and how many were written over while still falling. */

@@ -10,6 +10,9 @@ here so that the origin is on record.
 - Skin picture `skins/young_caucasian_female/young_lightskinned_female_diffuse.png` from the CC0 system-assets pack, https://files.makehumancommunity.org/asset_packs/makehuman_system_assets/makehuman_system_assets_cc0.zip
 - Her hair, `hair/ponytail01/ponytail01` (mesh, fitting file, picture), from the same pack: fetched file by file, each checked
   against the pack's own list, and refused if its fitting file or its material does not say CC0.
+- Her eyes (`eyes/high-poly`, `eyes/materials/brown`), lashes (`eyelashes/eyelashes01`) and brows
+  (`eyebrows/eyebrow001`), from the same pack in the same way; and the shapes that shut her eyes,
+  `makehuman/data/targets/expression/units/*/eye-*-closure.target`, from the repository.
 - MakeHuman on its licences: https://static.makehumancommunity.org/makehuman/faq/are_makehuman_files_free.html
 
 What the tool changed: the shape of a young adult woman (an equal mix of MakeHuman's three ethnic shapes) scaled

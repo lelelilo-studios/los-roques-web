@@ -15,6 +15,7 @@ import { CHUNK_UNIFORMS, uniformsFor } from '../core/uniforms.js';
 import { CASTER_UNIFORMS, casterFragment, casterGLSL, shadowGLSL } from './shadow.js';
 import { DATA_ROOT } from '../config.js';
 import { Hair } from './hair.js';
+import { Face } from './face.js';
 
 const TYPES = { Float32Array, Int8Array, Uint8Array, Uint16Array, Uint32Array };
 
@@ -37,6 +38,11 @@ ${skinningGLSL}
 in float aCloth;
 in float aThin;
 in float aPart;
+in vec3 aBlink;         // how far this point of skin goes when her eyes shut (parts of uBlinkBy metres)
+in float aAo;           // how much of the sky this point of skin sees, at rest (0..1)
+uniform float uBlink;   // 0 her eyes open .. 1 shut
+uniform float uBlinkBy;
+out float vAo;
 out float vPart;
 out vec3 vRel;
 out vec3 vNormal;
@@ -48,8 +54,8 @@ out float vThin;
 out vec3 vRestN;        // and which way the skin faces there, at rest
 void main() {
   mat4 skin = lrSkin();
-  vec4 posed = skin * vec4(position, 1.0), wp = modelMatrix * posed;
-  vUp = posed.y;
+  vec4 posed = skin * vec4(position + aBlink * (uBlink * uBlinkBy), 1.0), wp = modelMatrix * posed;
+  vUp = posed.y; vAo = aAo;
   vNormal = mat3(modelMatrix) * (mat3(skin) * normal);
   vRel = wp.xyz; vRest = position; vRestN = normal; vUv = uv; vCloth = aCloth; vThin = aThin; vPart = aPart;
   gl_Position = projectionMatrix * viewMatrix * vec4(wp.x, wp.y - lrCurveDrop(wp.xz), wp.z, 1.0);
@@ -104,6 +110,7 @@ float lrCloth(vec3 p, vec3 n) {
 }
 in float vThin;
 in float vPart;
+in float vAo;
 layout(location = 0) out vec4 outColor;
 void main() {
   // (The head is not drawn: you look out of it. It is still there for the shadow. As the camera leaves her eyes
@@ -175,7 +182,11 @@ void main() {
   // gets a sixth of that from the sand beyond and from your own lit skin. (Without it the shade of your
   // trunk on your thighs was black: tanned skin gives little back of blue light.)
   vec3 bounce = (uSunE * lrSaturate(uSunDir.y) * cloud + 0.8 * uSkyE) * vec3(0.6, 0.55, 0.47) * (0.17 + 0.83 * (0.5 - 0.5 * n.y)) * (0.5 + 0.3 * smoothstep(0.1, 0.9, vUp));
-  vec3 light = uSunE * sun * (soft + 0.12 * bleed) + uSkyE * (0.5 + 0.5 * n.y) + bounce;
+  // (What comes from all round, the sky and the sand, comes less into a crease: under her chin, between her
+  // fingers, under her breasts. Baked for her at rest: pipeline/body/build.mjs. The sun is not held back by
+  // it: its shadow map does that.)
+  float open = mix(0.42, 1.0, vAo);
+  vec3 light = uSunE * sun * (soft + 0.12 * bleed) + (uSkyE * (0.5 + 0.5 * n.y) + bounce) * open;
   // Light through the thin parts (fingers, toes, the edge of the hand) when the sun is behind them.
   float through = (1.0 - smoothstep(0.006, 0.02, vThin)) * lrSaturate(-nl) * lrSaturate(dot(V, -uSunDir) * 0.5 + 0.5) * (1.0 - cloth);
   light += uSunE * cloud * through * vec3(0.55, 0.14, 0.07);
@@ -183,8 +194,10 @@ void main() {
   // The sheen of skin: broad and faint.
   vec3 h = normalize(uSunDir + V);
   float fresnel = 0.028 + 0.972 * pow(1.0 - lrSaturate(dot(n, V)), 5.0);
-  col += uSunE * sun * lrSaturate(nl) * (0.35 * pow(lrSaturate(dot(n, h)), 28.0) + 0.9 * pow(lrSaturate(dot(n, h)), 140.0)) * 0.06 * (1.0 - 0.6 * cloth) * (1.0 - stuck) + fresnel * uSkyE / PI * (0.25 + 0.75 * soaked) * (1.0 - cloth) * (1.0 - stuck);
-  col += uSunE * sun * lrSaturate(nl) * soaked * (1.0 - cloth) * 0.5 * pow(lrSaturate(dot(n, h)), 400.0);
+  // (Broad and low: skin is not glass. Seen from behind her at a low sun, the narrow part of it made her
+  // shoulders and thighs look varnished; wet, it is brighter but no narrower than a film of water makes it.)
+  col += uSunE * sun * lrSaturate(nl) * (0.4 * pow(lrSaturate(dot(n, h)), 24.0) + 0.45 * pow(lrSaturate(dot(n, h)), 90.0)) * 0.06 * (1.0 - 0.6 * cloth) * (1.0 - stuck) + fresnel * uSkyE / PI * (0.2 + 0.6 * soaked) * (1.0 - cloth) * (1.0 - stuck) * open;
+  col += uSunE * sun * lrSaturate(nl) * soaked * (1.0 - cloth) * 0.3 * pow(lrSaturate(dot(n, h)), 220.0);
   // Where skin cuts the surface the water climbs it: a bright thread, the one sure sign of where the surface is.
   float below = uWaterY - vRel.y;
   col += (1.0 - smoothstep(0.0, 0.007, abs(below))) * (uSkyE + 0.25 * uSunE * lrSaturate(uSunDir.y)) / PI * 0.22;
@@ -220,7 +233,10 @@ export async function loadFigure(gzip = false) {
   // (Her hair's picture: its colour, and where it is clear between the strands.)
   const hair = await new THREE.TextureLoader().loadAsync(url(info.hair.picture));
   Object.assign(hair, { colorSpace: THREE.NoColorSpace, anisotropy: 8, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, premultiplyAlpha: false });
-  return { info, arrays, texture, hair };
+  // (Her eyes', lashes' and brows' pictures.)
+  const picture = async (file, more = {}) => Object.assign(await new THREE.TextureLoader().loadAsync(url(file)), { colorSpace: THREE.NoColorSpace, anisotropy: 4, wrapS: THREE.ClampToEdgeWrapping, wrapT: THREE.ClampToEdgeWrapping, premultiplyAlpha: false, ...more });
+  const pictures = { eye: await picture(info.face.eyes.picture), lash: await picture(info.face.lashes.pictures[0]), brow: await picture(info.face.lashes.pictures[1]) };
+  return { info, arrays, texture, hair, pictures };
 }
 
 /** A map that says dry and clean everywhere, until there is a real one. */
@@ -244,7 +260,7 @@ export class Figure {
    * @param {number} shadowTaps
    * @param {object} state  uniforms to share for what is on the skin (uBodyWet, uBodySand, uHandWet, uHandSand)
    */
-  constructor({ info, arrays, texture, hair }, shadowTaps = 8, state = {}) {
+  constructor({ info, arrays, texture, hair, pictures }, shadowTaps = 8, state = {}) {
     this.info = info; this.bones = info.bones;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(arrays.position, 3));
@@ -256,6 +272,7 @@ export class Figure {
     const cloth = Float32Array.from(arrays.cloth, v => v / 127 * info.clothScale), thin = Float32Array.from(arrays.thin, v => v / 255 * info.thinScale);
     geometry.setAttribute('aCloth', new THREE.BufferAttribute(cloth, 1)); geometry.setAttribute('aThin', new THREE.BufferAttribute(thin, 1));
     geometry.setAttribute('aPart', new THREE.BufferAttribute(arrays.part, 1, false));
+    geometry.setAttribute('aBlink', new THREE.BufferAttribute(arrays.blink, 3, true)); geometry.setAttribute('aAo', new THREE.BufferAttribute(arrays.ao, 1, true));
     geometry.setIndex(new THREE.BufferAttribute(arrays.index, 1));
     // The bones' matrices: three texels each.
     this.matrices = new Float32Array(info.bones.length * 12);
@@ -267,7 +284,7 @@ export class Figure {
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.FrontSide, defines: { LR_SHADOW_TAPS: shadowTaps },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.shadow], {
         uBodyWet: { value: new THREE.Vector4(-1e9, 0, -1e9, 0) }, uBodySand: { value: 0 }, uHandWet: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSand: { value: 0 }, uHandWetL: { value: new THREE.Vector4(0, -1e9, 0, 0) }, uHandSandL: { value: 0 }, ...state,
-        uShowHead: { value: 0 }, uShowUnder: { value: 1 }, uWaterY: { value: -1e9 }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
+        uShowHead: { value: 0 }, uShowUnder: { value: 1 }, uWaterY: { value: -1e9 }, uBlink: { value: 0 }, uBlinkBy: { value: info.face.blinkScale }, tSkinState: { value: blank() }, ...own, ...bikini(info, arrays.position), tSkin: { value: texture }, uTone: { value: new THREE.Vector3(0.66, 0.62, 0.55) }, uClothColour: { value: new THREE.Vector3(0.62, 0.07, 0.06) } }),
     }));
     this.mesh.frustumCulled = false; this.mesh.matrixAutoUpdate = false; this.mesh.visible = false;
     // Her bikini, as cloth: the skin where it lies, cut out, lifted off the body and drawn taut
@@ -283,11 +300,14 @@ export class Figure {
       g.setAttribute('aCloth', new THREE.BufferAttribute(Float32Array.from(arrays['cloth.cloth'], v => v / 127 * info.clothScale), 1));
       g.setAttribute('aThin', new THREE.BufferAttribute(new Float32Array(n).fill(info.thinScale), 1));
       g.setAttribute('aPart', new THREE.BufferAttribute(new Uint8Array(n), 1, false));
+      g.setAttribute('aBlink', new THREE.BufferAttribute(new Int8Array(n * 3), 3, true)); g.setAttribute('aAo', new THREE.BufferAttribute(new Uint8Array(n).fill(255), 1, true));
       g.setIndex(new THREE.BufferAttribute(arrays['cloth.index'], 1));
       const of = this.mesh.material;
       this.cloth = new THREE.Mesh(g, new THREE.ShaderMaterial({ glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: shadowTaps, LR_CLOTH: 1 }, uniforms: of.uniforms }));
       this.cloth.frustumCulled = false; this.cloth.matrixAutoUpdate = false; this.cloth.visible = false;
     }
+    // Her eyes, lashes and brows (face.js).
+    this.face = new Face({ info, arrays, pictures }, skinningGLSL, this.mesh.material.uniforms, shadowTaps);
     // Her hair (hair.js): tied back, a tail down her back. From her own eyes you see it only in your shadow;
     // from behind her it is most of what you see of her head.
     this.hairModel = new Hair({ info, arrays, hair }, shadowTaps, this.mesh.material.uniforms);
@@ -308,6 +328,12 @@ export class Figure {
    */
   swing(dt, origin, wind, afloat = 0) { this.hairModel.update(this.matrices, this.mesh.matrix, origin, dt, wind, afloat); }
 
+  /**
+   * Her eyes for this frame (face.js): where they look against her head, and a blink when one is due. The skin
+   * of her lids shuts with it.
+   */
+  look(dt, yaw, pitch, turning, random) { this.mesh.material.uniforms.uBlink.value = this.face.update(dt, yaw, pitch, turning, random); }
+
   /** Every bone where it is at rest. */
   rest() {
     for (let b = 0, o = 0; b < this.bones.length; b++, o += 12) { this.matrices.fill(0, o, o + 12); this.matrices[o] = this.matrices[o + 5] = this.matrices[o + 10] = 1; }
@@ -323,5 +349,6 @@ export class Figure {
     m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix);
     // (Her bikini is where she is, and seen when she is.)
     this.cloth.matrix.copy(m.matrix); this.cloth.matrixWorld.copy(m.matrix); this.cloth.visible = m.visible;
+    this.face.place(m.matrix, m.visible ? this.mesh.material.uniforms.uShowHead.value : 0);
   }
 }
