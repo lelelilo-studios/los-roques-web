@@ -754,7 +754,7 @@ export async function start(canvas, onProgress = () => {}) {
     // (For her hands, next frame: where her eye would be were she not leaning to anything. A hand held before
     // her eyes and the lean that hand asks of her would otherwise chase one another.)
     you.eyeAt = figure && figureRig ? figureRig.eyeFree : null;
-    const calm = 1 - walker.bobAmount, ex = eyeIs[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = eyeIs[1] + calm * 0.92 * you.dip, ez = eyeIs[2];
+    const calm = 1 - walker.bobAmount, ex = eyeIs[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = eyeIs[1] + calm * 0.92 * (you.dip - (g.ride || 0) + 0.05 * (g.run || 0)), ez = eyeIs[2];
     if (!folded) {
       const head = [you.x + ex * cy - ez * sy, feetY + ey, you.z + ex * sy + ez * cy];
       you.headOff = [head[0] - floatAt[0], head[1] - floatAt[1], head[2] - floatAt[2]];

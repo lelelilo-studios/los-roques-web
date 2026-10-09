@@ -599,7 +599,7 @@ export function mixPoses(a, b, k) {
   out.feet = a.feet.map((f, i) => ({ pitch: num(f.pitch, b.feet[i].pitch), out: num(f.out, b.feet[i].out), planted: num(f.planted, b.feet[i].planted), toes: num(f.toes, b.feet[i].toes) }));
   // (A hand goes from the one way of holding it to the other by one turn, and its joints each by their own way.)
   out.hands = a.hands.map((h, i) => { const g = b.hands[i] || h, [f, N] = slerpFrame(h.f, h.N, g.f, g.N, k); return { ...h, f, N, curl: num(h.curl, g.curl), spread: num(h.spread, g.spread), ...(h.fingers && g.fingers ? { fingers: mixPose(h.fingers, g.fingers, k) } : {}) }; });
-  for (const name of ['pelvis', 'headTurn', 'headNod', 'crouch', 'lean']) out[name] = num(a[name], b[name]);
+  for (const name of ['pelvis', 'list', 'tiltTop', 'headTurn', 'headNod', 'crouch', 'lean']) out[name] = num(a[name], b[name]);
   // (How far she is on her seat, 0..1: figurepose.js lets go of her eye's height by as much.)
   out.seat = num(a.seat ?? (a.sitting ? 1 : 0), b.seat ?? (b.sitting ? 1 : 0));
   for (const name of ['touching', 'touchingL']) { const from = k < 0.5 ? a : b, t = from[name]; if (t) out[name] = { ...t, tip: at(from, t.tip), wrist: at(from, t.wrist) }; else delete out[name]; }
@@ -673,10 +673,18 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   if (gait) { const up = eye - PROP.eyeToShoulder - 0.05 * dip - 0.27; if (up < PROP.torso * Math.cos(lean)) lean = Math.acos(Math.min(1, Math.max(0.05, up / PROP.torso))); }
   // (What is above the hips comes down with them, all but a twentieth that the back takes up: now that the hips
   // ride four centimetres, as a person's do, the head rides nearly the same.)
-  const sy = eye - PROP.eyeToShoulder + 0.004 * breath - (gait ? 0.95 * dip : 0), shoulder = [0, sy, PROP.back + 0.02];      // (It used to back away from the eye as you looked down, up to 10 cm, to keep out of your view: and the neck was drawn out to it.)
+  // (Running, the whole of you rides up and down by `ride`, lowest over the foot and highest in the air: gait.js.)
+  // (And she runs on bent legs: the hips ride five centimetres lower than walking, so that a leg reaching out to
+  // land, or back to push off, does not have to pull them down to it: they would drop at each footfall and
+  // spring up as the foot left, where a runner is highest.)
+  const ride = gait ? gait.ride || 0 : 0, low = gait ? 0.05 * (gait.run || 0) : 0, sunk = dip - ride + low;
+  // (Her pelvis lists as her weight goes over one foot, the other hip dropping; her shoulders tilt the other way
+  // by half as much, and her head stays level. `list`: left hip lower, positive.)
+  const list = gait ? (gait.list || 0) * (1 - Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy))) : 0, tiltTop = -0.5 * list;
+  const sy = eye - PROP.eyeToShoulder + 0.004 * breath - (gait ? 0.95 * sunk : 0), shoulder = [0, sy, PROP.back + 0.02];      // (It used to back away from the eye as you looked down, up to 10 cm, to keep out of your view: and the neck was drawn out to it.)
   const joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [], shoulders: [], reached: [], elbows: [], feet: [], hands: [], crouch, lean };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.
-  const hip = [0, Math.max(sy + (gait ? 0.95 * dip : 0) - PROP.torso * Math.cos(lean), 0.2), shoulder[2] + PROP.torso * Math.sin(lean) * 0.75];
+  const hip = [0, Math.max(sy + (gait ? 0.95 * sunk : 0) - PROP.torso * Math.cos(lean), 0.2), shoulder[2] + PROP.torso * Math.sin(lean) * 0.75];
   t.n = 0;
   // Where each foot is (footAt): planted and passing back under you in a straight line at the rate you travel,
   // so that it stays where you put it; then lifted and carried forward. Set down on the ground under it, which
@@ -711,8 +719,12 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     // it. Walking, the standing knee is never quite straight: a centimetre is given away at the top. The hips
     // turn with the stride, which brings each hip joint a little nearer its foot.)
     // (Three millimetres: a knee ten degrees bent. The centimetre that used to be given away was twenty.)
-    let reachable = standing - 0.003 * gait.amount * (1 - crouch);
-    const most = (PROP.thigh + PROP.shin) * 0.997, can = (ankle, i) => { const side = i ? 1 : -1, dx = ankle[0] - side * PROP.hip * Math.cos(gait.turn), dz = ankle[2] - (hip[2] - side * PROP.hip * Math.sin(gait.turn)); return ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04)); };
+    // (`base`: where the hips are before any of that: lower at a run, and riding with it. What the legs ask is
+    // asked from there: a runner's hips are already down as she passes over her foot, and were being let down
+    // again for a leg that reached.)
+    const base = standing - low + ride;
+    let reachable = base - 0.003 * gait.amount * (1 - crouch);
+    const most = (PROP.thigh + PROP.shin) * 0.997, can = (ankle, i) => { const side = i ? 1 : -1, dx = ankle[0] - side * PROP.hip * Math.cos(gait.turn), dz = ankle[2] - (hip[2] - side * PROP.hip * Math.sin(gait.turn)); return ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04)) - side * PROP.hip * Math.sin(list); };      // (less what the list has already let that hip down by)
     const part = (a, b, v) => { const k = Math.min(1, Math.max(0, (v - a) / (b - a))); return k * k * (3 - 2 * k); };
     feet.forEach((planted, i) => {
       const f = steps[i];
@@ -720,10 +732,10 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       // (A foot in the air: what it asked for as it left the ground fades over the first third of its swing;
       // what it will ask for where it lands comes on over the rest. Not what it would ask for where it is:
       // it is not standing there.)
-      reachable = Math.min(reachable, standing + (can(planted, i) - standing) * (1 - part(0, 0.3, f.w)));
-      if (f.land) reachable = Math.min(reachable, standing + (can([f.land[0] + home[0], f.land[1], f.land[2] + home[2]], i) - standing) * part(0.35, 0.95, f.w));
+      reachable = Math.min(reachable, base + Math.min(0, can(planted, i) - base) * (1 - part(0, 0.3, f.w)));
+      if (f.land) reachable = Math.min(reachable, base + Math.min(0, can([f.land[0] + home[0], f.land[1], f.land[2] + home[2]], i) - base) * part(0.35, 0.95, f.w));
     });
-    joints.dipWant = Math.min(0.1, standing - reachable); hip[1] = standing - dip;
+    joints.dipWant = Math.min(0.1, base - reachable); hip[1] = base - dip;
   } else feet.forEach((ankle, i) => {
     const dx = ankle[0] - (i ? PROP.hip : -PROP.hip), dz = ankle[2] - hip[2], most = (PROP.thigh + PROP.shin) * 0.995;
     hip[1] = Math.max(standing - 0.11 - 0.45 * Math.min(Math.abs(slope[0]), 0.7) - 0.2 * Math.min(Math.abs(slope[1]), 0.7), Math.min(hip[1], ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04))));
@@ -732,7 +744,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     const ph = phase + (side < 0 ? 0 : Math.PI), c = gait ? Math.max(-1, Math.min(1, gait.arm[side < 0 ? 0 : 1] / 0.3)) : Math.cos(ph), mine = steps[side < 0 ? 0 : 1];
     // (Which way the foot points: turned out a little; as the gait left it, if it was put down before you turned.)
     const out = gait ? mine.out : side * 0.12, tipped = tilt * mine.planted * (gait ? 0 : 1);
-    const pelvis = gait ? gait.turn : 0, hipJ = [side * PROP.hip * Math.cos(pelvis), hip[1], hip[2] - side * PROP.hip * Math.sin(pelvis)], ankle = feet[side < 0 ? 0 : 1];
+    const pelvis = gait ? gait.turn : 0, hipJ = [side * PROP.hip * Math.cos(pelvis), hip[1] + side * PROP.hip * Math.sin(list), hip[2] - side * PROP.hip * Math.sin(pelvis)], ankle = feet[side < 0 ? 0 : 1];
     // (The feet stay as wide apart as they were when you squat: it is the knees that part.)
     // (Squatting, the knees go forward and a little outward, over the feet: not out to the sides.)
     // (and up: squatting, the line from hip to ankle runs forward, and a knee asked only to go forward could as well go under it.)
@@ -750,7 +762,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     joints.feet.push({ pitch: mine.pitch + tipped, out, planted: mine.planted, toes: mine.toes || 0 });
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
-    const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], sh0 = sh.slice(), a = ((gait ? gait.arm[side < 0 ? 0 : 1] : 0.7 * swing * c) - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = (gait ? 0.3 + 0.36 * Math.min(s, 1) * Math.max(0, Math.min(1, gait.arm[side < 0 ? 0 : 1] / 0.19)) + 0.95 * Math.min(1, Math.max(0, (s - 1.15) / 0.6)) : 0.14 + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0)) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
+    const sh = [side * PROP.shoulder, sy - 0.01 + side * PROP.shoulder * Math.sin(tiltTop), shoulder[2]], sh0 = sh.slice(), a = ((gait ? gait.arm[side < 0 ? 0 : 1] : 0.7 * swing * c) - 0.04 * Math.min(s, 1)) * (1 - 0.7 * wade) + 0.35 * crouch + 0.75 * wade, bend = (gait ? 0.3 + 0.36 * Math.min(s, 1) * Math.max(0, Math.min(1, (gait.armLate || gait.arm)[side < 0 ? 0 : 1] / 0.19)) + 0.95 * Math.min(1, Math.max(0, (s - 1.15) / 0.6)) : 0.14 + 0.2 * Math.min(s, 1) * (0.5 + 0.5 * c) + 0.3 * Math.max(s - 1, 0)) + 0.85 * crouch + 0.75 * wade;    // (crouched, the hands come forward over the knees)
     let elbow = [sh[0] + side * (0.025 + 0.14 * wade), sh[1] - PROP.upperArm * Math.cos(a), sh[2] - PROP.upperArm * Math.sin(a)];
     const wrist = [elbow[0] - side * 0.015, elbow[1] - PROP.forearm * Math.cos(a + bend), elbow[2] - PROP.forearm * Math.sin(a + bend)];
     // Squatting, the arms come to rest: forearms over the knees, elbows out, hands hanging loose in front.
@@ -847,8 +859,8 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   const head = headOn(turn, gait ? look : 0);
   // (`eyeLevel`: where her eye is asked to be with her head level. Her own body (figurepose.js) sets its trunk by
   // that and carries the eye on its neck from there; `eye` is the figure of tubes' guess at the same.)
-  const eyeLevel = [0, eye - (gait ? 0.92 * dip : 0) + (gait ? 0.002 * breath : 0), 0];
-  return { ...joints, hip, shoulder, home, pelvis: gait ? gait.turn : 0, headTurn: head.turn, headNod: head.nod, eyeLevel, eye: [head.eye[0], eyeLevel[1] + head.eye[1], head.eye[2]] };
+  const eyeLevel = [0, eye - (gait ? 0.92 * sunk : 0) + (gait ? 0.002 * breath : 0), 0];
+  return { ...joints, hip, shoulder, home, pelvis: gait ? gait.turn : 0, list, tiltTop, headTurn: head.turn, headNod: head.nod, eyeLevel, eye: [head.eye[0], eyeLevel[1] + head.eye[1], head.eye[2]] };
 }
 
 const HAND = 0.19;

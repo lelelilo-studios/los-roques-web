@@ -47,6 +47,7 @@ export class Gait {
   reset(x, z, heading) {
     this.feet.forEach((f, i) => { const [hx, hz] = this.home(i, x, z, heading); Object.assign(f, { x: hx, z: hz, yaw: heading + f.side * TOE_OUT, down: true, since: 9, strike: 0, pitch: 0, lift: 0, from: null, to: null, ankle: [hx, this.prop.ankle, hz], planted: 1, ahead: 0, sunk: undefined }); });
     this.phase = 0; this.still = 9; this.moving = false; this.shift = 0; this.shiftV = 0; this.settling = -1; this.events.length = 0;
+    this.vary = [1, 1]; this.varyTo = [1, 1]; this.late = [0, 0]; this.ride = 0; this.dice = 12345;
   }
 
   /**
@@ -234,6 +235,33 @@ export class Gait {
     // (`beat`: 1 a moment after a foot has come down, as your weight comes on to it, 0 half way between: the hips
     // are lowest at the one, highest at the other. At the footfall itself the knee is nearly straight; it gives
     // as it takes your weight.)
-    return { feet: out, shift: this.shift, arm: [0.92 * reachOf(apart * swing), reachOf(-apart * swing)], turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase - 0.08) ** 4 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
+    // (Nor does one stride's swing match the last: each arm's reach drifts by a seventh either way, taking a new
+    // measure as its own foot comes down; and the left arm's swing is shaped a little differently, forward a
+    // little more and back a little less. Two limbs, not one and its reflection.)
+    this.vary ??= [1, 1]; this.varyTo ??= [1, 1]; this.late ??= [0, 0]; this.dice ??= 12345; this.ride ??= 0;
+    for (const e of this.events) { this.dice = (Math.imul(this.dice, 1103515245) + 12345) & 0x7fffffff; this.varyTo[e.side] = 0.86 + 0.28 * this.dice / 0x7fffffff; }
+    const reachL = v => (v > 0 ? 0.76 * v : 1.02 * v), reach = [0.92 * reachL(apart * swing) * this.vary[0], reachOf(-apart * swing) * this.vary[1]];
+    if (dt > 0) for (let i = 0; i < 2; i++) {
+      this.vary[i] += (this.varyTo[i] - this.vary[i]) * (1 - Math.exp(-dt * 4));
+      // (The forearm follows the upper arm a tenth of a second late: an elbow is a hinge with a weight on it.)
+      this.late[i] += (reach[i] - this.late[i]) * (1 - Math.exp(-dt / 0.1));
+    }
+    // The pelvis lists: as your weight goes over one foot the other hip drops, three degrees or so. It is at
+    // its most just after the other foot has left the ground, well before your weight is furthest
+    // over (so it is taken a little ahead of the shift), and nearly level again as you pass over the foot: which
+    // is why it hardly lowers the top of each rise (Gard and Childress, 1997).
+    const list = clamp((this.shift + 0.3 * (this.shiftV || 0)) / 0.024, -1.6, 1.6) * 0.04;
+    // A run is a bounce: you are lowest as you pass over the foot that bears you, and between one foot and the
+    // next you are off the ground, rising and falling as a thing thrown does. (`ride`: metres up from where
+    // the hips would otherwise be.)
+    let ride = 0;
+    if (run > 0 && moving) {
+      const u = [0, 1].map(i => (((this.phase + (i ? Math.PI : 0)) % TAU) + TAU) % TAU), on = u.findIndex(v => v < stance);
+      if (on >= 0) ride = -0.055 * Math.sin(Math.PI * u[on] / stance);
+      else { const v = clamp(Math.min(...u.map(q => (q - stance) / Math.max(Math.PI - stance, 1e-3)).filter(q => q >= 0)), 0, 1), T = (Math.PI - stance) / Math.max(this.rate || 1e-3, 1e-3); ride = 9.81 * T * T / 8 * 4 * v * (1 - v); }
+      ride *= run;
+    }
+    if (dt > 0) this.ride += (ride - this.ride) * (1 - Math.exp(-dt * 28));
+    return { feet: out, shift: this.shift, arm: reach, armLate: this.late.slice(), list, ride: this.ride, run, turn: 0.1 * apart * clamp(speed / 1.0, 0, 1), amount: clamp(speed / 0.6, 0, 1), along: Math.max(along, 0) ** 2, beat: c.hold ? 0 : Math.cos(this.phase - 0.08) ** 4 * clamp(speed / 0.5, 0, 1), pace, landed: this.events };
   }
 }

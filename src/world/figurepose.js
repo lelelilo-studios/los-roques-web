@@ -296,10 +296,13 @@ export class FigureRig {
     // hip of the leading leg forward) and the chest against them; the chest also goes a little way round with
     // the head. The spine takes the difference, a part at each of its five joints.
     const lean = aim(sub(this.chest0, this.hip0), across, sub(chest, j.hip), across), trunk = this.trunk, along = unit(sub(chest, j.hip));
-    const low = j.pelvis || 0, high = -0.6 * low - 0.3 * (j.headTurn || 0), Rp = mul(about(along, low), lean);
+    // (And her pelvis lists with each pace, the hip of the leg in the air dropping (`list`), her shoulders
+    // tilting the other way (`tiltTop`): about the line from her back to her front, a part at each joint of her spine.)
+    const list = j.list || 0, tiltTop = j.tiltTop || 0, fore = unit(cross(across, along));
+    const low = j.pelvis || 0, high = -0.6 * low - 0.3 * (j.headTurn || 0), Rp = mul(about(fore, list), mul(about(along, low), lean));
     const trunkAt = (shift, bend = bent) => {
       this.drive(trunk, Rp, add(add(j.hip, shift), turn(Rp, sub(this.bones[trunk].head, this.hip0))));
-      this.spine.forEach((b, k) => { const part = fraction(bend, (k + 1) / 5); this.hinge(b, mul(about(turn(part, along), low + (high - low) * (k + 1) / 5), mul(part, lean))); });
+      this.spine.forEach((b, k) => { const part = fraction(bend, (k + 1) / 5); this.hinge(b, mul(about(fore, list + (tiltTop - list) * (k + 1) / 5), mul(about(turn(part, along), low + (high - low) * (k + 1) / 5), mul(part, lean)))); });
     };
     // A shoulder goes out to what the hand reaches for (`reached`: how far the solver has moved it for that),
     // and her back takes it there. The collar bone gives a finger's breadth; beyond that her shoulders turn
@@ -352,7 +355,7 @@ export class FigureRig {
         bent = backOf(p);
       }
     }
-    const alongTop = turn(bent, along), Rt = mul(about(alongTop, high), mul(bent, lean));
+    const alongTop = turn(bent, along), Rt = mul(about(fore, tiltTop), mul(about(alongTop, high), mul(bent, lean)));
     // Her head is carried by her neck, and her neck by her chest: each bone turns where its parent holds it, and
     // none is moved to meet another. So where her eye is, is what the pose makes it. (The head used to be put
     // on the camera and the neck drawn out between it and the chest: half as long again, looking down.) What
@@ -367,7 +370,7 @@ export class FigureRig {
     const looking = j.eye ? mul(about([0, 1, 0], -(j.headTurn || 0)), about([1, 0, 0], j.headNod || 0)) : IDENTITY;
     let free = null;
     if (j.eye) {
-      const Rb = mul(about(along, high), lean), headTo = Rh => { const round = mul(transpose(Rb), Rh); this.neck.forEach((b, k) => this.hinge(b, mul(Rb, fraction(round, HEAD[k])))); this.hinge(this.head, Rh); return this.carry(this.head, [0, this.eye, 0]); };
+      const Rb = mul(about(fore, tiltTop), mul(about(along, high), lean)), headTo = Rh => { const round = mul(transpose(Rb), Rh); this.neck.forEach((b, k) => this.hinge(b, mul(Rb, fraction(round, HEAD[k])))); this.hinge(this.head, Rh); return this.carry(this.head, [0, this.eye, 0]); };
       trunkAt([0, 0, 0], IDENTITY);
       free = headTo(looking); this.frame++;
       trunkAt([0, 0, 0], IDENTITY);
