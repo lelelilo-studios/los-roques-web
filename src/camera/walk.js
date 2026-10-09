@@ -318,15 +318,22 @@ export function buildingBlocker(buildings, radius = 0.3, cell = 24) {
 /**
  * Keyboard, mouse and touch for the walker. Returns { read(): input, dispose() }.
  *   desktop: W A S D / arrows walk, Shift runs, C crouches or dives, Space comes up, mouse looks (click to capture
- *            the pointer; without capture, drag to look), Tab or Esc leaves.
+ *            the pointer; without capture, drag to look), Tab or Esc leaves. V: see yourself, from behind
+ *            (`onThird`); while Alt is held the mouse swings that camera round her and does not turn her (`onSwing`).
  *   touch:   left half of the screen is a stick, right half looks; `buttons` (elements with data-walk="up|down|run")
  *            do the rest.
  * @param {() => boolean} active  whether first person is on (the handlers stay installed)
  */
-export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
+export function attachWalkInput(walker, el, { active, onLeave, buttons = [], onThird = null, onSwing = null }) {
   const held = new Set(), touch = { stick: null, look: null, vec: [0, 0] }, pressed = new Set();
   const typing = e => /INPUT|SELECT|TEXTAREA/.test(e.target?.tagName || '');
-  const key = e => (e.code === 'Space' ? ' ' : e.key.length === 1 ? e.key.toLowerCase() : e.key);
+  // (Letters by where the key is, not by what it types: with Alt held a Mac types "∑" for W, and W A S D are
+  // places on the keyboard on any layout.)
+  const key = e => (e.code === 'Space' ? ' ' : /^Key[A-Z]$/.test(e.code || '') ? e.code[3].toLowerCase() : e.key.length === 1 ? e.key.toLowerCase() : e.key);
+  // (Alt held: the mouse swings the camera behind her. `onSwing(true | false)` says it is held or let go;
+  // `onSwing(dx, dy)` how far the mouse went, in radians.)
+  let swinging = false;
+  const swing = on => { if (swinging === on) return; swinging = on; onSwing?.(on); };
   const turn = (dx, dy, rate) => { walker.yaw += dx * rate; walker.look = Math.min(1.5, Math.max(-1.5, walker.look - dy * rate)); };
   // (What your hands are asked: `by`, how much further to part the fingers since last read; `steer`, whether the
   // mouse moves the hand that holds something and not your look, as app.js says; `dx`, `dy`, how far it has moved it.)
@@ -342,17 +349,20 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
       if (!active() || typing(e)) return;
       const k = key(e);
       if (k === 'Tab' || (k === 'Escape' && document.pointerLockElement !== el)) { e.preventDefault(); onLeave(); return; }
+      // (Alt alone opens the browser's menu on some systems: not while you are on the sand.)
+      if (k === 'Alt') { e.preventDefault(); swing(true); return; }
+      if (k === 'v' && !e.repeat && !e.ctrlKey && !e.metaKey) { e.preventDefault(); onThird?.(); return; }
       // (Ctrl is not among them, though many crouch with it by habit: with W, forward, it is the browser's "close
       // this tab", which no page can prevent. Crouching or diving while going forward closed the page.)
       if (['w', 'a', 's', 'd', 'c', 'q', 'e', 'x', 'f', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }
     }),
-    on(window, 'keyup', e => held.delete(key(e))),
-    on(window, 'blur', () => { held.clear(); grasp.left = false; }),
+    on(window, 'keyup', e => { const k = key(e); if (k === 'Alt') { if (active()) e.preventDefault(); swing(false); } held.delete(k); }),
+    on(window, 'blur', () => { held.clear(); grasp.left = false; swing(false); }),
     on(el, 'click', () => { if (active()) lock(); }),
     // The wheel parts your fingers (away from you) or brings them together: how fast what you hold runs out.
     on(el, 'wheel', e => { if (!active()) return; e.preventDefault(); grasp.by -= Math.sign(e.deltaY) * Math.min(0.12, Math.abs(e.deltaY) / 600 + 0.04); }, { passive: false }),
     // (While you hold the button of a hand that holds something, the mouse moves that hand, not your look.)
-    on(document, 'mousemove', e => { if (!active() || document.pointerLockElement !== el) return; if (grasp.steer) { grasp.dx += e.movementX; grasp.dy += e.movementY; } else turn(e.movementX, e.movementY, 0.0022); }),
+    on(document, 'mousemove', e => { if (!active() || document.pointerLockElement !== el) return; if (grasp.steer) { grasp.dx += e.movementX; grasp.dy += e.movementY; } else if (swinging && onSwing) onSwing(e.movementX * 0.0022, e.movementY * 0.0022); else turn(e.movementX, e.movementY, 0.0022); }),
     on(el, 'pointerdown', e => {
       if (!active()) return;
       if (e.pointerType === 'touch' && e.clientX < el.clientWidth * 0.45 && !touch.stick) touch.stick = { id: e.pointerId, x: e.clientX, y: e.clientY };
@@ -371,7 +381,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
         const dx = (e.clientX - touch.stick.x) / 56, dy = (e.clientY - touch.stick.y) / 56, l = Math.max(1, Math.hypot(dx, dy));
         touch.vec = [dx / l, -dy / l];
       } else if (touch.look?.id === e.pointerId && document.pointerLockElement !== el) {
-        turn(e.clientX - touch.look.x, e.clientY - touch.look.y, touch.look.touch ? 0.005 : 0.004);
+        if (swinging && onSwing) onSwing((e.clientX - touch.look.x) * 0.004, (e.clientY - touch.look.y) * 0.004); else turn(e.clientX - touch.look.x, e.clientY - touch.look.y, touch.look.touch ? 0.005 : 0.004);
         touch.look.x = e.clientX; touch.look.y = e.clientY;
       }
     }),
@@ -406,7 +416,7 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [] }) {
     },
     /** Whether the mouse moves a hand and not your look, from now (the hand that holds something, its button held). */
     steering(on) { grasp.steer = !!on; if (!on) grasp.dx = grasp.dy = 0; },
-    release() { grasp.steer = false; held.clear(); pressed.clear(); touch.stick = touch.look = null; touch.vec = [0, 0]; if (document.pointerLockElement === el) document.exitPointerLock?.(); },
+    release() { grasp.steer = false; swing(false); held.clear(); pressed.clear(); touch.stick = touch.look = null; touch.vec = [0, 0]; if (document.pointerLockElement === el) document.exitPointerLock?.(); },
     dispose() { for (const f of off) f(); },
   };
 }

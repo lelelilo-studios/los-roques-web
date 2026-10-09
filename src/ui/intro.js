@@ -18,6 +18,7 @@ const TIPS = [
   'Let go, and it runs out between your fingers by itself',
   'Hold the button again and move the mouse to tip your hand',
   '<kbd>X</kbd> to sit down by the water',
+  '<kbd>V</kbd> to see yourself · hold <kbd>Alt</kbd> and move the mouse to look round her',
   '<kbd>Shift</kbd> to run · <kbd>Space</kbd> to stand on your toes',
   'The wheel parts and closes your fingers',
   '<kbd>Tab</kbd> lifts you into the air, to choose another island',

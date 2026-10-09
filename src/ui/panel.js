@@ -117,11 +117,12 @@ export function buildPanel(root, app) {
 export function buildWalkHud(root, onLeave, onSound, soundOn) {
   const touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window || matchMedia('(max-width: 640px)').matches;
   const hud = el('div', { class: 'walk-hud' },
-    // (Four short lines: on one line the keys ran off the edge of the screen before they got to the hand.)
+    // (Short lines: on one line the keys ran off the edge of the screen before they got to the hand.)
     touch ? el('p', { class: 'walk-hint', text: 'Left thumb walks · right thumb looks · ▼ crouch, ⌄ sit · crouched or seated, hold a finger on the right to take sand or water' })
       : el('p', { class: 'walk-hint' },
         el('span', { text: 'Click to look around · W A S D walk · Shift run · Tab back to the air' }), el('br'),
         el('span', { text: 'C crouch (or dive) · X sit down or get up · Space: your toes (in the sea, come up)' }), el('br'),
+        el('span', { text: 'V see yourself, and back · seeing yourself, hold Alt and move the mouse to look round her' }), el('br'),
         el('span', { text: 'Crouched or seated: hold the mouse button to take sand or water; let go and it runs out by itself' }), el('br'),
         el('span', { text: 'Holding some: hold the button and move the mouse to tip your hand · a short click lets it all go' }), el('br'),
         el('span', { text: 'The wheel (or Q / E) parts and closes your fingers · the other button (or F) is your left hand' })),

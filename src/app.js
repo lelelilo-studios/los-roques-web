@@ -11,6 +11,7 @@ import { Ground } from './data/geoCPU.js';
 import { CameraRig, attachOrbitInput } from './camera/rig.js';
 import { OVERVIEW, shotFor, walkSpotFor } from './camera/bookmarks.js';
 import { Walker, attachWalkInput, buildingBlocker } from './camera/walk.js';
+import { BOOM } from './camera/boom.js';
 import { proportions, setProportions } from './world/bodyshape.js';
 import { Gait } from './world/gait.js';
 import { Spray } from './world/spray.js';
@@ -395,6 +396,10 @@ export async function start(canvas, onProgress = () => {}) {
   const walker = new Walker({ ground: footing, surfaceAt, blocked, rect: { x: rect.x - 3000, z: rect.z - 3000, w: rect.w + 6000, h: rect.h + 6000 } });
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) walker.bobAmount = 0;
   rig.walker = walker;
+  // (What the camera behind her keeps clear of: the sand, a deck, and the sea as it is drawn, waves and all.)
+  rig.floorAt = (x, z) => ({ ground: footing.heightAt(x, z), sea: surfaceAt(x, z) });
+  /** How much of her head is drawn: none from inside it (her own eyes), all of it from a forearm's length off; between, it thins out. */
+  const headSeen = () => (rig.outside ? 1 : Math.min(1, Math.max(0, (rig.away - BOOM.headNear[0]) / (BOOM.headNear[1] - BOOM.headNear[0]))));
   // Your feet (world/gait.js): each planted where it was put, or on its way to the next place. And you, as last
   // posed: where the body's own frame stands in the world (x, z, the height of the ground it stands on), which
   // way it faces, how far the hips are down for the legs to reach (`dip`), where the ground under your weight
@@ -461,6 +466,7 @@ export async function start(canvas, onProgress = () => {}) {
       if (!on) {
         sound.stop();
         if (rig.mode === 'walk') { rig.setMode('orbit'); walkInput?.release(); }
+        rig.behind.set(false, true);
         status.walk = false; hud?.classList.remove('on'); if (labels) labels.enabled = status.labels !== false; syncPanel?.(status); saveHash();
         return;
       }
@@ -499,6 +505,8 @@ export async function start(canvas, onProgress = () => {}) {
       const arrive = () => {
         walker.place({ x: spot.x, z: spot.z, yaw: (spot.yaw ?? 0) * Math.PI / 180, look: (spot.pitch ?? -4) * Math.PI / 180, height: Math.min(spot.height ?? walker.stand, walker.stand), eye: spot.eye ?? null });
         rig.setMode('walk');
+        // (A link, or a test, may put you down already seeing yourself from behind.)
+        if (spot.third !== undefined) rig.behind.set(!!spot.third, true);
         status.walk = true; hud?.classList.add('on'); if (labels) labels.enabled = false; syncPanel?.(status); saveHash();
       };
       if (instant || rig.mode === 'walk') return arrive();
@@ -511,6 +519,8 @@ export async function start(canvas, onProgress = () => {}) {
       shared.uCompareX.value = status.compare = x;
       syncPanel?.(status);
     },
+    /** Seeing yourself from behind (true), or through your own eyes; `now`: without the glide between them. */
+    setThird(on, now = false) { if (rig.mode !== 'walk') return; rig.behind.set(on, now); status.third = !!on; saveHash(); },
     /** Sound on or off (remembered). */
     setSound(on) { sound.setMuted(!on); if (on && rig.mode === 'walk') sound.start(); status.sound = !sound.muted; syncPanel?.(status); const b = hud?.querySelector('.walk-sound'); if (b) { b.setAttribute('aria-pressed', String(!sound.muted)); b.textContent = sound.muted ? 'Sound off' : 'Sound on'; } },
     setLabels(on) { status.labels = on; if (labels) labels.enabled = on && rig.mode !== 'walk'; },
@@ -526,7 +536,8 @@ export async function start(canvas, onProgress = () => {}) {
   writeHash = () => {
     if (params.freeze) return;
     const c = rig.get(), h = new URLSearchParams();
-    if (rig.mode === 'walk') h.set('p', [walker.x.toFixed(1), walker.z.toFixed(1), (walker.yaw * 180 / Math.PI).toFixed(0), (walker.look * 180 / Math.PI).toFixed(0)].join(','));
+    // (A fifth number, 3: seeing yourself from behind.)
+    if (rig.mode === 'walk') h.set('p', [walker.x.toFixed(1), walker.z.toFixed(1), (walker.yaw * 180 / Math.PI).toFixed(0), (walker.look * 180 / Math.PI).toFixed(0), ...(rig.behind.want ? [3] : [])].join(','));
     else h.set('c', [c.x.toFixed(0), c.z.toFixed(0), c.dist.toFixed(0), c.yaw.toFixed(1), c.pitch.toFixed(1)].join(','));
     h.set('t', env.hours.toFixed(2)); h.set('m', String(env.month)); h.set('w', env.weather);
     history.replaceState(null, '', `#${h}`);
@@ -537,9 +548,9 @@ export async function start(canvas, onProgress = () => {}) {
     if (h.has('t') && Number.isFinite(Number(h.get('t')))) env.hours = Number(h.get('t'));
     if (h.has('m') && Number(h.get('m')) >= 0 && Number(h.get('m')) < 12) env.month = Math.floor(Number(h.get('m')));
     if (h.has('w')) env.weather = h.get('w');
-    // p = a first-person spot: x, z, heading, look (degrees).
+    // p = a first-person spot: x, z, heading, look (degrees); and 3 if you were seeing yourself from behind.
     const w = (h.get('p') || '').split(',').map(Number);
-    if (w.length >= 3 && w.every(Number.isFinite)) { walkLink = { x: w[0], z: w[1], yaw: w[2], pitch: w[3] ?? -4 }; return true; }
+    if (w.length >= 3 && w.every(Number.isFinite)) { walkLink = { x: w[0], z: w[1], yaw: w[2], pitch: w[3] ?? -4, third: w[4] === 3 }; return true; }
     return c.length === 5;
   }
   let walkLink = null;
@@ -771,10 +782,13 @@ export async function start(canvas, onProgress = () => {}) {
       sound.update(dt, soundScene(dt));
       if (moved !== walker.x + walker.z + walker.yaw) saveHash();
     }
-    shared.uUnderEye.value = rig.mode === 'walk' && walker.under ? 1 : 0;
     // Rain wets the ground in a quarter of a minute; the sun and the wind take a few minutes to dry it.
     if (dt > 0) { const rain = shared.uRain.value, wet = shared.uWet.value; shared.uWet.value = rain > wet ? wet + (rain - wet) * (1 - Math.exp(-dt / 6)) : Math.max(rain, wet - dt / 200); }
+    rig.dt = dt; rig.under = walker.under;
     rig.update(R.size.width / R.size.height, R.reversed);
+    // (The picture is under water when the camera is: behind her, that is the camera's own height against the sea
+    // there. What you hear is still where her ears are: sound.update, above.)
+    shared.uUnderEye.value = rig.mode !== 'walk' ? 0 : rig.out > 0.5 ? (rig.eye.y < surfaceAt(rig.eye.x, rig.eye.z) ? 1 : 0) : walker.under ? 1 : 0;
     sky.overcast = Math.min(1, Math.max(0, (env.cloud - 0.45) / 0.4));
     sky.update();
     const view = rig.view();
@@ -825,8 +839,9 @@ export async function start(canvas, onProgress = () => {}) {
         body.joints.knees.forEach((k, i) => put(6 + i, k, 0.06));
         // (Just set down by the sea: part of the way over from swimming still.)
         const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
-        figure.mesh.visible = !you.folded; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading);
-        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = !!rig.outside && !you.folded;
+        // (Folded into the deepest squat she is left out of her own eyes' picture; from behind she is there to be seen.)
+        figure.mesh.visible = !you.folded || rig.out > 0.02; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading);
+        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hair.visible = rig.outside ? !you.folded : rig.away > BOOM.headNear[1] + 0.2;      // (her hair, which cannot thin out, a little later: not a wall of it across the picture)
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         // (And her fingers as rods, where they are: what she holds lies on them, and falls between them.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = { ...figureRig.hand(1), caps: figureRig.handCaps(1), skin: () => figureRig.handSkin(1) };
@@ -886,7 +901,7 @@ export async function start(canvas, onProgress = () => {}) {
         // (Just lifted off your feet: part of the way over from standing still, in the frame you stood in.)
         const over = goingOver(dt, body.joints, 'swim', { x: sx, y: walker.eyeY + walker.bob, z: sz, yaw: walker.yaw, pitch: under * walker.look });
         figure.setPose(figureRig.pose(over.joints, 0), over.raw ? 0 : over.joints.eye[1]); figure.place(over.frame.x, over.frame.y, over.frame.z, over.frame.yaw, over.frame.pitch || 0);
-        figure.mesh.material.uniforms.uShowHead.value = rig.outside ? 1 : 0; figure.hair.visible = !!rig.outside;
+        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.hair.visible = !!rig.outside || rig.away > BOOM.headNear[1] + 0.2;
         // (Afloat, what of you is under the surface is seen through it, as your legs are when you wade: your arms
         // working under the water in front of you. It was painted over by the sea: a head floating by itself.)
         figure.mesh.material.uniforms.uWaterY.value = walker.surf; figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0;
@@ -962,8 +977,8 @@ export async function start(canvas, onProgress = () => {}) {
       const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
-      const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: 0, y: body.mesh.position.y - 0.3, z: 0 }, half: standing ? 1.3 : 2 } : null;
-      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh] : [])] : [])], [], casters, own);
+      const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: rig.own.x - rig.eye.x, y: body.mesh.position.y - 0.3, z: rig.own.z - rig.eye.z }, half: standing ? 1.3 : 2 } : null;
+      shadows.render(opaque, centre, walking ? 26 : Math.min(600, Math.max(24, 0.6 * rig.dist)), [terrain.mesh, birds.group, lifeGroup, spray.points, hand.mesh, hand.streams, hand.lying, handL.mesh, handL.streams, handL.lying, ...(walking ? [body.mesh, ...(figure ? [figure.mesh, figure.hair] : [])] : [])], [], casters, own);
     } else shared.uShadowP.value.z = 0;
     falling?.update(clock.time, dt, you.air || [0, 0]);
     graph.render(opaque, water.mesh, rig.camera, clouds, falling || pools ? overlay : null);
@@ -989,7 +1004,10 @@ export async function start(canvas, onProgress = () => {}) {
     hud = buildWalkHud(ui, () => app.setWalk(false), on => app.setSound(on), !sound.muted);
     // (Arriving by a link there was no click yet: the first one in first person starts the sound.)
     for (const type of ['pointerdown', 'keydown']) addEventListener(type, () => { if (rig.mode === 'walk' && !sound.on) sound.start(); });
-    walkInput = attachWalkInput(walker, canvas, { active: () => rig.mode === 'walk', onLeave: () => app.setWalk(false), buttons: [...hud.querySelectorAll('[data-walk]')] });
+    walkInput = attachWalkInput(walker, canvas, { active: () => rig.mode === 'walk', onLeave: () => app.setWalk(false), buttons: [...hud.querySelectorAll('[data-walk]')],
+      // (V: out of your eyes to behind you, and back. Alt held: the mouse swings that camera round you.)
+      onThird: () => app.setThird(!rig.behind.want),
+      onSwing: (a, b) => { if (typeof a === 'boolean') rig.behind.held = a && rig.behind.want > 0; else if (rig.behind.held) rig.behind.swingBy(a, -b); } });
     // Ctrl with W (forward) closes the tab, and no page can stop that. People crouch with Ctrl by habit: say
     // which key does it, and for as long as Ctrl is down have the browser ask before the page goes.
     let ctrlAt = -1e9;
@@ -1148,6 +1166,12 @@ export async function start(canvas, onProgress = () => {}) {
      * For tests: her skeleton as posed (FigureRig.probe: what is stretched, the neck's length), with how far the
      * first-person camera is from where her head carries her eye (metres), or null without her.
      */
+    /** Seeing yourself from behind (tests): on or off, at once unless `glide`. */
+    third: (on = true, glide = false) => { rig.behind.set(on, !glide); status.third = !!on; },
+    /** The camera behind her swung round her by so many degrees, and held there (`hold` false: let go, it comes back behind). */
+    swing: (yaw = 0, pitch = 0, hold = true) => { rig.behind.held = hold; if (hold) { rig.behind.swing = [0, 0]; rig.behind.swingBy(yaw * Math.PI / 180, pitch * Math.PI / 180); } },
+    /** Where the camera is and what is under it: { at, own (her eye), out (0 her eyes .. 1 behind her), away, ground, sea (heights there), under (the picture is the underwater one), diving } */
+    camera: () => { const f = rig.floorAt(rig.eye.x, rig.eye.z); return { at: [rig.eye.x, rig.eye.y, rig.eye.z], own: [rig.own.x, rig.own.y, rig.own.z], out: rig.out, away: rig.away, ground: f.ground, sea: f.sea, under: shared.uUnderEye.value > 0.5, diving: !!walker.under, length: rig.behind.len, lift: rig.behind.lift, block: rig.behind.block, fov: rig.camera.fov }; },
     bones: () => { if (!figureRig) return null; const p = figureRig.probe(), e = you.on ? toWorld(p.eye) : null; return { ...p, eyeGap: e ? Math.hypot(e[0] - rig.own.x, e[1] - rig.own.y, e[2] - rig.own.z) : null }; },
     /** For tests: a point of her body's frame as a place in the world (on foot). */
     toWorld: q => (you.on ? toWorld(q) : null),

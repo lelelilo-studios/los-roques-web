@@ -64,7 +64,7 @@ uniform vec3 uClothColour;
 uniform sampler2D tSkinState;  // over the body's surface: r = how wet, g = how much sand is on it (sim/skin.js)
 uniform float uWaterY;      // the height of the sea's surface where you stand (far below you when you are not in it)
 uniform float uShowUnder;   // 1 = hand what is under water to the water pass (0 when the camera is under water itself)
-uniform float uShowHead;    // 1 = draw the head too (you are being looked at from outside)
+uniform float uShowHead;    // how much of the head is drawn: 0 none (you look out of it) .. 1 all of it (you are being looked at from outside)
 // (Until the skin has a map of its own for what is on it: wet as far up as the sea has stood round you, the hand
 // that went into it, sand on wet feet and on the hand. The same numbers the figure of tubes shows.)
 uniform vec4 uBodyWet;      // wet up to this height (x) by this much (y, drying); and to z by w: the water you stand in now
@@ -105,8 +105,9 @@ in float vThin;
 in float vPart;
 layout(location = 0) out vec4 outColor;
 void main() {
-  // (The head is not drawn: you look out of it. It is still there for the shadow.)
-  if (vPart > 0.001 && uShowHead < 0.5) discard;
+  // (The head is not drawn: you look out of it. It is still there for the shadow. As the camera leaves her eyes
+  // for the place behind her it comes in grain by grain, between a hand's breadth and a forearm's length off.)
+  if (vPart > 0.001 && uShowHead < 0.02 + 0.96 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;
   // (Nothing of you is drawn nearer your eye than a hand's breadth: you cannot focus there, and the picture's
   // near edge would cut it open. It thins out over the last two centimetres.)
   if (uShowHead < 0.5 && distance(vRel, vec3(0.0, uCamY, 0.0)) < 0.055 + 0.025 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))))) discard;
