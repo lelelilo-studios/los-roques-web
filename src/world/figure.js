@@ -343,10 +343,10 @@ export class Figure {
   /** The bones where the rig has put them (figurepose.js: 12 numbers a bone). */
   setPose(matrices, eye = this.info.eyeHeight) { this.matrices.set(matrices); this.boneTexture.needsUpdate = true; this.lift = eye - this.info.eyeHeight; }
 
-  /** Stands the body with its feet at height y, heading `yaw` (as Body.place). */
-  place(x, y, z, yaw, pitch = 0) {
+  /** Stands the body with its feet at height y, heading `yaw` (as Body.place). `tilt`: a turn of the whole of her after that (her boat's pitch and roll, about her seat). */
+  place(x, y, z, yaw, pitch = 0, tilt = null) {
     const m = this.mesh;
-    m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); m.matrixWorld.copy(m.matrix);
+    m.position.set(x, y, z); m.rotation.set(pitch, -yaw, 0, 'YXZ'); m.updateMatrix(); if (tilt) m.matrix.premultiply(tilt); m.matrixWorld.copy(m.matrix);
     // (Her bikini is where she is, and seen when she is.)
     this.cloth.matrix.copy(m.matrix); this.cloth.matrixWorld.copy(m.matrix); this.cloth.visible = m.visible;
     this.face.place(m.matrix, m.visible ? this.mesh.material.uniforms.uShowHead.value : 0);

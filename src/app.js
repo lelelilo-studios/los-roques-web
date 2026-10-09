@@ -51,6 +51,9 @@ import { CLIMATE, conditions, tide } from './world/weather.js';
 import { fetchLiveWeather } from './world/liveWeather.js';
 import { buildPanel, buildWalkHud } from './ui/panel.js';
 import { Labels } from './ui/labels.js';
+import { Boat } from './sim/boat.js';
+import { Penero, ABOARD, hang } from './world/penero.js';
+import { buildHelm } from './ui/helm.js';
 
 const DAY_SECONDS = 75;      // how long a played day (04:00-21:00) lasts
 const NO_INPUT = { fwd: 0, right: 0, run: false, down: false, up: false, hand: false, hand2: false, sit: false };
@@ -291,13 +294,98 @@ export async function start(canvas, onProgress = () => {}) {
   const casters = life.filter(k => k.caster).map(k => ({ mesh: k.mesh, caster: k.caster }));
   if (turtle.mesh) opaque.add(turtle.mesh);
   const ui = document.getElementById('ui');
-  let syncPanel = null, labels = null, hud = null, walkInput = null;
+  let syncPanel = null, labels = null, hud = null, walkInput = null, helm = null;
 
   // ---- first person
   const surfaceAt = (x, z) => {
     const sea = shared.uSeaLevel.value;
     // (Near a shore the little waves coming in ride on top: without them their crests would wash over a swimmer's eyes.)
     return sea + waves.heightAt(x, z, clock.time, boats.weightsAt(x, z, sea - ground.heightAt(x, z)), 3) + shoreCrest(x, z, ground.shoreAt(x, z), seaAt(x, z).hs, clock.time);
+  };
+
+  // ---- your boat: a peñero that floats on the sea as it is drawn (sim/boat.js), drawn by world/penero.js
+  const boat = new Boat(), penero = new Penero(tier.fp.shadowTaps || 4);
+  opaque.add(...penero.meshes);
+  penero.hull.visible = penero.outboard.visible = penero.tiller.visible = false;
+  const afloat = { placed: false, ghost: false, driven: false, throttle: 0, helm: 0, neutral: false, sample: { h: 0, v: 0 }, spray: 0, tilt: 1, stake: null };
+  // (`board`: how far you are into it: 0 on your own feet .. 1 sat at the tiller; `to`: which you are on your way to.)
+  const board = { k: 0, to: 0, from: null, was: 0, T: 1.7 };
+  /** The sea at a place, for what floats on it: how high its surface is and how fast it is rising. (Two cascades of the waves: what the anchored boats ride on too; and the little waves coming in at a shore.) */
+  const seaFor = (x, z) => {
+    const sea = shared.uSeaLevel.value, s = waves.sampleAt(x, z, clock.time, boats.weightsAt(x, z, sea - ground.heightAt(x, z)), 2, afloat.sample);
+    return { h: sea + s.h + shoreCrest(x, z, ground.shoreAt(x, z), seaAt(x, z).hs, clock.time), v: s.v };
+  };
+  const bedFor = (x, z) => ground.heightAt(x, z);
+  /**
+   * Sets your boat down afloat off the beach nearest (x, z), its bow to the open water and its stern to the sand,
+   * in water just deep enough to float it and to wade out to, and makes it fast as the boats of the islands are
+   * left: an anchor out ahead, and a stern line to a stake in the sand. (Bow out: the first push of the throttle
+   * takes you to sea. It was left bow to the beach at first, and the first push ran it up the sand.)
+   */
+  const moorBoat = (x, z) => {
+    const shore = ground.findShore(x, z, 0);
+    if (!shore) return false;
+    const a = shore.yaw * Math.PI / 180, sx = Math.sin(a), sz = -Math.cos(a), sea = shared.uSeaLevel.value, deep = d => sea - ground.heightAt(shore.x + sx * d, shore.z + sz * d);
+    // (`d`: how far off the waterline its stern is: in half a metre of water, the rest of it in more.)
+    let d = 0.5, up = 0;
+    while (d < 90 && (deep(d + 0.2) < 0.5 || deep(d + 3.8) < 0.5 || deep(d + 7) < 0.45)) d += 0.5;
+    while (up < 12 && deep(-up) > -0.12) up += 0.25;
+    boat.place({ x: shore.x + sx * (d + 3.8), z: shore.z + sz * (d + 3.8), heading: a, sea });
+    afloat.stake = [shore.x - sx * (up + 0.6), shore.z - sz * (up + 0.6)];
+    boat.lines = [{ from: 3.7, to: [shore.x + sx * (d + 18), shore.z + sz * (d + 18)], length: 10.9 }, { from: -3.7, to: afloat.stake, length: d + up + 0.6 + 0.6, stake: true }];
+    afloat.placed = true; afloat.throttle = afloat.helm = 0; afloat.tilt = 1;
+    return true;
+  };
+  /**
+   * Where your boat is first left: off the nearest sand that is in your view as you are put down, within forty
+   * degrees of the way you face (to your right for choice); only if there is no water there, off to one side.
+   */
+  const mooringFor = spot => {
+    const yaw = (spot.yaw ?? 0) * Math.PI / 180, sea = shared.uSeaLevel.value;
+    const nearest = offsets => {
+      let best = null;
+      for (const off of offsets) {
+        const a = yaw + off * Math.PI / 180, dx = Math.sin(a), dz = -Math.cos(a);
+        for (let d = 5; d <= 90; d += 1) if (sea - ground.heightAt(spot.x + dx * d, spot.z + dz * d) >= 0.4) { if (!best || d < best.d - 2) best = { d, x: spot.x + dx * d, z: spot.z + dz * d }; break; }
+      }
+      return best;
+    };
+    return nearest([40, -40, 34, -34, 28, -28, 22, -22, 16, -16, 8, -8, 0]) || nearest([50, -50, 65, -65, 80, -80, 100, -100, 130, -130, 180]) || { x: spot.x, z: spot.z };
+  };
+  /** Your boat for this frame: moved on by dt, and put where it is in the picture. */
+  /** Your boat moved on by dt: before you are, who may be sitting in it. */
+  const moveBoat = dt => {
+    if (!afloat.placed || !(dt > 0)) return;
+    // (Made fast, it is let go when you open the throttle; and the engine is started by it, and runs until you get out.)
+    if (afloat.throttle !== 0 && boat.lines.length) boat.lines = [];
+    if (afloat.throttle !== 0 && (board.k >= 1 || afloat.ghost)) afloat.running = true;
+    if (!board.to && !afloat.ghost) afloat.running = false;
+    boat.step(dt, { throttle: afloat.throttle, helm: afloat.helm, crew: board.k > 0.5 || afloat.ghost ? [{ mass: 58, x: ABOARD.seat[0], z: ABOARD.seat[2] }] : [], wind: [shared.uWind.value.x * shared.uWind.value.z, shared.uWind.value.y * shared.uWind.value.z] }, seaFor, bedFor);
+    // (Its bottom coming down on the water: heard, no oftener than three times a second.)
+    if (boat.slam > 1.25 && clock.time - (afloat.slapped ?? -9) > 0.32) { afloat.slapped = clock.time; sound.slap(boat.slam, 1 / (1 + (Math.hypot(boat.x - rig.own.x, boat.z - rig.own.z) / 14) ** 2)); }
+  };
+  /** Your boat put where it is in the picture: after the camera has its place. */
+  const drawBoat = dt => {
+    if (!afloat.placed) return;
+    // (The sea as it lies along the hull: its height at the boat's middle and its slope, from three places beside it.)
+    const here = seaFor(boat.x, boat.z).h, east = seaFor(boat.x + 1.6, boat.z).h, south = seaFor(boat.x, boat.z + 1.6).h;
+    // (The outboard: tilted up out of the water when the boat is left, and as far up as the shallows ask when you are aboard.)
+    const astern = bedFor(boat.x - Math.sin(boat.heading) * 3.8, boat.z + Math.cos(boat.heading) * 3.8), tilt = board.to || afloat.ghost ? Math.min(1, Math.max(0, (0.75 - (here - astern)) / 0.35)) : 1;
+    afloat.tilt += (tilt - afloat.tilt) * (1 - Math.exp(-dt * 2.5));
+    const origin = [rig.eye.x, rig.eye.z];
+    penero.place(boat.matrix(origin), boat.helm, afloat.tilt, [here, (east - here) / 1.6, (south - here) / 1.6], afloat.spray);
+    penero.hull.visible = penero.outboard.visible = penero.tiller.visible = true;
+    // Its lines: from the stem head and from the quarter, hanging by their slack, lying on the sand and the bed.
+    for (const [k, rope] of penero.ropes.entries()) {
+      const line = boat.lines[k];
+      if (!line) { rope.mesh.visible = false; continue; }
+      const from = boat.toWorld(line.from > 0 ? [3.8, 1.2, 0] : [-3.76, 0.55, -0.45]), far = bedFor(line.to[0], line.to[1]), to = [line.to[0], far + (line.stake ? 0.3 : 0.02), line.to[1]];
+      rope.set(hang(from, to, Math.max(line.length + 1.0, Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]) + 0.02), bedFor), origin);
+    }
+    const stake = boat.lines.find(l => l.stake);
+    penero.stake.visible = !!stake;
+    if (stake) { penero.stake.matrix.makeTranslation(stake.to[0] - origin[0], bedFor(stake.to[0], stake.to[1]), stake.to[1] - origin[1]); penero.stake.matrixWorld.copy(penero.stake.matrix); }
+    water.material.uniforms.uHullIn.value.copy(penero.inverse); water.material.uniforms.uHullHalf.value.copy(penero.half);
   };
   // ---- sound (walking only)
   const sound = new Sound(), raw = [0, 0, 0, 0];
@@ -335,7 +423,9 @@ export async function start(canvas, onProgress = () => {}) {
     }
     for (const q of shorePoints) { q.dist = Math.hypot(q.x - walker.x, q.z - walker.z); q.bearing = Math.atan2(q.x - walker.x, -(q.z - walker.z)) - walker.yaw; }
     return { time: clock.time, shores: shorePoints, reef: seaAt(walker.x, walker.z).reef, wind: waves.wind.speed, rain: shared.uRain.value, under: walker.under,
-      depth: walker.depth, speed: Math.hypot(walker.vx, walker.vz), day: status.sunElevation > 2 };
+      depth: walker.depth, speed: Math.hypot(walker.vx, walker.vz), day: status.sunElevation > 2,
+      // (Your boat: its engine runs from when you first open the throttle until you get out.)
+      boat: afloat.placed ? (q => ({ running: afloat.running, revs: boat.revs, speed: Math.abs(boat.speed), wet: boat.wet, dist: Math.hypot(q[0] - rig.own.x, q[2] - rig.own.z), bearing: Math.atan2(q[0] - rig.own.x, -(q[2] - rig.own.z)) - walker.yaw }))(boat.toWorld([-3.9, 0.6, 0])) : null };
   }
 
   // Your footprints: the last 24 paces on sand, left and right of the line walked.
@@ -386,10 +476,101 @@ export async function start(canvas, onProgress = () => {}) {
   }
   const blocked = (x, z) => {
     if (walls(x, z)) return true;
+    // (Your boat: you walk round it, not through it.)
+    if (afloat.placed && !walker.carried) { const dx = x - boat.x, dz = z - boat.z, sh = Math.sin(boat.heading), ch = Math.cos(boat.heading), along = dx * sh - dz * ch, across = dx * ch + dz * sh; if (Math.abs(along) < 3.9 && Math.abs(across) < 1.05 * Math.min(1, (4.3 - along) / 1.8)) return true; }
     const i = Math.floor(x / 4), j = Math.floor(z / 4);
     for (let a = i - 1; a <= i + 1; a++) for (let b = j - 1; b <= j + 1; b++) for (const q of posts.get(`${a},${b}`) || []) if (Math.hypot(x - q[0], z - q[1]) < q[2]) return true;
     return false;
   };
+  // ---- aboard your boat. You sit on its stern bench, to starboard, half turned to the tiller, your left hand on
+  // it; the boat carries you (the walker's `carried`), and your body is its: pitched and rolled with it about
+  // your seat. W and S open and close the throttle, which stays where you leave it (it stops at neutral: let go
+  // and press again to go on through); Space is neutral; A and D put the helm over while they are held.
+  const SEAT = [ABOARD.seat[0], ABOARD.thwart, ABOARD.seat[2]], SEAT_TURN = ABOARD.turn, RECLINE = 0.04;
+  // (How high your eye is over the bench, and how far behind your eye's own line your hips are: by her proportions, which come with her figure.)
+  const benchEye = () => { const p = proportions(); return 0.095 + p.torso * Math.cos(RECLINE) + p.eyeToShoulder; }, hipBack = () => { const p = proportions(); return p.back + 0.02 - p.torso * Math.sin(RECLINE); };
+  const angle = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+  /** Where your seat is in the world, and the turn that takes a body standing level there to the boat's own attitude (rows of a matrix), `k` of the way. */
+  const seatNow = (k = 1) => {
+    const at = boat.toWorld(SEAT), keep = [boat.pitch, boat.roll];
+    boat.pitch *= k; boat.roll *= k;
+    const { fwd, right, up } = boat.axes(), sh = Math.sin(boat.heading), ch = Math.cos(boat.heading), f0 = [sh, 0, -ch], r0 = [ch, 0, sh];
+    [boat.pitch, boat.roll] = keep;
+    // (R = B L^T: B the boat's axes as it lies, L the same level.)
+    const R = [0, 1, 2].map(i => [0, 1, 2].map(j => fwd[i] * f0[j] + right[i] * r0[j] + (j === 1 ? up[i] : 0)));
+    return { at, R };
+  };
+  /** The walker's `carried`: where the boat has you this frame (camera/walk.js). */
+  const carriedBy = dt => {
+    board.k = Math.min(1, Math.max(0, board.k + Math.sign(board.to - board.k) * dt / board.T));
+    const k = board.k, e = k * k * (3 - 2 * k), seat = boat.toWorld(SEAT), heading = boat.heading + SEAT_TURN;
+    // (Your look turns with the boat; and getting in, it comes round to the bow.)
+    const turned = angle(boat.heading, board.was) * e + (board.to && k < 1 ? angle(boat.heading, walker.yaw) * (1 - Math.exp(-dt * 1.8 * Math.min(1, k / 0.3))) : 0);
+    board.was = boat.heading;
+    if (k >= 1 || !board.from) return { x: seat[0], y: seat[1], z: seat[2], heading, turned, body: benchEye(), seated: 1 };
+    // Getting in and out: from where you stood (or will stand) to your seat, up and over the side: all the way
+    // up before you are half way across, and a little higher than the gunwale in between.
+    const f = board.from, across = Math.min(1, Math.max(0, (k - 0.25) / 0.75)), ea = across * across * (3 - 2 * across), up = Math.min(1, k / 0.6), eu = up * up * (3 - 2 * up);
+    const y = f.y + (seat[1] - f.y) * eu + 0.22 * Math.sin(Math.PI * Math.min(1, k / 0.85)) ** 2;
+    if (k <= 0) {
+      // (Out: on your own feet again, or afloat, where you were set down.)
+      walker.carried = null; walker.seated = 0; walker.sitting = false; walker.x = f.x; walker.z = f.z; walker.heading = f.heading; walker.body = walker.bodyTo = f.body; walker.eyeY = f.y + f.body; walker.under0 = f.y;
+      return { x: f.x, y: f.y, z: f.z, heading: f.heading, turned: 0, body: f.body, seated: 0, depth: f.depth };
+    }
+    return { x: f.x + (seat[0] - f.x) * ea, y, z: f.z + (seat[2] - f.z) * ea, heading: f.heading + angle(heading, f.heading) * e, turned, body: f.body + (benchEye() - f.body) * e, seated: k, depth: f.depth * (1 - eu) };
+  };
+  /** Where you are in the boat's own frame: [forward of its middle, to starboard], metres. */
+  const besideBoat = () => { const dx = walker.x - boat.x, dz = walker.z - boat.z, sh = Math.sin(boat.heading), ch = Math.cos(boat.heading); return [dx * sh - dz * ch, dx * ch + dz * sh]; };
+  /** Into your boat or out of it (B). Returns whether it could be done. */
+  function boarding(on, now = false) {
+    if (!afloat.placed || rig.mode !== 'walk') return false;
+    if (on) {
+      if (board.to) return false;
+      const [along, across] = besideBoat();
+      if (!now && (Math.abs(along) > 4.6 || Math.abs(across) > 2.6 || walker.diving)) return false;
+      const feet = walker.afloat ? walker.eyeY - walker.stand : walker.eyeY - walker.body;
+      board.from = { x: walker.x, z: walker.z, y: feet, heading: walker.heading, body: walker.afloat ? walker.stand : walker.body, depth: walker.depth };
+      board.to = 1; board.was = boat.heading; if (now) { board.k = 1; walker.yaw = boat.heading; walker.look = -0.14; }
+      afloat.ghost = false; afloat.neutral = true;
+      walker.carried = carriedBy;
+      return true;
+    }
+    if (!board.to || board.k < 1) return false;
+    // Out: over the starboard side by your seat, on to your feet where you can stand, or into the water. Not under way.
+    if (Math.abs(boat.speed) > 1 && !now) { notice('Stop the boat before you get out: Space puts the engine in neutral', null, 5); return false; }
+    const side = boat.toWorld([SEAT[0] + 0.1, 0, 1.45]), sea = seaFor(side[0], side[2]).h, bed = bedFor(side[0], side[2]), deep = sea - bed;
+    const stands = deep < walker.stand - 0.42;
+    board.from = { x: side[0], z: side[2], y: stands ? bed : sea + 0.1 - walker.stand, heading: boat.heading + Math.PI / 2, body: walker.stand, depth: deep };
+    board.to = 0; if (now) board.k = 0;
+    afloat.throttle = 0; afloat.helm = 0;
+    // (Left to itself it lies to an anchor let go over the bow: three times the depth of line and a little more.)
+    const bow = boat.toWorld([3.7, 0, 0]), out = 5 + 3 * Math.max(0.4, seaFor(bow[0], bow[2]).h - bedFor(bow[0], bow[2])), sh = Math.sin(boat.heading), ch = Math.cos(boat.heading);
+    boat.lines = [{ from: 3.7, to: [bow[0] + sh * out, bow[2] - ch * out], length: out + 0.5 }];
+    return true;
+  }
+  /** The throttle and the helm, from the keys you walk with. */
+  const helmFrom = (dt, input) => {
+    if (board.k < 1 || afloat.driven) return;
+    if (input.up) { afloat.throttle = 0; afloat.neutral = true; }
+    else if (input.fwd) {
+      if (!afloat.neutral) {
+        const next = afloat.throttle + input.fwd * dt * 0.55;
+        // (Through neutral it does not go in one push: it stops there.)
+        if (afloat.throttle !== 0 && next * afloat.throttle <= 0) { afloat.throttle = 0; afloat.neutral = true; } else afloat.throttle = Math.min(1, Math.max(-1, next));
+      }
+    } else afloat.neutral = false;
+    afloat.helm = input.right;
+  };
+  /** What your left hand holds, seated at the tiller: where the grip is in your body's own frame, and the way your fingers lie over it. */
+  const tillerGrip = () => {
+    const g = Penero.grip(boat.helm), d = [g[0] - SEAT[0], g[1] - SEAT[1], g[2] - SEAT[2]], ct = Math.cos(SEAT_TURN), st = Math.sin(SEAT_TURN), a = boat.helm * 32 * Math.PI / 180;
+    // (The boat's forward and starboard to the body's right and back: the body faces SEAT_TURN to starboard of the bow.)
+    const body = (f, s) => [-f * st + s * ct, -(f * ct + s * st)], at = body(d[0], d[2]), axis = body(Math.cos(a), -Math.sin(a));
+    let across = [-axis[1], axis[0]];
+    if (across[0] * at[0] + across[1] * at[1] < 0) across = [-across[0], -across[1]];
+    return { at: [at[0], d[1], at[1] + hipBack()], across: [across[0], -0.25, across[1]] };
+  };
+
   // What you stand on: the ground, or a pier's deck once your feet are up at its level (coming up its gangway
   // from the beach; from the water you pass under it).
   const pierAt = pierWalk(features.piers, ground);
@@ -417,7 +598,9 @@ export async function start(canvas, onProgress = () => {}) {
   walker.gaited = true;
   const gait = new Gait((p => ({ hip: p.hip, ankle: p.ankle, leg: p.thigh + p.shin }))(proportions()));
   const you = { on: false, was: '', x: 0, y: 0, z: 0, cy: 1, sy: 0, heading: 0, dip: 0, home: [0, 0, 0.08], folded: false, eyeUp: 1.5, reachable: null };
-  const toWorld = q => [you.x + q[0] * you.cy - q[2] * you.sy, you.y + q[1], you.z + q[0] * you.sy + q[2] * you.cy];
+  /** A point of the world as your boat's pitch and roll leave it, when it carries you (turned about your seat); itself otherwise. */
+  const tilted = w => { const t = you.tilt; if (!t) return w; const d = [w[0] - t.at[0], w[1] - t.at[1], w[2] - t.at[2]], R = t.R; return [t.at[0] + R[0][0] * d[0] + R[0][1] * d[1] + R[0][2] * d[2], t.at[1] + R[1][0] * d[0] + R[1][1] * d[1] + R[1][2] * d[2], t.at[2] + R[2][0] * d[0] + R[2][1] * d[1] + R[2][2] * d[2]]; };
+  const toWorld = q => tilted([you.x + q[0] * you.cy - q[2] * you.sy, you.y + q[1], you.z + q[0] * you.sy + q[2] * you.cy]);
   /**
    * The height of the sea's surface where any of you is in it this very moment (far below when none of you is):
    * under your weight, at each ankle and at each wrist. (Not the walker's own idea of it, which follows the
@@ -515,6 +698,8 @@ export async function start(canvas, onProgress = () => {}) {
       const arrive = () => {
         walker.place({ x: spot.x, z: spot.z, yaw: (spot.yaw ?? 0) * Math.PI / 180, look: (spot.pitch ?? -4) * Math.PI / 180, height: Math.min(spot.height ?? walker.stand, walker.stand), eye: spot.eye ?? null });
         rig.setMode('walk');
+        // (Your boat waits afloat off the beach near where you first set foot, ahead of you and to your right.)
+        if (!afloat.placed) { const m = mooringFor(spot); moorBoat(m.x, m.z); }
         // (A link, or a test, may put you down already seeing yourself from behind.)
         if (spot.third !== undefined) rig.behind.set(!!spot.third, true);
         status.walk = true; hud?.classList.add('on'); if (labels) labels.enabled = false; syncPanel?.(status); saveHash();
@@ -643,6 +828,8 @@ export async function start(canvas, onProgress = () => {}) {
    * It is done before the camera is set, because your eye is the posed body's eye.
    */
   function advance(dt, input) {
+    // (Aboard, or on your way in or out: the keys you walk with are the boat's, and your hands have their work.)
+    if (walker.carried) { helmFrom(dt, input); input = NO_INPUT; }
     walker.step(dt, hand.low || handL.low ? { ...input, atWork: Math.max(hand.low, handL.low) } : input);          // (its own footfalls are not used: the gait says when a foot comes down)
     walker.head = null;
     if (walker.placed) you.cut = true;
@@ -664,15 +851,17 @@ export async function start(canvas, onProgress = () => {}) {
       return;
     }
     const heading = walker.heading, cy = Math.cos(heading), sy = Math.sin(heading), feetY = walker.eyeY - walker.body, deck = onDeck(walker.x, walker.z);
-    const turn = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), state = walker.sitting ? 'sit' : 'stand';
-    // (Put down somewhere, come out of the water, sat down or got up: your feet are under you.)
-    if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand')) { gait.reset(walker.x, walker.z, heading); you.dip = you.dipV = you.deep = you.deepS = you.peak = you.shallow = 0; }
-    you.was = state; walker.placed = false;
+    // (Aboard you look where you like and your body stays in its seat: your head turns as far as a head does.)
+    const turnAll = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), turn = board.k > 0 ? Math.max(-1.45, Math.min(1.45, turnAll)) : turnAll, state = walker.sitting ? 'sit' : 'stand';
+    // (Put down somewhere, come out of the water, sat down or got up: your feet are under you. On your way into
+    // your boat or out of it they go with you.)
+    if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand') || (walker.carried && walker.seated < 1) || you.carriedWas !== !!walker.carried) { gait.reset(walker.x, walker.z, heading); you.dip = you.dipV = you.deep = you.deepS = you.peak = you.shallow = 0; }
+    you.was = state; walker.placed = false; you.carriedWas = !!walker.carried;
     // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
     // or seated, on sand or in water no deeper than your knee. (Its frame is the body's, as last posed.)
     const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
     const settling = Math.max(0, walker.body - (walker.bodyWant ?? walker.body)) + (walker.sitting ? Math.abs(seated.lean - (seated.leanTo ?? seated.lean)) * 0.45 : 0);
-    const reachable = { want: !!input.hand, open: input.open, openBy: input.openBy || 0, steerBy: input.steerBy || null, eyeAt: you.on ? you.eyeAt : null, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
+    const reachable = { want: !!input.hand, open: input.open, openBy: input.openBy || 0, steerBy: input.steerBy || null, eyeAt: you.on ? you.eyeAt : null, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck && !walker.carried, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
       x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
     // (Both hands holding something, held up: they come together.)
     if (dt > 0) you.together = (you.together || 0) + ((hand.lift > 0.3 && handL.lift > 0.3 && hand.amount > 0.004 && handL.amount > 0.004 ? 1 : 0) - (you.together || 0)) * (1 - Math.exp(-dt * 4));
@@ -727,6 +916,9 @@ export async function start(canvas, onProgress = () => {}) {
     // seat, a hand going to the sand behind you and your legs out in front; and the same undone. (`seated`: how
     // far along; the two poses are mixed, joint by joint.)
     const k = walker.seated, eased = k * k * (3 - 2 * k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: deck ? 0 : 0.008 + sunk, touch: reach, touchL: reachL, turn, look: walker.look };
+    // (In your boat: on its bench, your feet on its floorboards, your hand on the tiller once you are sat. Getting
+    // in and out, your knees come up to clear the side.)
+    if (walker.carried) Object.assign(sit, { recline: RECLINE, hop: 0, sink: 0, touch: null, touchL: null, bench: { drop: ABOARD.thwart - ABOARD.feet[1], ahead: 0.4, tuck: Math.sin(Math.PI * Math.min(1, k)) ** 2, grip: k > 0.8 ? tillerGrip() : null } });
     // (Setting off, the hips come forward over the feet during the first pace, not in the first three frames; and
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
@@ -755,6 +947,8 @@ export async function start(canvas, onProgress = () => {}) {
     }
     // Where that leaves the body's frame in the world, and your eye. (Your weight is where the walker is.)
     Object.assign(you, { on: true, home: j.home, x: walker.x - (j.home[0] * cy - j.home[2] * sy), y: feetY, z: walker.z - (j.home[0] * sy + j.home[2] * cy), cy, sy, heading, folded, eyeUp, reachable });
+    // (Aboard, the whole of you is pitched and rolled with the boat, about your seat.)
+    you.tilt = walker.carried && board.k > 0 ? seatNow(board.k * board.k * (3 - 2 * board.k)) : null;
     // (Asked for less movement: your eye keeps its height and its line; the body under it still walks.)
     // Your eye is her eye: where her head, on her neck, carries it (figurepose.js). Her skeleton is posed here,
     // before the camera is put anywhere, and the camera goes to it. (The camera used to be put where the solver
@@ -769,7 +963,7 @@ export async function start(canvas, onProgress = () => {}) {
     you.eyeAt = figure && figureRig && figureRig.eyeFree && j.eyeLevel ? [figureRig.eyeFree[0] - j.eyeLevel[0], figureRig.eyeFree[1] - j.eyeLevel[1], figureRig.eyeFree[2] - j.eyeLevel[2]] : null;
     const calm = 1 - walker.bobAmount, ex = eyeIs[0] + calm * (g.shift || 0) * (walker.sitting ? 0 : 1), ey = eyeIs[1] + calm * 0.92 * (you.dip - (g.ride || 0) + 0.05 * (g.run || 0)), ez = eyeIs[2];
     if (!folded) {
-      const head = [you.x + ex * cy - ez * sy, feetY + ey, you.z + ex * sy + ez * cy];
+      const head = tilted([you.x + ex * cy - ez * sy, feetY + ey, you.z + ex * sy + ez * cy]);
       you.headOff = [head[0] - floatAt[0], head[1] - floatAt[1], head[2] - floatAt[2]];
       walker.head = { x: floatAt[0] + you.headOff[0] * stood, y: floatAt[1] + you.headOff[1] * stood, z: floatAt[2] + you.headOff[2] * stood };
     }
@@ -779,6 +973,7 @@ export async function start(canvas, onProgress = () => {}) {
     for (const e of g.landed) { walker.thud = Math.min(1.4, 0.4 + e.stride); stamp({ ...e, depth: Math.max(walker.surf - footing.heightAt(e.x, e.z), 0) }); }
   }
 
+  const tiltM = new THREE.Matrix4();
   let adapt = 1;                                            // how far the eye has opened up for a cloud's shade (1 in the sun)
   let inspected = null;                                     // (the body model put out to be looked at: tests only)
   let frames = 0, posedAt = -9, lastInput = NO_INPUT, paceHold = false;                         // (paceHold: the test's fast-forward has kept the page busy; its pauses say nothing of the device)
@@ -795,6 +990,7 @@ export async function start(canvas, onProgress = () => {}) {
     if (rig.mode === 'walk') {
       const moved = walker.x + walker.z + walker.yaw;
       lastInput = walkInput ? walkInput.read() : NO_INPUT;
+      moveBoat(dt);
       advance(dt, lastInput);
       sound.update(dt, soundScene(dt));
       if (moved !== walker.x + walker.z + walker.yaw) saveHash();
@@ -802,7 +998,10 @@ export async function start(canvas, onProgress = () => {}) {
     // Rain wets the ground in a quarter of a minute; the sun and the wind take a few minutes to dry it.
     if (dt > 0) { const rain = shared.uRain.value, wet = shared.uWet.value; shared.uWet.value = rain > wet ? wet + (rain - wet) * (1 - Math.exp(-dt / 6)) : Math.max(rain, wet - dt / 200); }
     rig.dt = dt; rig.under = walker.under;
+    // (Behind your boat the camera stands further back and higher, and in the middle.)
+    { const b = rig.behind, e = board.k * board.k * (3 - 2 * board.k), k = dt > 0 ? 1 - Math.exp(-dt * 4) : 1; b.far += (BOOM.far + (8.5 - BOOM.far) * e - b.far) * k; b.above += (BOOM.above + (1.0 - BOOM.above) * e - b.above) * k; b.side += (BOOM.side * (1 - e) - b.side) * k; }
     rig.update(R.size.width / R.size.height, R.reversed);
+    drawBoat(dt);
     // (The picture is under water when the camera is: behind her, that is the camera's own height against the sea
     // there. What you hear is still where her ears are: sound.update, above.)
     shared.uUnderEye.value = rig.mode !== 'walk' ? 0 : rig.out > 0.5 ? (rig.eye.y < surfaceAt(rig.eye.x, rig.eye.z) ? 1 : 0) : walker.under ? 1 : 0;
@@ -847,6 +1046,9 @@ export async function start(canvas, onProgress = () => {}) {
       // relative to the camera. (Looked at from outside, the camera is not at your eye.)
       const { cy, sy } = you, offX = you.x - rig.eye.x, offZ = you.z - rig.eye.z;
       body.place(offX, you.y, offZ, you.heading);
+      // (Carried by your boat: turned with it about your seat.)
+      let tilt = null;
+      if (you.tilt) { const t = you.tilt, R = t.R, ax = t.at[0] - rig.eye.x, ay = t.at[1], az = t.at[2] - rig.eye.z; tilt = tiltM.set(R[0][0], R[0][1], R[0][2], ax - (R[0][0] * ax + R[0][1] * ay + R[0][2] * az), R[1][0], R[1][1], R[1][2], ay - (R[1][0] * ax + R[1][1] * ay + R[1][2] * az), R[2][0], R[2][1], R[2][2], az - (R[2][0] * ax + R[2][1] * ay + R[2][2] * az), 0, 0, 0, 1); for (const m of [body.mesh, body.headMesh]) { m.matrix.premultiply(tilt); m.matrixWorld.copy(m.matrix); } }
       if (figure) {
         // What of her rests on the sand or hangs just over it (for the soft dark under it: terrain.js).
         const list = shared.uContact.value;
@@ -859,7 +1061,7 @@ export async function start(canvas, onProgress = () => {}) {
         // (Just set down by the sea: part of the way over from swimming still.)
         const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
         // (Folded into the deepest squat she is left out of her own eyes' picture; from behind she is there to be seen.)
-        figure.mesh.visible = !you.folded || rig.out > 0.02; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading);
+        figure.mesh.visible = !you.folded || rig.out > 0.02; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading, 0, tilt);
         figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hairModel.show(figure.mesh.visible ? hairSeen() : 0, wetHair(dt));
         // Her eyes: her head has nodded six tenths of the way to where you look, and her eyes take the rest. With the
         // camera held round in front of her for a moment (Alt), she glances at it.
@@ -945,9 +1147,15 @@ export async function start(canvas, onProgress = () => {}) {
       for (const c of shared.uContact.value) c.w = 0;
       shared.uLeg.value[0].z = shared.uLeg.value[1].z = 0;
     }
+    // What you steer by, while you are in your boat; and its keys, said the first time you are near it and the first time you sit in it.
+    if (helm) { helm.show(walking && board.k > 0.6); if (board.k > 0.6) helm.update({ heading: boat.heading, speed: boat.speed, throttle: afloat.throttle, running: !!afloat.running }, clock.time); }
+    if (params.ui && !params.freeze && walking && afloat.placed) {
+      if (board.k >= 1 && !told.helm) { told.helm = true; notice('At the tiller: W opens the throttle and S closes it (it stays where you leave it; S again from neutral goes astern) · Space is neutral · A D steer · the mouse looks round · V sees the boat from behind · B gets you out', null, 14); }
+      else if (!board.to && !told.boat && !walker.diving) { const [along, across] = besideBoat(); if (Math.abs(along) < 4.6 && Math.abs(across) < 2.6) { told.boat = true; notice('Your boat: B climbs in', null, 7); } }
+    }
     // The keys for what you are doing, said the first time you do it (the opening hint has faded by then).
     if (params.ui && !params.freeze && walking && standing) {
-      if (walker.sitting && !told.sit) { told.sit = true; notice('Seated: S draws your legs up, W stretches them out · A D move your feet · Space curls your toes · the mouse button works your right hand · X gets you up', null, 10); }
+      if (walker.sitting && !walker.carried && !told.sit) { told.sit = true; notice('Seated: S draws your legs up, W stretches them out · A D move your feet · Space curls your toes · the mouse button works your right hand · X gets you up', null, 10); }
       else if (!walker.sitting && walker.crouched > 0.9 && !told.crouch) { told.crouch = true; notice('Hold the mouse button: your hand goes down to the sand or the water. Move your look and your fingers rake through it; hold still and they close on a handful. Let go and it runs out between your fingers · the other button (or F) is your left hand · the wheel (or Q / E) closes and parts them', null, 14); }
     }
     // How the water runs past you: up the beach with each wave, more slowly back down. Standing in it, the
@@ -964,7 +1172,8 @@ export async function start(canvas, onProgress = () => {}) {
     }
     // The sand round you moves on: pressed by your body where you stand on it, planed by the sea where that runs.
     if (patch) {
-      if (walking && !onDeck(walker.x, walker.z)) {
+      // (Not while you sit in your boat: there is no sand under you, and it would be chased across the sea.)
+      if (walking && !onDeck(walker.x, walker.z) && board.k < 1) {
         // Prints you left and walked away from. The patch holds only the four metres round you, and forgot each
         // as it left that square; a stamped print stands for it out there. Coming back, it is pressed into the
         // patch again as it comes within reach: that foot's print: heel, outer edge, ball and toes (the stamp is
@@ -996,7 +1205,8 @@ export async function start(canvas, onProgress = () => {}) {
       if (hidePatch) { shared.uPatch.value.w = 0; shared.uRipple.value.w = 0; }
     }
     if (shadows.enabled && (walking || rig.dist < 1500)) {
-      const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: footing.heightAt(walker.x, walker.z), z: -Math.cos(walker.yaw) * 12 }
+      // (Over deep water the map is centred no deeper than four metres under the surface: centred on a bed sixty metres down, with a low sun, it lay a hundred metres from your boat.)
+      const centre = walking ? { x: Math.sin(walker.yaw) * 12, y: Math.max(footing.heightAt(walker.x, walker.z), shared.uSeaLevel.value - 4), z: -Math.cos(walker.yaw) * 12 }
         : { x: rig.target.x - rig.eye.x, y: Math.max(ground.heightAt(rig.target.x, rig.target.z), shared.uSeaLevel.value), z: rig.target.z - rig.eye.z };
       // (Your own body goes into a small map of its own: a square across the light that just holds you, standing or swimming.)
       const own = walking ? { meshes: figure ? [figure.mesh, figure.hair] : [body.mesh, body.headMesh], centre: standing ? { x: walker.x - rig.eye.x, y: walker.eyeY - walker.body + 0.9, z: walker.z - rig.eye.z } : { x: rig.own.x - rig.eye.x, y: body.mesh.position.y - 0.3, z: rig.own.z - rig.eye.z }, half: standing ? 1.3 : 2 } : null;
@@ -1024,11 +1234,13 @@ export async function start(canvas, onProgress = () => {}) {
     ui.prepend(layer);                                   // under the panel
     labels = new Labels(layer, features.labels || [], ground);
     hud = buildWalkHud(ui, () => app.setWalk(false), on => app.setSound(on), !sound.muted);
+    helm = buildHelm(hud);
     // (Arriving by a link there was no click yet: the first one in first person starts the sound.)
     for (const type of ['pointerdown', 'keydown']) addEventListener(type, () => { if (rig.mode === 'walk' && !sound.on) sound.start(); });
     walkInput = attachWalkInput(walker, canvas, { active: () => rig.mode === 'walk', onLeave: () => app.setWalk(false), buttons: [...hud.querySelectorAll('[data-walk]')],
       // (V: out of your eyes to behind you, and back. Alt held: the mouse swings that camera round you.)
       onThird: () => app.setThird(!rig.behind.want),
+      onKey: k => (k === 'b' ? boarding(!board.to) : false),
       onSwing: (a, b) => { if (typeof a === 'boolean') rig.behind.held = a && rig.behind.want > 0; else if (rig.behind.held) rig.behind.swingBy(a, -b); } });
     // Ctrl with W (forward) closes the tab, and no page can stop that. People crouch with Ctrl by habit: say
     // which key does it, and for as long as Ctrl is down have the browser ask before the page goes.
@@ -1194,6 +1406,15 @@ export async function start(canvas, onProgress = () => {}) {
     swing: (yaw = 0, pitch = 0, hold = true) => { rig.behind.held = hold; if (hold) { rig.behind.swing = [0, 0]; rig.behind.swingBy(yaw * Math.PI / 180, pitch * Math.PI / 180); } },
     /** Where the camera is and what is under it: { at, own (her eye), out (0 her eyes .. 1 behind her), away, ground, sea (heights there), under (the picture is the underwater one), diving } */
     camera: () => { const f = rig.floorAt(rig.eye.x, rig.eye.z); return { at: [rig.eye.x, rig.eye.y, rig.eye.z], own: [rig.own.x, rig.own.y, rig.own.z], out: rig.out, away: rig.away, ground: f.ground, sea: f.sea, under: shared.uUnderEye.value > 0.5, diving: !!walker.under, length: rig.behind.len, lift: rig.behind.lift, block: rig.behind.block, fov: rig.camera.fov }; },
+    /** Your boat (tests): where it is and how it lies; `moor(x, z)` sets it down off the beach nearest a place. */
+    boat: () => (afloat.placed ? { x: boat.x, y: boat.y, z: boat.z, heading: boat.heading, pitch: boat.pitch, roll: boat.roll, speed: boat.speed, turning: boat.turning, throttle: boat.throttle, helm: boat.helm, revs: boat.revs, slam: boat.slam, aground: boat.aground, wet: boat.wet, aboard: board.k, sea: seaFor(boat.x, boat.z).h, depth: seaFor(boat.x, boat.z).h - bedFor(boat.x, boat.z), lines: boat.lines.map(l => ({ taut: l.taut || 0, length: l.length })), triangles: penero.triangles } : null),
+    moor: (x, z) => moorBoat(x, z),
+    /** How deep the still sea is at a place (tests; negative: dry land that much above it). */
+    depthAt: (x, z) => shared.uSeaLevel.value - ground.heightAt(x, z),
+    /** Your boat's lever and tiller, set from outside (tests): throttle -1..1, helm -1 (to port)..1; `at`, if given, sets it down there first: { x, z, heading }. */
+    drive(throttle = 0, helm = 0, at = null) { if (at) { boat.place({ ...at, sea: shared.uSeaLevel.value }); afloat.placed = true; afloat.ghost = board.k < 1; } afloat.throttle = throttle; afloat.helm = helm; afloat.driven = true; },
+    /** Into your boat (true) or out of it (false); `now`: at once, without the climb. Returns whether it could be done. */
+    board: (on = true, now = true) => boarding(on, now),
     /** How many times she has blinked (tests). */
     blinks: () => (figure ? figure.face.blinks : null),
     bones: () => { if (!figureRig) return null; const p = figureRig.probe(), e = you.on ? toWorld(p.eye) : null; return { ...p, eyeGap: e ? Math.hypot(e[0] - rig.own.x, e[1] - rig.own.y, e[2] - rig.own.z) : null }; },
@@ -1216,11 +1437,13 @@ export async function start(canvas, onProgress = () => {}) {
      * `about`: what to go round and look at in place of yourself: 'hand' (your right), 'handL', 'land' / 'landL'
      * (where what that hand pours comes down), 'mid' / 'midL' (half way between the two) or a point [x, y, z] of the
      * world; `height` and `aim` are then above it. With `fixed` the point is taken once (the camera does not ride
-     * the hand's every movement). `fov`: the lens, in degrees.
+     * the hand's every movement). `fov`: the lens, in degrees. 'boat': your boat's middle on its waterline ('helm': your seat in it), the angle
+     * then reckoned from its stern (0) round by its port side to its bow (180); with `fixed`, where it is now.
      */
     outside(angle = null, dist = 2.6, height = 1.1, aim = 0.8, fixed = false, about = null, fov = null) {
       const left = typeof about === 'string' && about.endsWith('L') ? 0 : 1, kind = typeof about === 'string' ? about.replace(/L$/, '') : null;
       const point = !about ? null : Array.isArray(about) ? () => about : kind === 'hand' ? () => handAt(left) : kind === 'land' ? () => landAt(left) : () => { const a = handAt(left), b = landAt(left); return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2]; };
+      if (about === 'boat' || about === 'helm') { const at = about === 'helm' ? () => boat.toWorld(SEAT) : () => [boat.x, boat.y, boat.z]; rig.outside = { angle, dist, height, aim, heading: fixed ? boat.heading : () => boat.heading, about: fixed ? at() : at, ...(fov ? { fov } : {}) }; return; }
       rig.outside = angle === null ? null : { angle, dist, height, aim, ...(fixed ? { heading: walker.yaw } : {}), ...(point ? { about: fixed ? point() : point } : {}), ...(fov ? { fov } : {}) };
     },
     /** For tests: where a point of the world is in the picture: [x, y] in pixels of the canvas, and how deep (under 1: before the camera). */
@@ -1320,6 +1543,8 @@ void main() { outColor = vec4(lrRagged(uPts[int(gl_FragCoord.x)]), 0.0, 0.0, 1.0
         'walking on a pier': [() => ({ ...base }), [0.6, 1.1, 1.6, 2.1, 2.6].map((t, i) => [t, { side: i & 1, surface: 'wood' }])],
         'wading knee deep': [() => ({ ...base, depth: 0.45, speed: 0.8 }), [0.6, 1.3, 2.0, 2.7].map((t, i) => [t, { depth: 0.45, wet: 1, side: i & 1 }])],
         'under water': [t => ({ ...base, time: t, shores: shore(0.3, 2), under: true })],
+        'the outboard idling': [() => ({ ...base, boat: { running: true, revs: 0.12, speed: 0, wet: 1, dist: 1, bearing: 2.6 } })],
+        'the boat flat out': [() => ({ ...base, wind: 6, boat: { running: true, revs: 1, speed: 11, wet: 0.5, dist: 1, bearing: 2.6 } })],
       };
       const out = [];
       for (const [name, [scene, steps]] of Object.entries(scenes)) out.push({ name, ...await measure(3.5, scene, steps || []) });

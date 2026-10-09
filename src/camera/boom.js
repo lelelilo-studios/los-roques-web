@@ -20,7 +20,9 @@ export const BOOM = {
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v)), ease = t => t * t * t * (t * (6 * t - 15) + 10);
 
 export class Boom {
-  constructor() { this.want = 0; this.k = 0; this.swing = [0, 0]; this.held = false; this.pivot = null; this.lift = 0; this.len = BOOM.far; this.block = 0; }
+  constructor() { this.want = 0; this.k = 0; this.swing = [0, 0]; this.held = false; this.pivot = null; this.lift = 0; this.len = BOOM.far; this.block = 0;
+    /** How far behind her it stands, how far over her eye its root is, and how far to her right: BOOM's on foot; further back, higher and in the middle when she is in her boat (app.js eases them). */
+    this.far = BOOM.far; this.above = BOOM.above; this.side = BOOM.side; }
   /** Out of her eyes (true) or back into them; `now`: without the glide. */
   set(on, now = false) { this.want = on ? 1 : 0; if (now) { this.k = this.want; this.pivot = null; } }
   /** Swings the camera round her by so many radians (Alt held and the mouse moved). */
@@ -40,15 +42,15 @@ export class Boom {
     this.k = clamp(this.k + clamp(this.want - this.k, -d / B.glide, d / B.glide), 0, 1);
     if (!this.held && d > 0) { const k = Math.exp(-d * 4.6 / B.release); this.swing[0] *= k; this.swing[1] *= k; if (Math.hypot(...this.swing) < 1e-4) this.swing = [0, 0]; }
     const swung = Math.min(1, Math.hypot(...this.swing) / 0.3), cl = Math.cos(look), ahead = [Math.sin(yaw) * cl, Math.sin(look), -Math.cos(yaw) * cl];
-    if (!this.on) { this.pivot = null; this.lift = 0; this.len = B.far; this.block = 0; return { e: 0, x: own.x, y: own.y, z: own.z, dir: ahead, fov: 65, away: 0 }; }
+    if (!this.on) { this.pivot = null; this.lift = 0; this.len = this.far; this.block = 0; return { e: 0, x: own.x, y: own.y, z: own.z, dir: ahead, fov: 65, away: 0 }; }
     // The boom's root: just over her head, followed a little late. (Set down somewhere else, it is there at once.)
-    const root = { x: own.x, y: own.y + B.above, z: own.z }, p = this.pivot;
+    const root = { x: own.x, y: own.y + this.above, z: own.z }, p = this.pivot;
     if (!p || Math.hypot(root.x - p.x, root.y - p.y, root.z - p.z) > 3) this.pivot = { ...root };
     else { const kh = 1 - Math.exp(-d * B.follow[0]), kv = 1 - Math.exp(-d * B.follow[1]); p.x += (root.x - p.x) * kh; p.z += (root.z - p.z) * kh; p.y += (root.y - p.y) * kv; }
     // (Swung round her, the boom leaves her look for a level of its own, a little above hers, that the mouse
     // then raises and lowers: looking down at the sand in her hand, she is not looked at from the sky.)
     const at = this.pivot, by = yaw + this.swing[0], bp = clamp(look + (B.swungPitch - look) * swung + this.swing[1], B.pitch[0], B.pitch[1]), cb = Math.cos(bp);
-    const back = [-Math.sin(by) * cb, -Math.sin(bp), Math.cos(by) * cb], side = B.side * (1 - swung), right = [Math.cos(by) * side, 0, Math.sin(by) * side];
+    const back = [-Math.sin(by) * cb, -Math.sin(bp), Math.cos(by) * cb], side = this.side * (1 - swung), right = [Math.cos(by) * side, 0, Math.sin(by) * side];
     const place = (len, lift) => ({ x: at.x + back[0] * len + right[0], y: at.y + back[1] * len + lift, z: at.z + back[2] * len + right[2] });
     // What room there is at a place: no lower than `lo`, no higher than `hi`.
     const room = (x, z) => { const f = floorAt(x, z); return under ? { lo: f.ground + B.overGround, hi: f.sea - B.underSea, bare: f.ground, top: f.sea } : { lo: Math.max(f.ground + B.overGround, f.sea + B.overSea), hi: Infinity, bare: Math.max(f.ground, f.sea), top: Infinity }; };
@@ -60,8 +62,8 @@ export class Boom {
       for (const s of [0.5, 0.75]) { const q = { x: at.x + (c.x - at.x) * s, y: at.y + (c.y - at.y) * s, z: at.z + (c.z - at.z) * s }, m = room(q.x, q.z); up = Math.max(up, (m.bare - q.y) / s); down = Math.max(down, (q.y - m.top) / s); }
       return { up: Math.max(0, up), down: Math.max(0, down), shut: r.hi < r.lo };
     };
-    let len = B.far, lift = 0, block = 1;
-    for (let l = B.far; l >= B.near - 1e-6; l -= 0.3) { const n = need(l); if (!n.shut && n.up <= B.rise && !(n.up > 0 && n.down > 0)) { len = l; lift = n.up - n.down; block = 0; break; } len = l; lift = Math.min(n.up, B.rise) - n.down; }
+    let len = this.far, lift = 0, block = 1;
+    for (let l = this.far; l >= B.near - 1e-6; l -= 0.3) { const n = need(l); if (!n.shut && n.up <= B.rise && !(n.up > 0 && n.down > 0)) { len = l; lift = n.up - n.down; block = 0; break; } len = l; lift = Math.min(n.up, B.rise) - n.down; }
     if (d > 0) {
       this.lift += (lift - this.lift) * (1 - Math.exp(-d * (lift > this.lift ? 12 : 4)));
       this.len += (len - this.len) * (1 - Math.exp(-d * (len < this.len ? 12 : 3)));
@@ -83,7 +85,7 @@ export class Boom {
     // Looking the way she looks, a little lower; swung round her, at her.
     const low = clamp(look + (turned - B.tilt) * e, -1.55, 1.55), clow = Math.cos(low);
     let dir = [Math.sin(yaw) * clow, Math.sin(low), -Math.cos(yaw) * clow];
-    if (swung > 0) { const t = [at.x - c.x, at.y - B.above - 0.1 - c.y, at.z - c.z], tl = Math.hypot(...t) || 1, k = swung * e, v = dir.map((a, i) => a + (t[i] / tl - a) * k), vl = Math.hypot(...v) || 1; dir = v.map(a => a / vl); }
+    if (swung > 0) { const t = [at.x - c.x, at.y - this.above - 0.1 - c.y, at.z - c.z], tl = Math.hypot(...t) || 1, k = swung * e, v = dir.map((a, i) => a + (t[i] / tl - a) * k), vl = Math.hypot(...v) || 1; dir = v.map(a => a / vl); }
     return { e, x, y, z, dir, fov: 65 + (B.fov - 65) * e, away: Math.hypot(x - own.x, y - own.y, z - own.z) };
   }
 }

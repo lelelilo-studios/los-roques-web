@@ -125,7 +125,7 @@ export class CameraRig {
         // Looking at you from outside: `angle` round you from behind (0) by the left to in front (180), `dist`
         // metres off, `height` above your feet, aimed at `aim` above them. For judging poses and shadows.
         // (Swimming, 'your feet' are a body's length under your eye: the camera is aimed from there as on land.)
-        const o = this.outside, a = (o.heading ?? yaw) + o.angle * DEG, feet = w.afloat || w.diving ? w.eyeY - (o.swim ?? 0.9) : w.eyeY - w.body;
+        const o = this.outside, a = (typeof o.heading === 'function' ? o.heading() : o.heading ?? yaw) + o.angle * DEG, feet = w.afloat || w.diving ? w.eyeY - (o.swim ?? 0.9) : w.eyeY - w.body;
         // (`about`: a point of the world to go round and look at in place of your own axis, your hand say: `height`
         // and `aim` are then above that point. A function, if the camera is to follow it.)
         const c = typeof o.about === 'function' ? o.about() : o.about, bx = c ? c[0] : w.x, by = c ? c[1] : feet, bz = c ? c[2] : w.z;

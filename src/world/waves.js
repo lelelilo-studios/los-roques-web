@@ -195,6 +195,21 @@ export class Waves {
     }
     return h;
   }
+
+  /**
+   * The same surface, and how fast it is rising there: { h, v } (m, m/s). What floats on the sea is pushed by
+   * the one and held by the other (sim/boat.js).
+   */
+  sampleAt(x, z, t, weights, cascades = 2, out = { h: 0, v: 0 }) {
+    let h = 0, v = 0;
+    for (let i = 0; i < cascades; i++) {
+      let s = 0, r = 0;
+      for (const w of this.components[i]) { const a = w.kx * x + w.kz * z + w.phase - w.omega * t; s += w.a * Math.cos(a); r += w.a * w.omega * Math.sin(a); }
+      h += s * weights[i]; v += r * weights[i];
+    }
+    out.h = h; out.v = v;
+    return out;
+  }
 }
 
 /** GLSL: where a point is on each cascade's tile, and the local wave heights. Needs the uniforms listed in WAVE_UNIFORMS. */

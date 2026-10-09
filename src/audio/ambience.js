@@ -58,6 +58,24 @@ export class Ambience {
     this.rain = loop('white', 'highpass', 2400, 0.3);
     this.deep = loop('brown', 'lowpass', 110, 0.5);
     this.time = 0; this.nextGull = 18; this.seed = 7;
+    // Your boat's outboard (a two-stroke twin: it fires twice a turn, 30 times a second idling and 185 flat out):
+    // the firing as a saw and the lumpy half of it under it, through the exhaust's own low-pass; the exhaust
+    // bubbling out under water, noise made to throb at the firing; and the whine of the engine itself above.
+    {
+      const tone = (type, into) => { const o = ctx.createOscillator(); o.type = type; o.frequency.value = 30; o.connect(into); o.start(0); return o; };
+      const exhaust = ctx.createBiquadFilter(), body = ctx.createGain(), pan = ctx.createStereoPanner(), fire = ctx.createGain(), lump = ctx.createGain(), whine = ctx.createGain(), bark = ctx.createBiquadFilter();
+      exhaust.type = 'lowpass'; exhaust.frequency.value = 400; exhaust.Q.value = 1.1; body.gain.value = 0; fire.gain.value = 0.5; lump.gain.value = 0.5; whine.gain.value = 0;
+      bark.type = 'peaking'; bark.frequency.value = 520; bark.Q.value = 1.2; bark.gain.value = 7;
+      fire.connect(exhaust); lump.connect(exhaust); exhaust.connect(bark).connect(body).connect(pan).connect(this.out);
+      const high = ctx.createBiquadFilter(); high.type = 'bandpass'; high.frequency.value = 1800; high.Q.value = 2.5; whine.connect(high).connect(body);
+      // (The bubbling: a loop of noise whose loudness the firing drives.)
+      const bubble = loop('pink', 'bandpass', 420, 0.8, pan), throb = ctx.createGain(); throb.gain.value = 0;
+      const oscs = [tone('sawtooth', fire), tone('square', lump), tone('sawtooth', whine), tone('sine', throb)];
+      throb.connect(bubble.gain.gain);
+      this.engine = { oscs, exhaust, body, pan, fire, lump, whine, bubble, throb, revs: 0 };
+      // The water along the hull: its wash, rising with speed, and the hiss of spray once it planes.
+      this.wash = loop('pink', 'bandpass', 700, 0.5); this.hiss = loop('white', 'highpass', 3600, 0.4);
+    }
   }
 
   rnd() { this.seed = (Math.imul(this.seed, 1664525) + 1013904223) >>> 0; return this.seed / 4294967296; }
@@ -98,6 +116,23 @@ export class Ambience {
     this.set(this.windHigh.gain.gain, 0.04 * w * w * gust, 0.3);
     this.set(this.wade.gain.gain, 0.2 * clamp01(s.speed / 1.2) * clamp01(s.depth * 2.5) * (1 - under), 0.12);
     this.set(this.rain.gain.gain, 0.3 * s.rain * (1 - 0.8 * under), 0.5);
+    // Your boat: its engine by its revs, heard from where you are (aboard, behind you; from the beach, fainter),
+    // and the water along its hull by its speed.
+    {
+      const b = s.boat, E = this.engine, on = b && b.running ? 1 : 0, revs = b ? b.revs : 0, near = b ? 1 / (1 + (b.dist / 14) ** 2) : 0, loud = on * near * (1 - 0.55 * under);
+      const f = 30 + 155 * clamp01((revs - 0.12) / 0.88), t = this.ctx.currentTime;
+      E.oscs[0].frequency.setTargetAtTime(f, t, 0.06); E.oscs[1].frequency.setTargetAtTime(f / 2, t, 0.06); E.oscs[2].frequency.setTargetAtTime(f * 9, t, 0.06); E.oscs[3].frequency.setTargetAtTime(f, t, 0.06);
+      this.set(E.exhaust.frequency, 260 + 2300 * revs * revs, 0.08);
+      this.set(E.body.gain, loud * (0.04 + 0.27 * revs), 0.07);
+      this.set(E.lump.gain, 0.7 * (1 - smooth(0.2, 0.6, revs)), 0.1); this.set(E.whine.gain, 0.05 * smooth(0.3, 1, revs), 0.1);
+      // (Idling, the exhaust bubbles; on the plane it is clear of the water and only roars.)
+      this.set(E.throb.gain, loud * 0.1 * (1 - smooth(0.3, 0.8, revs)), 0.1); this.set(E.bubble.gain.gain, loud * 0.06 * (1 - smooth(0.3, 0.8, revs)), 0.1);
+      const pan = b ? Math.max(-0.7, Math.min(0.7, Math.sin(b.bearing) * 0.6)) : 0;
+      this.set(E.pan.pan, pan);
+      const speed = b ? b.speed : 0, heard = b ? near * (1 - 0.7 * under) : 0;
+      this.set(this.wash.gain.gain, heard * 0.22 * smooth(0.5, 9, speed) * (b ? b.wet : 0), 0.2); this.set(this.wash.filter.frequency, 500 + 90 * speed, 0.2);
+      this.set(this.hiss.gain.gain, heard * 0.05 * smooth(5, 11, speed), 0.2);
+    }
     // A laughing gull, somewhere along the beach, every half minute or so by day.
     if (s.day && !under && s.shores.length && this.time > this.nextGull) { this.gull(); this.nextGull = this.time + 22 + 40 * this.rnd(); }
   }
@@ -109,6 +144,14 @@ export class Ambience {
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + attack); g.gain.exponentialRampToValueAtTime(1e-4, t + attack + decay);
     src.connect(filter).connect(g).connect(p).connect(this.out);
     src.start(t, this.rnd() * 4, attack + decay + 0.05);
+  }
+
+  /** Your boat's bottom coming down on the water: `hard`, in g. */
+  slap(hard = 1.5, near = 1) {
+    const k = clamp01((hard - 1) / 1.5) * near;
+    if (k <= 0.02) return;
+    this.burst('brown', 'lowpass', 150 + 60 * this.rnd(), 1.0, 0.25 + 0.6 * k, 0.004, 0.16);
+    this.burst('white', 'bandpass', 2200, 0.5, 0.05 + 0.2 * k, 0.01, 0.3, 0, 0.02);
   }
 
   /** A footfall: `depth` of water there (m), `wet` 0..1 how wet the sand is, `side` 0 left / 1 right, `surface` 'sand' or 'wood'. */
@@ -235,6 +278,7 @@ export class Sound {
   update(dt, scene) { if (this.on && this.ctx.state === 'running') try { this.ambience.update(dt, scene); } catch (e) { this.error ??= String(e?.message || e); } }
   step(info) { if (this.on && this.ctx.state === 'running') try { this.ambience.step(info); } catch (e) { this.error ??= String(e?.message || e); } }
   seat(how, wet) { if (this.on && this.ctx.state === 'running') try { this.ambience.seat(how, wet); } catch (e) { this.error ??= String(e?.message || e); } }
+  slap(hard, near) { if (this.on && this.ctx.state === 'running') try { this.ambience.slap(hard, near); } catch (e) { this.error ??= String(e?.message || e); } }
   touch(kind, how, speed, side = 1) { if (this.on && this.ctx.state === 'running') try { this.ambience.touch(kind, how, speed, side); } catch (e) { this.error ??= String(e?.message || e); } }
 }
 

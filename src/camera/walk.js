@@ -90,6 +90,23 @@ export class Walker {
   step(dt, input) {
     const steps = [];
     if (dt <= 0) return steps;
+    if (this.carried) {
+      // Carried: aboard your boat, or on your way into it or out of it. It says where what you sit on is (`y`: its
+      // top; on your feet, the ground), which way your body faces, how far it has turned since last asked (your
+      // look turns with it), how high your eye is over that, and how far you are on to your seat. (app.js)
+      const c = this.carried(dt);
+      this.pinned = false;
+      this.yaw += c.turned; this.x = c.x; this.z = c.z; this.heading = c.heading;
+      this.vx = this.vz = 0; this.sitting = c.seated >= 1; this.seated = c.seated; this.sat = !!input.sit;
+      this.body = this.bodyTo = this.bodyWant = c.body; this.bodyV = 0;
+      this.surf += (this.surfaceAt(this.x, this.z) - this.surf) * (1 - Math.exp(-dt / 0.25)); this.surfMean = this.surf;
+      this.depth = Math.max(0, c.depth || 0); this.afloat = false; this.diving = false; this.onFeet = false; this.eyeOff = 0;
+      this.eyeY = c.y + this.body; this.under0 = c.y;
+      this.launch = 0; this.wish = null; this.bank = 0; this.turnRate = 0; this.turning = false; this.scoot = 0; this.scootLeft = 0;
+      this.stride = 0; this.bob = this.sway = this.roll = 0; this.turned = 0; this.lastYaw = this.yaw; this.diveTimer = 0; this.thud *= Math.exp(-dt * 9);
+      if (Number.isFinite(this.x + this.z + this.yaw + this.look + this.eyeY)) this.safe = [this.x, this.z, this.yaw, this.look];
+      return steps;
+    }
     const moving = Math.abs(input.fwd) + Math.abs(input.right) > 0.01 || input.up || input.down || input.sit;
     if (this.pinned && !moving) return steps;
     this.pinned = false;
@@ -340,7 +357,7 @@ export function buildingBlocker(buildings, radius = 0.3, cell = 24) {
  *            do the rest.
  * @param {() => boolean} active  whether first person is on (the handlers stay installed)
  */
-export function attachWalkInput(walker, el, { active, onLeave, buttons = [], onThird = null, onSwing = null }) {
+export function attachWalkInput(walker, el, { active, onLeave, buttons = [], onThird = null, onSwing = null, onKey = null }) {
   const held = new Set(), touch = { stick: null, look: null, vec: [0, 0] }, pressed = new Set();
   const typing = e => /INPUT|SELECT|TEXTAREA/.test(e.target?.tagName || '');
   // (Letters by where the key is, not by what it types: with Alt held a Mac types "∑" for W, and W A S D are
@@ -368,6 +385,8 @@ export function attachWalkInput(walker, el, { active, onLeave, buttons = [], onT
       // (Alt alone opens the browser's menu on some systems: not while you are on the sand.)
       if (k === 'Alt') { e.preventDefault(); swing(true); return; }
       if (k === 'v' && !e.repeat && !e.ctrlKey && !e.metaKey) { e.preventDefault(); onThird?.(); return; }
+      // (B: into your boat and out of it. M: the chart. `onKey` says whether it took the key.)
+      if ((k === 'b' || k === 'm') && !e.repeat && !e.ctrlKey && !e.metaKey && onKey?.(k)) { e.preventDefault(); return; }
       // (Ctrl is not among them, though many crouch with it by habit: with W, forward, it is the browser's "close
       // this tab", which no page can prevent. Crouching or diving while going forward closed the page.)
       if (['w', 'a', 's', 'd', 'c', 'q', 'e', 'x', 'f', ' ', 'Shift', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { held.add(k); e.preventDefault(); }

@@ -70,6 +70,8 @@ in vec4 vWeights;
 in vec4 vWaveMap;
 in float vWaveY;
 in float vHs;
+uniform mat4 uHullIn;       // the world (from the camera) to your boat's own frame
+uniform vec3 uHullHalf;     // half its length, how high over its waterline the sea is kept out, half its beam (x = 0: no boat)
 layout(location = 0) out vec4 outColor;
 
 // Foam: a lacy bubble pattern covering the share 'amount' of the surface. From far away (pixel footprint 'px'
@@ -167,7 +169,14 @@ void main() {
   // (How steep the bed is here against a typical beach face: on flats a little water goes a long way.)
   float steep = clamp(fwidth(ground) * 0.7 / max(px, 1e-4), 0.01, 0.3) / 0.11;
   vec4 bed0 = texelFetch(tRefr, ivec2(gl_FragCoord.xy), 0);
-  if (bed0.a < -1500.0) discard;                            // something that must show through the sea surface (tree canopy seen from afar)
+  // Something that must show through the sea surface: a tree's canopy seen from afar; and the inside of your
+  // boat (world/penero.js writes -1800 there), where the sea is not, but only within the boat's own box: a wave
+  // between you and the boat is still drawn over what is behind it.
+  if (bed0.a < -1500.0) {
+    if (bed0.a < -1900.0) discard;
+    vec3 inBoat = (uHullIn * vec4(vRel, 1.0)).xyz;
+    if (uHullHalf.x > 0.0 && abs(inBoat.x) < uHullHalf.x && abs(inBoat.z) < uHullHalf.z && inBoat.y > -0.6 && inBoat.y < uHullHalf.y) discard;
+  }
   bool hasBed0 = bed0.a > -LR_WET_BAND;
   // Near the waterline the terrain is the judge of what is under water: where it drew dry or wet sand (or
   // anything else stands), there is no sea to draw, whatever this mesh makes of it.
@@ -389,7 +398,7 @@ export class Water {
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4 },
       uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.ripple, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
-        'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null } }),
+        'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null }, uHullIn: { value: new THREE.Matrix4() }, uHullHalf: { value: new THREE.Vector3(0, 0, 0) } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);
     this.mesh.frustumCulled = false;

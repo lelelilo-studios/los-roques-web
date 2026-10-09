@@ -484,8 +484,14 @@ export function footfall(stride) {
  * @param {number} [p.wiggle]  how far the toes are curled up (radians; negative: gripping)
  * @param {object} [p.touch]  the right hand at work, as for poseBody; `touchL`: the left
  * @param {number} [p.hop]  0..1: heels and hands lifted clear of the sand (a scoot round on your seat)
+ * @param {object} [p.bench]  seated on a bench and not on the ground (the thwart of your boat): y = 0 is then the
+ *   top of the bench. { drop: how far under it the floor is that your feet are flat on, ahead: how far ahead of
+ *   your hips your ankles are, tuck: 0..1 the knees drawn up and the feet off the floor (getting a leg over
+ *   the side), grip: what your left hand holds, or null: { at: where (this frame), across: the way the
+ *   fingers lie over it (a direction) } }. The other hand lies on its thigh. A grip further off than the arm is
+ *   long is leant to: the shoulder goes that much towards it (`reached`), which the rig makes with her back.
  */
-export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, touchL = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0, look = 0, recline = null, hop = 0 }) {
+export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = null, touchL = null, detail = false, breath = 0, sink = 0, colours = {}, turn = 0, look = 0, recline = null, hop = 0, bench = null }) {
   const SKIN = colours.skin || SKIN0, SHIRT = colours.shirt || SHIRT0, SHORTS = colours.shorts || SHORTS0, HAIR = colours.hair || SKIN;
   t.n = 0; h.n = 0;
   // The hip joints stand a hand's breadth over the sand you sit on; the trunk leans back from them as far as
@@ -501,30 +507,41 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
   for (const side of [-1, 1]) {
     // Legs: out in front, the heels in the sand and the toes up; drawn in, the heels slide back, the knees rise
     // and the feet come flat.
-    const hipJ = [side * PROP.hip, hip[1], hip[2]], pitch = 1.1 * (1 - draw) + 0.12;
+    const hipJ = [side * PROP.hip, hip[1], hip[2]], tuck = bench ? bench.tuck ?? 0 : 0, pitch = bench ? 0.04 + 0.5 * tuck : 1.1 * (1 - draw) + 0.12;
     // (`hop`: shuffling round on your seat, heels and hands come up off the sand for the moment of each scoot.)
-    const ankle = [side * (PROP.hip + 0.035 + 0.14 * splay + 0.05 * draw), PROP.ankle + 0.014 * (1 - draw) - sink * (1 - hop) + 0.035 * hop, hip[2] - leg * (0.985 - 0.5 * draw - 0.03 * hop)];
-    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, [side * (0.2 + 0.5 * splay), 1, 0]);
+    // (On a bench: the feet flat on the floor under it, a little ahead of the knees' own line.)
+    const ankle = bench ? [side * (PROP.hip + 0.025), PROP.ankle - bench.drop * (1 - tuck) + 0.1 * tuck, hip[2] - bench.ahead * (1 - 0.35 * tuck)]
+      : [side * (PROP.hip + 0.035 + 0.14 * splay + 0.05 * draw), PROP.ankle + 0.014 * (1 - draw) - sink * (1 - hop) + 0.035 * hop, hip[2] - leg * (0.985 - 0.5 * draw - 0.03 * hop)];
+    const knee = reach(hipJ, ankle, PROP.thigh, PROP.shin, bench ? [side * 0.1, 1, -0.4] : [side * (0.2 + 0.5 * splay), 1, 0]);
     const hem = lerp3(hipJ, knee, 0.55), calf = lerp3(knee, ankle, 0.35);
     t.tube(hipJ, hem, [0.088, 0.092], [0.08, 0.083], SHORTS);
     t.tube(hem, knee, [0.068, 0.07], [0.055, 0.057], SKIN);
     t.chain([knee, calf, ankle], [[0.055, 0.057], [0.052, 0.058], [0.034, 0.038]], [SKIN, SKIN]);
-    t.foot(ankle, [side * (0.2 + 0.3 * splay), -0.97], SKIN, detail ? side : 0, pitch);
+    t.foot(ankle, bench ? [side * 0.12, -0.99] : [side * (0.2 + 0.3 * splay), -0.97], SKIN, detail ? side : 0, pitch);
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
-    joints.feet.push({ pitch, out: side * (0.2 + 0.3 * splay), planted: 1, toes: wiggle });
+    joints.feet.push({ pitch, out: bench ? side * 0.12 : side * (0.2 + 0.3 * splay), planted: 1, toes: wiggle });
     // Arms: the left hand on the sand behind you, taking some of your weight; the right resting on its thigh,
     // or at work. (They were both laid flat on the sand beside you: which an arm reaches from a seat only by
     // leaning. Hers, at its full stretch, stopped a hand's breadth short, and both hands hung in the air.) The
     // left hand is on its fingertips, the palm off the sand, as a hand that props you from behind is; the right
     // lies along the thigh, palm down.
     const sh = [side * PROP.shoulder, sy - 0.01, shoulder[2]], sh0 = sh.slice(), thigh = unit([knee[0] - hipJ[0], knee[1] - hipJ[1], knee[2] - hipJ[2]]), on = lerp3(hipJ, knee, 0.56);
-    const wrist = side < 0 ? [sh[0] - 0.1, 0.125 + 0.03 * hop, hip[2] + 0.17] : [on[0] + side * 0.012, on[1] + 0.084 + 0.03 * hop, on[2] + 0.03];
-    const pole = side < 0 ? [side * 0.7, 0.1, 1] : [side * 0.9, -0.25, 0.45];
+    // (On a bench: the left hand on what it holds, the tiller, the wrist a little behind and above where the palm
+    // lies on it; with nothing to hold it lies on its thigh as the right does.)
+    const grip = bench && side < 0 ? bench.grip : null, propped = side < 0 && !bench;
+    const wrist = grip ? [grip.at[0] - grip.across[0] * 0.072, grip.at[1] + 0.03 - grip.across[1] * 0.072, grip.at[2] - grip.across[2] * 0.072]
+      : propped ? [sh[0] - 0.1, 0.125 + 0.03 * hop, hip[2] + 0.17] : [on[0] + side * 0.012, on[1] + 0.084 + 0.03 * hop, on[2] + 0.03];
+    const pole = grip ? [side * 0.45, -1, 0.35] : propped ? [side * 0.7, 0.1, 1] : [side * 0.9, -0.25, 0.45];
+    if (grip) {
+      // (Further off than the arm is long: she leans to it, her shoulder going that much towards it.)
+      const d = [wrist[0] - sh[0], wrist[1] - sh[1], wrist[2] - sh[2]], far = Math.hypot(d[0], d[1], d[2]), over = far - 0.93 * (PROP.upperArm + PROP.forearm);
+      if (over > 0) for (let i = 0; i < 3; i++) sh[i] += d[i] / far * over;
+    }
     let elbow = reach(sh, wrist, PROP.upperArm, PROP.forearm, pole);
     const work = side > 0 ? touch : touchL, reaching = work && work.amount > 0 ? (work.eased ? Math.min(1, work.amount) : work.amount * work.amount * (3 - 2 * work.amount)) : 0;
     // (At rest: the left hand's fingers point down, out and back, into the sand; the right hand's along the thigh.)
-    const flat = side < 0 ? unit([-0.38, -0.74, 0.55]) : unit([thigh[0] - side * 0.1, thigh[1] - 0.12, thigh[2]]);
-    const facing = (v => { const k = v[0] * flat[0] + v[1] * flat[1] + v[2] * flat[2]; return unit([v[0] - flat[0] * k, v[1] - flat[1] * k, v[2] - flat[2] * k]); })(side < 0 ? [0, -0.5, 0.87] : [0, -1, 0]);
+    const flat = grip ? unit(grip.across) : propped ? unit([-0.38, -0.74, 0.55]) : unit([thigh[0] - side * 0.1, thigh[1] - 0.12, thigh[2]]);
+    const facing = (v => { const k = v[0] * flat[0] + v[1] * flat[1] + v[2] * flat[2]; return unit([v[0] - flat[0] * k, v[1] - flat[1] * k, v[2] - flat[2] * k]); })(propped ? [0, -0.5, 0.87] : [0, -1, 0]);
     let held = null;
     if (reaching) {
       const lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = work.eased ? lift : lift * lift * (3 - 2 * lift);
@@ -539,7 +556,7 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     const sleeve = lerp3(sh, elbow, 0.5);
     t.tube(sh, sleeve, [0.052, 0.056], [0.047, 0.05], SHIRT);
     if (!detail) t.tube(sleeve, elbow, [0.042, 0.045], [0.036, 0.038], SKIN);
-    const point = !!held, curl = point ? 0.12 + ((work.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (work.spread ?? 0) * reaching : 0.1;
+    const point = !!held, curl = grip ? 0.85 : point ? 0.12 + ((work.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (work.spread ?? 0) * reaching : grip ? 0 : 0.1;
     if (detail) {
       // (Her own fingers: at rest laid flat on the sand, at work as the hand has them.)
       const fingers = fingersOf(side, 0.12, point ? work.fingers : null, reaching);
@@ -574,7 +591,7 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
   // (`home`: the ground under your seat; `eye`: where your eye is, round the neck as the head turns.)
   const head = headOn(turn, look);
   // (`home`: where your weight was when you stood: you sit down a foot's length behind your feet.)
-  joints.home = [0, 0, hip[2] - 0.3]; joints.eyeLevel = [0, eye, 0]; joints.eye = [head.eye[0], eye + head.eye[1], head.eye[2]]; joints.headTurn = head.turn; joints.headNod = head.nod; joints.pelvis = 0;
+  joints.home = [0, 0, bench ? hip[2] : hip[2] - 0.3]; joints.eyeLevel = [0, eye, 0]; joints.eye = [head.eye[0], eye + head.eye[1], head.eye[2]]; joints.headTurn = head.turn; joints.headNod = head.nod; joints.pelvis = 0;
   return joints;
 }
 
