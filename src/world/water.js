@@ -10,6 +10,7 @@ import { WAVE_UNIFORMS, wavesGLSL } from './waves.js';
 import { detailGLSL } from './detail.js';
 import { shadowGLSL } from './shadow.js';
 import { ripplesGLSL } from '../sim/ripples.js';
+import { wakeGLSL } from '../sim/wake.js';
 
 const vertexShader = /* glsl */`
 #include <lr_common>
@@ -17,6 +18,7 @@ const vertexShader = /* glsl */`
 #include <lr_shore>
 ${wavesGLSL}
 ${clipmapVertex}
+${wakeGLSL}
 out vec3 vRel;       // surface point: x/z relative to the camera, absolute height
 out vec2 vGrid;      // the same point before the waves moved it
 out vec4 vWeights;   // local height of each wave cascade
@@ -37,6 +39,8 @@ void main() {
   float hs = lrWaveHs(raw), a = ground - uSeaLevel;
   LrSwash sw = lrBeach(rel, shore, hs, a, 1.0);
   float y = uSeaLevel + d.y + lrShoreSurface(shore, min(a, 0.0), hs, sw);
+  // (Your boat's wake stands on the sea: the bow's wave, the hollow astern, the crests trailing back.)
+  { float wk = lrWakeIn(rel); if (wk > 0.0) y += lrWake(rel).r * wk * smoothstep(0.05, 0.4, -a); }
   // Over the strip of beach the swash can reach, ride just above the sand: the sheet is drawn on this.
   if (a > -0.3 && a < 1.0) y = max(y, ground + lrLift(length(vec3(rel.x, uCamY - ground, rel.y))) + sw.e);
   vGrid = rel; vWeights = w; vWaveMap = wm; vWaveY = d.y; vHs = hs;
@@ -57,6 +61,7 @@ ${detailGLSL}
 ${shadowGLSL}
 uniform vec4 uRing[6];        // rings you send out wading: x, z (detail coordinates), time, strength
 ${ripplesGLSL}
+${wakeGLSL}
 uniform vec4 uLeg[3];         // your shins (and the hand you have in it) where they stand in the water: x, z (detail coordinates), 1 if in water, your speed
 uniform sampler2D tRefr;      // copy of the opaque scene: rgb = lit bottom reflectance, a = water depth
 uniform sampler2D tWaterType; // 1 = lagoon water, 0 = clear ocean water
@@ -212,6 +217,10 @@ void main() {
   vec2 slope = vec2(0.0), var = vec2(0.0);
   float fold = 0.0;
   vec4 weights = vec4(vWeights.xyz, vWeights.w * lrGust(vRel.xz));                  // (the ripples come in gusts)
+  // Your boat's wake: where the hull and its wash have just been the small waves are calmed (a slick).
+  float inWake = lrWakeIn(vGrid);
+  vec4 wake = inWake > 0.0 ? lrWake(vGrid) * inWake : vec4(0.0);
+  weights.zw *= 1.0 - vec2(0.55, 0.85) * wake.b;
   for (int i = 0; i < 4; i++) {
     float t = uWaveTile[i];
     vec3 uvw = vec3(lrWaveUV(vGrid, i), float(i));
@@ -220,6 +229,7 @@ void main() {
     var += weights[i] * weights[i] * max(b.zw - b.xy * b.xy, 0.0);
     if (i < 2) fold += weights[i] * textureGrad(tWaveA, uvw, gx / t, gy / t).w;
   }
+  if (inWake > 0.0) slope += lrWakeSlope(vGrid) * inWake * smoothstep(0.05, 0.4, column);
   // Ripples too small for the cascades. Close up they are drawn (the last cascade read twice more, smaller);
   // from further off only the roughness they add is left, where there is wind on the water at all.
   float close = 1.0 - smoothstep(0.03, 0.15, px);
@@ -325,6 +335,7 @@ void main() {
   // ---- Foam.
   // Whitecaps: where the long waves pile the surface together (their horizontal motion converges at breaking crests).
   float foam = smoothstep(0.55, 0.85, -fold) * lrSaturate(uWind.z / 7.0 - 0.5);
+
   // Swash: a raft of bubbles made at the front as it runs up, thinning as they burst; out in the water only
   // where it is shallow enough for the little bore to break.
   float nearShore = fine * (1.0 - smoothstep(2.0, 12.0, shore)) * smoothstep(0.02, 0.12, vHs) * sw.open * (1.0 - smoothstep(0.0, 0.3, -aboveStill));
@@ -363,6 +374,16 @@ void main() {
     col = mix(col, 0.82 * tone * lit / PI, cover);
   }
   col += spray * close * lit / PI * 0.5;
+  if (wake.a > 0.01) {
+    // The wash of your boat's propeller and the water its hull throws aside: milky where it is fresh, breaking
+    // into streaks and then lace as it thins, the last of it single flecks. (Drawn as the surf's rafts are, it
+    // was white floes with hard edges.)
+    vec2 at = spot + uCamMod.xy;
+    float keep = 1.0 - smoothstep(0.03, 0.3, px);
+    float lace = 0.45 * lrNoise(at * 2.3 + 11.0) + 0.3 * lrNoise(at * 7.1 + vec2(0.0, uTime * 0.05)) + 0.25 * mix(0.5, lrNoise(at * 33.0 + vec2(uTime * 0.25, 0.0)), keep);
+    float cover = lrSaturate((wake.a * 1.15 - lace * (1.25 - 0.55 * wake.a)) * 2.5);
+    col = mix(col, (0.62 + 0.26 * lrSaturate(wake.a * 1.5)) * lit / PI, cover);
+  }
   if (churned > 0.01) {
     // What your legs and hands have churned, and the ruff at your skin: small bubbles, a centimetre across and
     // less, in a pattern of their own (the surf's rafts are metres wide: drawn with those, a ring two
@@ -397,7 +418,7 @@ export class Water {
     this.clipmap = new Clipmap({ quads: tier.block, yRange: [-4, 4] });
     this.material = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3, vertexShader, fragmentShader, side: THREE.DoubleSide, defines: { LR_SHADOW_TAPS: tier.fp.shadowTaps || 4 },
-      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.ripple, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow,
+      uniforms: uniformsFor([...CHUNK_UNIFORMS.common, ...CHUNK_UNIFORMS.geo, ...CHUNK_UNIFORMS.shore, ...CHUNK_UNIFORMS.detail, ...CHUNK_UNIFORMS.rings, ...CHUNK_UNIFORMS.ripple, ...CHUNK_UNIFORMS.shadow, ...CHUNK_UNIFORMS.optics, ...CHUNK_UNIFORMS.atmosphere, ...WAVE_UNIFORMS, ...CHUNK_UNIFORMS.cloudShadow, ...CHUNK_UNIFORMS.wake,
         'uFocusRel', 'uCompareX', 'uViewProj', 'tWaterType', 'uDebug', 'uRain'], { tRefr: { value: null }, uHullIn: { value: new THREE.Matrix4() }, uHullHalf: { value: new THREE.Vector3(0, 0, 0) } }),
     });
     this.mesh = new THREE.Mesh(this.clipmap.geometry, this.material);

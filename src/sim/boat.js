@@ -60,7 +60,7 @@ export class Boat {
 
   /** Set down afloat and at rest, with the sea level at height `sea`. */
   place({ x, z, heading = 0, sea = 0 }) {
-    Object.assign(this, { x, y: sea, z, heading, pitch: 0, roll: 0, vx: 0, vy: 0, vz: 0, turning: 0, pitching: 0, rolling: 0, throttle: 0, helm: 0, revs: 0, slam: 0, aground: 0, time: 0, left: 0, wet: 1 });
+    Object.assign(this, { x, y: sea, z, heading, pitch: 0, roll: 0, vx: 0, vy: 0, vz: 0, turning: 0, pitching: 0, rolling: 0, throttle: 0, helm: 0, revs: 0, slam: 0, aground: 0, time: 0, left: 0, wet: 1, down: 1 });
     /** What it is made fast by: lines, each from a place along it (`from`, x in its own frame) to a place in the world (`to`: [x, z]), `length` long. A line only pulls, and only when it is taut. */
     this.lines = [];
   }
@@ -80,6 +80,9 @@ export class Boat {
   /** Sixteen numbers, columns first: the boat's own frame to the world, less `origin` (the camera's [x, z]). */
   matrix(origin = [0, 0]) { const { fwd, right, up } = this.axes(); return [fwd[0], fwd[1], fwd[2], 0, up[0], up[1], up[2], 0, right[0], right[1], right[2], 0, this.x - origin[0], this.y, this.z - origin[1], 1]; }
 
+  /** How far it is up on the plane, 0..1. */
+  get planing() { return ease((this.speed - this.spec.planeFrom) / (this.spec.planeBy - this.spec.planeFrom)); }
+
   /** How fast it is going through the water, forwards (m/s). */
   get speed() { return this.vx * Math.sin(this.heading) - this.vz * Math.cos(this.heading); }
 
@@ -87,7 +90,7 @@ export class Boat {
    * Moves it on by dt seconds, in fixed steps of a hundred-and-twentieth (so that a faster or slower display
    * changes nothing).
    * @param {number} dt
-   * @param {{throttle?: number, helm?: number, crew?: {mass: number, x: number, z: number}[], wind?: number[]}} input
+   * @param {{throttle?: number, helm?: number, crew?: {mass: number, x: number, z: number}[], wind?: number[], forces?: {f: number[], at?: number}[]}} input
    *   throttle -1 (astern) .. 1; helm -1 (to port) .. 1 (to starboard: the bow goes right); who is aboard and where;
    *   the wind over the water (m/s: [x, z])
    * @param {(x: number, z: number) => {h: number, v: number}} sea  the surface there: its height, and how fast it is rising
@@ -165,6 +168,10 @@ export class Boat {
       const pull = Math.max(0, Math.min(6000, 1500 * over + 900 * away)), px = pull * dx / far, pz = pull * dz / far, along = px * sh - pz * ch, across = px * ch + pz * sh;
       fx += along; fz += across; mYaw += across * (line.from - this.cg);
     }
+    // Pushed: by a pole on the bottom, by you leaning on it. Each a force in the world ([east, south], N) at a place along it.
+    for (const f of input.forces || []) { const along = f.f[0] * sh - f.f[1] * ch, across = f.f[0] * ch + f.f[1] * sh; fx += along; fz += across; mYaw += across * ((f.at || 0) - this.cg); }
+    // (How far the outboard's foot is down in the water, 0..1: for whoever wants to know why it does not push.)
+    this.down = down;
     // The wind on its side and its bow.
     if (input.wind) { const ax = input.wind[0] - this.vx, az = input.wind[1] - this.vz, a = Math.hypot(ax, az); fx += S.wind[0] * S.wind[1] * a * (ax * sh - az * ch); fz += S.wind[0] * a * (ax * ch + az * sh); }
     // Moved on.

@@ -94,6 +94,10 @@ dialog.about button { font: inherit; padding: 0.4rem 1rem; border-radius: 999px;
 /* What you steer by, in your boat (src/ui/helm.js draws it): top middle, out of the way of the bow. */
 .helm { position: absolute; left: 50%; top: 0.8rem; transform: translateX(-50%); display: none; filter: drop-shadow(0 0.4rem 1rem rgba(0, 10, 20, 0.35)); }
 .helm.on { display: block; }
+/* The chart (M): over everything but the opening screen (src/ui/chart.js draws it). */
+.chart { position: fixed; inset: 0; z-index: 30; pointer-events: auto; }
+.chart[hidden] { display: none; }
+.chart canvas { display: block; }
 
 @media (max-width: 640px) {
   /* (Beside the buttons, not under them: with three buttons the lowest one was covered by the hint.) */

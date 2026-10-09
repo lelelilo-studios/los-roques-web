@@ -123,7 +123,7 @@ export function buildWalkHud(root, onLeave, onSound, soundOn) {
         el('span', { text: 'Click to look around · W A S D walk · Shift run · Tab back to the air' }), el('br'),
         el('span', { text: 'C crouch (or dive) · X sit down or get up · Space: your toes (in the sea, come up)' }), el('br'),
         el('span', { text: 'V see yourself, and back · seeing yourself, hold Alt and move the mouse to look round her' }), el('br'),
-        el('span', { text: 'B climbs into your boat (it is afloat off the sand, ahead and to your right) and out of it' }), el('br'),
+        el('span', { text: 'B climbs into your boat (it is afloat off the sand, ahead and to your right) and out of it · M unfolds the chart' }), el('br'),
         el('span', { text: 'Crouched or seated: hold the mouse button to take sand or water; let go and it runs out by itself' }), el('br'),
         el('span', { text: 'Holding some: hold the button and move the mouse to tip your hand · a short click lets it all go' }), el('br'),
         el('span', { text: 'The wheel (or Q / E) parts and closes your fingers · the other button (or F) is your left hand' })),
