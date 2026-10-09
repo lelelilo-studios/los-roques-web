@@ -33,6 +33,7 @@ uniform float uL, uN, uDt, uC;
 uniform vec4 uHull, uHullWas; // the boat's middle (metres, modulo uL) and the way it heads (sine, cosine): now, and a step ago
 uniform vec4 uGo;             // its speed through the water (m/s, astern negative), how far it planes (0..1), how much of it is in the water (0..1), how hard the propeller is driven (0..1)
 uniform float uTime;
+uniform float uRaise;      // 1: the water is raised and hollowed; 0: only its foam and its calm are kept (the simplest setting)
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 float lrHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -54,7 +55,7 @@ void main() {
   float m = lrHull(p), before = lrHull(was), speed = abs(uGo.x);
   // The hull comes: the water it comes into is raised by what the hull draws there (less as it planes and
   // rides on its after part), and falls into the hollow it leaves.
-  float draws = ${WAKE.push.toFixed(3)} * uGo.z * (1.0 - 0.5 * uGo.y) * smoothstep(0.3, 2.5, speed);
+  float draws = uRaise * ${WAKE.push.toFixed(3)} * uGo.z * (1.0 - 0.5 * uGo.y) * smoothstep(0.3, 2.5, speed);
   float h = c.r + (m - before) * draws;
   v *= exp(-uDt * 0.16);
   h = (h + v * uDt) * exp(-uDt * 0.05);
@@ -98,15 +99,15 @@ vec2 lrWakeSlope(vec2 p) {
 export const WAKE_UNIFORMS = ['tWake', 'uWake', 'uWakeC'];
 
 export class Wake {
-  /** @param {THREE.WebGLRenderer} renderer  @param {number} size  texels across */
-  constructor(renderer, size = 768) {
+  /** @param {THREE.WebGLRenderer} renderer  @param {number} size  texels across  @param {boolean} flat  no heights: foam and calm only */
+  constructor(renderer, size = 768, flat = false) {
     this.renderer = renderer; this.size = size; this.L = WAKE.L;
     const target = () => new THREE.WebGLRenderTarget(size, size, { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, stencilBuffer: false,
       minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, generateMipmaps: false, colorSpace: THREE.NoColorSpace });
     this.targets = [target(), target()]; this.now = 0;
     this.pass = new FullscreenPass(simFragment, {
       tPrev: { value: null }, uCentre: { value: new THREE.Vector2() }, uL: { value: this.L }, uN: { value: size }, uDt: { value: 0 }, uC: { value: 1 }, uTime: { value: 0 },
-      uHull: { value: new THREE.Vector4(0, 0, 0, 1) }, uHullWas: { value: new THREE.Vector4(0, 0, 0, 1) }, uGo: { value: new THREE.Vector4() },
+      uHull: { value: new THREE.Vector4(0, 0, 0, 1) }, uHullWas: { value: new THREE.Vector4(0, 0, 0, 1) }, uGo: { value: new THREE.Vector4() }, uRaise: { value: flat ? 0 : 1 },
     });
     this.zero = new Float32Array([0, 0, 0, 0]); this.was = null; this.quiet = 1e9; this.live = false;
     this.reset();

@@ -3,7 +3,8 @@
 // the seabed, and moves the hull on them. world/penero.js draws it; tests/boat.test.mjs runs it.
 //
 // What is worked out, and what is laid down:
-//   worked out   it floats on ten points of its bottom, each pushed up by how deep it is in the sea there and
+//   worked out   it floats on ten points of its bottom, each pushed up by how deep it is in the sea there (and, when
+//                it planes, harder for its depth, by the share of its weight its speed carries) and
 //                held back by how fast it is going into it; so it sits lower with you aboard, heaves, pitches and
 //                rolls on the waves that are drawn, slaps down off a crest, and takes the ground where the bed
 //                comes up under it. The outboard pushes where it points, the hull resists going sideways far
@@ -34,12 +35,14 @@ export const PENERO = {
   power: 29400, push: 2600, efficiency: 0.55, astern: 0.28, tiller: 32 * Math.PI / 180,
   // What the water does to it by its speed (see the head of this file): resistance = drag * v2 + hump * bell;
   // the bow's rise, and the lean into a turn.
+  inWaves: 128,                        // what a sea adds to that: N for each m/s, for each metre the waves stand over 0.6 m, squared (my figure: it brings her down to 8 m/s in 1.6 m of sea)
   drag: 8.6, slow: 40, hump: 1380, humpAt: 4.5, humpWide: 1.25,     // (`slow`: N for each m/s, what stops it drifting on for ever in neutral)
   bowUp: [6.5 * Math.PI / 180, 5.2, 1.3, 2.6 * Math.PI / 180],      // most, at this speed, over this spread; and planing
   lift: 0.5, planeFrom: 4.6, planeBy: 9.5,                          // the share of its weight its speed carries when planing
+  planeDepth: 0.1,                     // and how deep its bottom is then (m): what its speed carries grows with how deep each part of the bottom is, so that it meets a wave more firmly at speed, not less
   lean: 0.5,                           // radians for each g of turn
   side: [2.4, 3.2], sideAt: -0.45,     // how the hull resists going sideways (1/s, 1/m), and where that acts (x)
-  turnHold: [1.08, 1.6],               // how its turning is held back (1/s, per radian)
+  turnHold: [1.3, 1.6],               // how its turning is held back (1/s, per radian)
   wind: [3.4, 0.25],                   // what the air does to it broadside, for each m/s of wind over it, squared (N: half the air's density by six square metres of side), and the share of that bow-on
 };
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v)), ease = t => { const k = clamp(t, 0, 1); return k * k * (3 - 2 * k); };
@@ -50,6 +53,7 @@ export class Boat {
     const S = spec;
     // Its ten points, and how deep each is when it lies at its marks (so that the waterline is y = 0 then).
     const total = S.stations.reduce((a, q) => a + q[2], 0), d0 = S.mass * G / (RHO * G * S.bottom);
+    this.d0 = d0;
     this.points = S.stations.flatMap(([x, half, share]) => [-1, 1].map(side => ({ x, z: side * half * 0.72, y: -d0, area: S.bottom * share / total / 2 })));
     // (Its weight is over the middle of what holds it up: it lies level.)
     this.cg = this.points.reduce((a, p) => a + p.x * p.area, 0) / S.bottom;
@@ -90,9 +94,9 @@ export class Boat {
    * Moves it on by dt seconds, in fixed steps of a hundred-and-twentieth (so that a faster or slower display
    * changes nothing).
    * @param {number} dt
-   * @param {{throttle?: number, helm?: number, crew?: {mass: number, x: number, z: number}[], wind?: number[], forces?: {f: number[], at?: number}[]}} input
+   * @param {{throttle?: number, helm?: number, crew?: {mass: number, x: number, z: number}[], wind?: number[], forces?: {f: number[], at?: number}[], waves?: number}} input
    *   throttle -1 (astern) .. 1; helm -1 (to port) .. 1 (to starboard: the bow goes right); who is aboard and where;
-   *   the wind over the water (m/s: [x, z])
+   *   the wind over the water (m/s: [x, z]); `waves`: how high the sea is running there (m, significant height)
    * @param {(x: number, z: number) => {h: number, v: number}} sea  the surface there: its height, and how fast it is rising
    * @param {((x: number, z: number) => number) | null} bed  the seabed's height there
    */
@@ -113,14 +117,18 @@ export class Boat {
     for (const c of input.crew || []) { fy -= c.mass * G; mPitch -= c.mass * G * (c.x - this.cg); mRoll += c.mass * G * c.z; }
     // Afloat: each point pushed up by its depth in the sea there, and held back by how fast it is going into it.
     // Planing, its speed carries a share of its weight and the sea that much less.
-    const planing = ease((u - S.planeFrom) / (S.planeBy - S.planeFrom)), carried = S.lift * planing;
+    // (`firm`: how much stiffer on the water that leaves it than it is lying still.)
+    const planing = ease((u - S.planeFrom) / (S.planeBy - S.planeFrom)), carried = S.lift * planing, share = S.mass * G / this.points.length, firm = 1 - carried + carried * this.d0 / S.planeDepth;
     let wet = 0, ground = 0;
     for (const p of this.points) {
       const at = this.toWorld([p.x, p.y, p.z]), w = sea(at[0], at[2]), depth = clamp(w.h - at[1], 0, S.depth);
       // (How fast this point is going down: the hull's own fall, and its pitching and rolling.)
       const fall = -(this.vy + this.pitching * (p.x - this.cg) - this.rolling * p.z);
       if (depth > 0) {
-        const lift = Math.max(0, RHO * G * p.area * depth * (1 - carried) + this.damp * p.area * (fall + w.v) * Math.min(1, depth / 0.05));
+        // (The water's hold on how fast it goes in is no more than half as much again as that point's share of the
+        // boat's weight: a bottom coming down on a wave is met by water that gives, not by a floor.)
+        const held = Math.min(this.damp * p.area * (fall + w.v) * Math.min(1, depth / 0.14), 1.5 * S.mass * G / this.points.length);
+        const lift = Math.max(0, RHO * G * p.area * depth * (1 - carried) + carried * share * Math.min(3, depth / S.planeDepth) + held);
         fy += lift; mPitch += lift * (p.x - this.cg); mRoll -= lift * p.z; wet++;
       }
       // Aground: the bed under this point pushes it up, and drags at it.
@@ -135,7 +143,6 @@ export class Boat {
         }
       }
     }
-    fy += carried * S.mass * G * Math.min(1, wet / 6);
     this.wet = wet / this.points.length; this.aground = ground / this.points.length;
     // The outboard: it pushes where it points, as hard as its power gives at this speed; tilted up in the shallows.
     const stern = this.toWorld([S.engine, 0, 0]), water = bed ? sea(stern[0], stern[2]).h - bed(stern[0], stern[2]) : 99, down = ease((water - S.kick * 0.6) / (S.kick * 0.4)) * Math.min(1, wet / 4);
@@ -146,7 +153,10 @@ export class Boat {
     // The water's resistance: a hump as it climbs out of its own wave, then what a planing hull meets.
     const bell = Math.exp(-(((Math.abs(u) - S.humpAt) / S.humpWide) ** 2)), resist = (S.drag * u * u + S.slow * Math.abs(u) + S.hump * bell * Math.min(1, Math.abs(u) / 1.5)) * Math.min(1, wet / 5 + 0.15);
     // (Going astern it pushes its flat transom through the water.)
-    fx -= Math.sign(u) * resist * (u < 0 ? 3 : 1);
+    // (And the waves: driving into a sea costs speed, the more the higher it runs, by the square of its height.
+    // In the lagoon it is nothing; outside the reef, in a metre and a half of sea, she will not hold the plane.)
+    const rough = Math.max(0, (input.waves || 0) - 0.6);            // (waves under 0.6 m, the lagoon's, cost it nothing)
+    fx -= Math.sign(u) * (resist * (u < 0 ? 3 : 1) + S.inWaves * rough * rough * Math.abs(u) * Math.min(1, wet / 5 + 0.15));
     // Sideways it hardly goes: the hull's side force, which acts aft of its middle and so brings the bow round to the way it is going.
     // (Under way the hull holds its line as a keel does, the harder the faster it goes; lying still it is only pushed broadside through the water, and drifts.)
     const slip = side + this.turning * (S.sideAt - this.cg), hold = -S.mass * (S.side[0] * (0.12 + 0.88 * ease(Math.abs(u) / 4)) + S.side[1] * Math.abs(slip)) * slip * Math.min(1, wet / 5 + 0.1);
@@ -156,8 +166,8 @@ export class Boat {
     const up = S.bowUp[0] * Math.exp(-(((Math.abs(u) - S.bowUp[1]) / S.bowUp[2]) ** 2)) * Math.min(1, Math.abs(u) / 2) + S.bowUp[3] * planing;
     // (And held near it by more than the sea's own stiffness, which falls away as the bow lifts its forward points clear: left to that alone the bow went on up to eighteen degrees.)
     const afloat = Math.min(1, wet / 6), over = S.lean * clamp(u * this.turning / G, -0.5, 0.5);
-    mPitch += (this.stiff.pitch * (1 - carried) * up + 1.5 * this.stiff.pitch * (up - this.pitch) * Math.min(1, Math.abs(u) / 2)) * afloat;
-    mRoll += (this.stiff.roll * (1 - carried) * over + 1.5 * this.stiff.roll * (over - this.roll) * Math.min(1, Math.abs(u) / 2)) * afloat;
+    mPitch += (this.stiff.pitch * firm * up + 1.5 * this.stiff.pitch * (up - this.pitch) * Math.min(1, Math.abs(u) / 2)) * afloat;
+    mRoll += (this.stiff.roll * firm * over + 1.5 * this.stiff.roll * (over - this.roll) * Math.min(1, Math.abs(u) / 2)) * afloat;
     // Made fast: a line pulls its end of the boat towards where it is made fast, once it is taut (it gives like rope: a metre of stretch is all it has).
     for (const line of this.lines) {
       const ax = this.x + sh * line.from, az = this.z - ch * line.from, dx = line.to[0] - ax, dz = line.to[1] - az, far = Math.hypot(dx, dz), over = far - line.length;
@@ -165,7 +175,7 @@ export class Boat {
       if (over <= 0) continue;
       // (How fast that end is going away from where the line is made fast.)
       const ex = this.vx + ch * this.turning * line.from, ez = this.vz + sh * this.turning * line.from, away = -(ex * dx + ez * dz) / far;
-      const pull = Math.max(0, Math.min(6000, 1500 * over + 900 * away)), px = pull * dx / far, pz = pull * dz / far, along = px * sh - pz * ch, across = px * ch + pz * sh;
+      const pull = Math.max(0, Math.min(6000, 3000 * over + 900 * away)), px = pull * dx / far, pz = pull * dz / far, along = px * sh - pz * ch, across = px * ch + pz * sh;
       fx += along; fz += across; mYaw += across * (line.from - this.cg);
     }
     // Pushed: by a pole on the bottom, by you leaning on it. Each a force in the world ([east, south], N) at a place along it.
@@ -176,7 +186,9 @@ export class Boat {
     if (input.wind) { const ax = input.wind[0] - this.vx, az = input.wind[1] - this.vz, a = Math.hypot(ax, az); fx += S.wind[0] * S.wind[1] * a * (ax * sh - az * ch); fz += S.wind[0] * a * (ax * ch + az * sh); }
     // Moved on.
     const ay = fy / S.heaveMass, ax = fx / S.mass, az = fz / S.mass;
-    this.slam = Math.max(this.slam, Math.abs(ay) / G);
+    // (How hard it is thrown up or let fall, in g, as it is felt: over a fortieth of a second, not in one step of a hundred-and-twentieth.)
+    this.jolt = (this.jolt || 0) + (Math.abs(ay) / G - (this.jolt || 0)) * (1 - Math.exp(-h / 0.025));
+    this.slam = Math.max(this.slam, this.jolt);
     this.vy += ay * h;
     const nu = u + ax * h, ns = side + az * h;
     this.vx = nu * sh + ns * ch; this.vz = -nu * ch + ns * sh;

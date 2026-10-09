@@ -307,7 +307,7 @@ export async function start(canvas, onProgress = () => {}) {
   };
 
   // ---- your boat: a peñero that floats on the sea as it is drawn (sim/boat.js), drawn by world/penero.js
-  const boat = new Boat(), penero = new Penero(tier.fp.shadowTaps || 4), wake = new Wake(renderer, tier.fp.wake || 512);
+  const boat = new Boat(), penero = new Penero(tier.fp.shadowTaps || 4), wake = new Wake(renderer, tier.fp.wake || 512, !!tier.fp.wakeFlat);
   opaque.add(...penero.meshes);
   penero.hull.visible = penero.outboard.visible = penero.tiller.visible = false;
   const afloat = { placed: false, ghost: false, driven: false, throttle: 0, helm: 0, neutral: false, sample: { h: 0, v: 0 }, spray: 0, tilt: 1, stake: null };
@@ -335,7 +335,8 @@ export async function start(canvas, onProgress = () => {}) {
     while (up < 12 && deep(-up) > -0.12) up += 0.25;
     boat.place({ x: shore.x + sx * (d + 3.8), z: shore.z + sz * (d + 3.8), heading: a, sea });
     afloat.stake = [shore.x - sx * (up + 0.6), shore.z - sz * (up + 0.6)];
-    boat.lines = [{ from: 3.7, to: [shore.x + sx * (d + 18), shore.z + sz * (d + 18)], length: 10.9 }, { from: -3.7, to: afloat.stake, length: d + up + 0.6 + 0.6, stake: true }];
+    // (Both lines all but taut: with half a metre of slack in each it wandered four metres either way in the breeze.)
+    boat.lines = [{ from: 3.7, to: [shore.x + sx * (d + 18), shore.z + sz * (d + 18)], length: 10.45 }, { from: -3.7, to: afloat.stake, length: d + up + 0.6 + 0.05, stake: true }];
     afloat.placed = true; afloat.throttle = afloat.helm = 0; afloat.tilt = 1;
     return true;
   };
@@ -353,7 +354,8 @@ export async function start(canvas, onProgress = () => {}) {
       }
       return best;
     };
-    return nearest([40, -40, 34, -34, 28, -28, 22, -22, 16, -16, 8, -8, 0]) || nearest([50, -50, 65, -65, 80, -80, 100, -100, 130, -130, 180]) || { x: spot.x, z: spot.z };
+    // (Within thirty degrees first: in a window that is not wide, forty is off its edge.)
+    return nearest([30, -30, 24, -24, 18, -18, 12, -12, 6, -6, 0]) || nearest([40, -40, 50, -50, 65, -65, 80, -80, 100, -100, 130, -130, 180]) || { x: spot.x, z: spot.z };
   };
   /** Your boat for this frame: moved on by dt, and put where it is in the picture. */
   // ---- finding your way: the seabed read for the chart and for the way by water (sim/route.js: a few
@@ -422,7 +424,7 @@ export async function start(canvas, onProgress = () => {}) {
     const forces = [], sh = Math.sin(boat.heading), ch = Math.cos(boat.heading);
     if (board.k >= 1 && Math.abs(afloat.throttle) > 0.15 && boat.down < 0.6) { const f = Math.sign(afloat.throttle) * 750 * (1 - boat.down); forces.push({ f: [sh * f, -ch * f], at: -2 }); }
     if (afloat.pushed && clock.time - afloat.pushed.at < 0.1) { const p = afloat.pushed; forces.push({ f: [p.x * 420, p.z * 420], at: Math.max(-3.6, Math.min(3.6, p.along)) }); }
-    boat.step(dt, { throttle: afloat.throttle, helm: afloat.helm, forces, crew: board.k > 0.5 || afloat.ghost ? [{ mass: 58, x: ABOARD.seat[0], z: ABOARD.seat[2] }] : [], wind: [shared.uWind.value.x * shared.uWind.value.z, shared.uWind.value.y * shared.uWind.value.z] }, seaFor, bedFor);
+    boat.step(dt, { throttle: afloat.throttle, helm: afloat.helm, forces, waves: seaAt(boat.x, boat.z).hs, crew: board.k > 0.5 || afloat.ghost ? [{ mass: 58, x: ABOARD.seat[0], z: ABOARD.seat[2] }] : [], wind: [shared.uWind.value.x * shared.uWind.value.z, shared.uWind.value.y * shared.uWind.value.z] }, seaFor, bedFor);
     // The boats that lie at anchor: yours does not go through them. It is pushed off, with a knock.
     { const sh = Math.sin(boat.heading), ch = Math.cos(boat.heading);
       for (const f of boats.fleets) {
@@ -445,7 +447,7 @@ export async function start(canvas, onProgress = () => {}) {
       }
     }
     // (Its bottom coming down on the water: heard, no oftener than three times a second.)
-    if (boat.slam > 1.25 && clock.time - (afloat.slapped ?? -9) > 0.32) { afloat.slapped = clock.time; sound.slap(boat.slam, 1 / (1 + (Math.hypot(boat.x - rig.own.x, boat.z - rig.own.z) / 14) ** 2)); }
+    if (boat.slam > 0.9 && clock.time - (afloat.slapped ?? -9) > 0.32) { afloat.slapped = clock.time; sound.slap(boat.slam, 1 / (1 + (Math.hypot(boat.x - rig.own.x, boat.z - rig.own.z) / 14) ** 2)); }
   };
   /** Your boat put where it is in the picture: after the camera has its place. */
   const drawBoat = dt => {
@@ -472,7 +474,7 @@ export async function start(canvas, onProgress = () => {}) {
     // Spray: drops thrown out from where each side of its bottom meets the water, once it is going; and a burst
     // from under the bow when it comes down hard. (How wet its topsides are follows.)
     if (falling && dt > 0) {
-      const u = boat.speed, go = Math.min(1, Math.max(0, (u - 4) / 5)), r = falling.random, { fwd, right } = boat.axes(), hard = boat.slam > 1.1 && clock.time - (afloat.burst ?? -9) > 0.3 ? Math.min(1, (boat.slam - 1.1) / 1.2) : 0;
+      const u = boat.speed, go = Math.min(1, Math.max(0, (u - 4) / 5)), r = falling.random, { fwd, right } = boat.axes(), hard = boat.slam > 0.8 && clock.time - (afloat.burst ?? -9) > 0.3 ? Math.min(1, (boat.slam - 0.8) / 1.0) : 0;
       if (hard) afloat.burst = clock.time;
       afloat.sprayOwed = (afloat.sprayOwed || 0) + (420 * go * go * boat.wet + (hard ? 300 * hard / dt : 0)) * dt;
       for (; afloat.sprayOwed >= 1; afloat.sprayOwed--) {
@@ -648,13 +650,17 @@ export async function start(canvas, onProgress = () => {}) {
     const side = boat.toWorld([SEAT[0] + 0.1, 0, 1.45]), sea = seaFor(side[0], side[2]).h, bed = bedFor(side[0], side[2]), deep = sea - bed;
     const stands = deep < walker.stand - 0.42;
     board.from = { x: side[0], z: side[2], y: stands ? bed : sea + 0.1 - walker.stand, heading: boat.heading + Math.PI / 2, body: walker.stand, depth: deep };
-    board.to = 0; if (now) board.k = 0;
+    board.to = 0;
+    if (now) { const f = board.from; board.k = 0; walker.carried = null; walker.seated = 0; walker.sitting = false; walker.x = f.x; walker.z = f.z; walker.heading = f.heading; walker.body = walker.bodyTo = f.body; walker.eyeY = f.y + f.body; walker.under0 = f.y; }
     afloat.throttle = 0; afloat.helm = 0;
-    // (Left to itself it lies to an anchor let go over the bow: three times the depth of line and a little more.)
-    const bow = boat.toWorld([3.7, 0, 0]), out = 5 + 3 * Math.max(0.4, seaFor(bow[0], bow[2]).h - bedFor(bow[0], bow[2])), sh = Math.sin(boat.heading), ch = Math.cos(boat.heading);
-    // (Let go on to a beach, it is a stake in the sand that holds the line.)
-    { const to = [bow[0] + sh * out, bow[2] - ch * out]; boat.lines = [{ from: 3.7, to, length: out + 0.5, stake: bedFor(to[0], to[1]) > shared.uSeaLevel.value + 0.03 }]; }
+    anchorNow();
+    saveHash();
     return true;
+  }
+  /** Left to itself it lies to an anchor let go over the bow: three times the depth of line and a little more. (Let go on to a beach, it is a stake in the sand that holds the line.) */
+  function anchorNow() {
+    const bow = boat.toWorld([3.7, 0, 0]), out = 5 + 3 * Math.max(0.4, seaFor(bow[0], bow[2]).h - bedFor(bow[0], bow[2])), sh = Math.sin(boat.heading), ch = Math.cos(boat.heading), to = [bow[0] + sh * out, bow[2] - ch * out];
+    boat.lines = [{ from: 3.7, to, length: out + 0.5, stake: bedFor(to[0], to[1]) > shared.uSeaLevel.value + 0.03 }];
   }
   /** The throttle and the helm, from the keys you walk with. */
   const helmFrom = (dt, input) => {
@@ -807,7 +813,18 @@ export async function start(canvas, onProgress = () => {}) {
         walker.place({ x: spot.x, z: spot.z, yaw: (spot.yaw ?? 0) * Math.PI / 180, look: (spot.pitch ?? -4) * Math.PI / 180, height: Math.min(spot.height ?? walker.stand, walker.stand), eye: spot.eye ?? null });
         rig.setMode('walk');
         // (Your boat waits afloat off the beach near where you first set foot, ahead of you and to your right.)
-        if (!afloat.placed) { const m = mooringFor(spot); moorBoat(m.x, m.z); }
+        if (!afloat.placed) {
+          // Where you left it, if the link says or the browser remembers, and it is afloat there and not far from
+          // where you are put down (left at another cay, it has been brought round to you); or else moored off
+          // the sand in your view.
+          let left = boatLink;
+          if (!left && !params.freeze) try { const b = (localStorage.getItem('lr-boat') || '').split(',').map(Number); if (b.length >= 3 && b.every(Number.isFinite)) left = { x: b[0], z: b[1], heading: b[2] * Math.PI / 180, aboard: false }; } catch { /* no storage */ }
+          const afloatThere = left && shared.uSeaLevel.value - ground.heightAt(left.x, left.z) > 0.35 && (left.said || Math.hypot(left.x - spot.x, left.z - spot.z) < 400);
+          if (afloatThere) {
+            boat.place({ x: left.x, z: left.z, heading: left.heading, sea: shared.uSeaLevel.value }); afloat.placed = true; afloat.tilt = 1; anchorNow();
+            if (left.aboard && Math.hypot(left.x - spot.x, left.z - spot.z) < 6) boarding(true, true);
+          } else { const m = mooringFor(spot); moorBoat(m.x, m.z); }
+        }
         // (A link, or a test, may put you down already seeing yourself from behind.)
         if (spot.third !== undefined) rig.behind.set(!!spot.third, true);
         status.walk = true; hud?.classList.add('on'); if (labels) labels.enabled = false; syncPanel?.(status); saveHash();
@@ -831,18 +848,27 @@ export async function start(canvas, onProgress = () => {}) {
 
   // ---- the view in the URL (so a link reopens the same scene)
   let hashTimer = 0;
+  let hashWritten = 0;
   function saveHash() {
     if (params.freeze) return;
     clearTimeout(hashTimer);
-    hashTimer = setTimeout(writeHash, 400);
+    // (Written when you have been still for a moment; and, in your boat, which is never quite still, every three seconds at least.)
+    if (board.k >= 1 && performance.now() - hashWritten > 3000) writeHash(); else hashTimer = setTimeout(writeHash, 400);
   }
   writeHash = () => {
     if (params.freeze) return;
+    hashWritten = performance.now();
     const c = rig.get(), h = new URLSearchParams();
     // (A fifth number, 3: seeing yourself from behind.)
     if (rig.mode === 'walk') h.set('p', [walker.x.toFixed(1), walker.z.toFixed(1), (walker.yaw * 180 / Math.PI).toFixed(0), (walker.look * 180 / Math.PI).toFixed(0), ...(rig.behind.want ? [3] : [])].join(','));
     else h.set('c', [c.x.toFixed(0), c.z.toFixed(0), c.dist.toFixed(0), c.yaw.toFixed(1), c.pitch.toFixed(1)].join(','));
     h.set('t', env.hours.toFixed(2)); h.set('m', String(env.month)); h.set('w', env.weather);
+    // b = your boat: x, z, heading (degrees); and 1 if you are in it. (Kept by the browser too, for when you come back.)
+    if (afloat.placed && !afloat.ghost && rig.mode === 'walk') {
+      const b = [boat.x.toFixed(1), boat.z.toFixed(1), (boat.heading * 180 / Math.PI).toFixed(0), ...(board.k >= 1 ? [1] : [])].join(',');
+      h.set('b', b);
+      try { localStorage.setItem('lr-boat', b); } catch { /* no storage: the link still says */ }
+    }
     history.replaceState(null, '', `#${h}`);
   };
   function loadHash() {
@@ -851,12 +877,13 @@ export async function start(canvas, onProgress = () => {}) {
     if (h.has('t') && Number.isFinite(Number(h.get('t')))) env.hours = Number(h.get('t'));
     if (h.has('m') && Number(h.get('m')) >= 0 && Number(h.get('m')) < 12) env.month = Math.floor(Number(h.get('m')));
     if (h.has('w')) env.weather = h.get('w');
+    { const b = (h.get('b') || '').split(',').map(Number); if (b.length >= 3 && b.every(Number.isFinite)) boatLink = { x: b[0], z: b[1], heading: b[2] * Math.PI / 180, aboard: b[3] === 1, said: true }; }
     // p = a first-person spot: x, z, heading, look (degrees); and 3 if you were seeing yourself from behind.
     const w = (h.get('p') || '').split(',').map(Number);
     if (w.length >= 3 && w.every(Number.isFinite)) { walkLink = { x: w[0], z: w[1], yaw: w[2], pitch: w[3] ?? -4, third: w[4] === 3 }; return true; }
     return c.length === 5;
   }
-  let walkLink = null;
+  let walkLink = null, boatLink = null;
 
   const dynamic = new DynamicResolution(1, 0.5);
   function resize() {
@@ -1170,7 +1197,7 @@ export async function start(canvas, onProgress = () => {}) {
         const over = goingOver(dt, body.joints, 'stand', { x: offX, y: you.y, z: offZ, yaw: you.heading, pitch: 0 });
         // (Folded into the deepest squat she is left out of her own eyes' picture; from behind she is there to be seen.)
         figure.mesh.visible = !you.folded || rig.out > 0.02; figure.setPose(over.joints === you.rigFor && posedAt === frames ? figureRig.matrices : figureRig.pose(over.joints, you.eyeUp), figureRig.eyeNow[1]); figure.place(offX, you.y, offZ, you.heading, 0, tilt);
-        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = waterOver(); figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hairModel.show(figure.mesh.visible ? hairSeen() : 0, wetHair(dt));
+        figure.mesh.material.uniforms.uShowHead.value = headSeen(); figure.mesh.material.uniforms.uWaterY.value = you.waterY = board.k > 0.5 ? -1e9 : waterOver();      // (in your boat your feet are under the sea's level, and dry) figure.mesh.material.uniforms.uShowUnder.value = rig.eye.y > walker.surf ? 1 : 0; figure.hairModel.show(figure.mesh.visible ? hairSeen() : 0, wetHair(dt));
         // Her eyes: her head has nodded six tenths of the way to where you look, and her eyes take the rest. With the
         // camera held round in front of her for a moment (Alt), she glances at it.
         { const j = body.joints, at = rig.behind.held && rig.out > 0.9 ? (you.glance = (you.glance || 0) + dt) : (you.glance = 0);
@@ -1517,8 +1544,11 @@ export async function start(canvas, onProgress = () => {}) {
     /** Where the camera is and what is under it: { at, own (her eye), out (0 her eyes .. 1 behind her), away, ground, sea (heights there), under (the picture is the underwater one), diving } */
     camera: () => { const f = rig.floorAt(rig.eye.x, rig.eye.z); return { at: [rig.eye.x, rig.eye.y, rig.eye.z], own: [rig.own.x, rig.own.y, rig.own.z], out: rig.out, away: rig.away, ground: f.ground, sea: f.sea, under: shared.uUnderEye.value > 0.5, diving: !!walker.under, length: rig.behind.len, lift: rig.behind.lift, block: rig.behind.block, fov: rig.camera.fov }; },
     /** Your boat (tests): where it is and how it lies; `moor(x, z)` sets it down off the beach nearest a place. */
-    boat: () => (afloat.placed ? { x: boat.x, y: boat.y, z: boat.z, heading: boat.heading, pitch: boat.pitch, roll: boat.roll, speed: boat.speed, turning: boat.turning, throttle: boat.throttle, helm: boat.helm, revs: boat.revs, slam: boat.slam, aground: boat.aground, wet: boat.wet, aboard: board.k, sea: seaFor(boat.x, boat.z).h, depth: seaFor(boat.x, boat.z).h - bedFor(boat.x, boat.z), lines: boat.lines.map(l => ({ taut: l.taut || 0, length: l.length })), triangles: penero.triangles } : null),
-    moor: (x, z) => moorBoat(x, z),
+    boat: () => (afloat.placed ? { x: boat.x, y: boat.y, z: boat.z, heading: boat.heading, pitch: boat.pitch, roll: boat.roll, speed: boat.speed, turning: boat.turning, throttle: boat.throttle, helm: boat.helm, revs: boat.revs, slam: boat.slam, aground: boat.aground, wet: boat.wet, aboard: board.k, waves: seaAt(boat.x, boat.z).hs, sea: [-3, -1.5, 0, 1.5, 3].reduce((a, x) => a + seaFor(boat.x + Math.sin(boat.heading) * x, boat.z - Math.cos(boat.heading) * x).h / 5, 0), depth: seaFor(boat.x, boat.z).h - bedFor(boat.x, boat.z), lines: boat.lines.map(l => ({ taut: l.taut || 0, length: l.length })), triangles: penero.triangles } : null),
+    moor(x, z) { if (x === undefined) { const m = mooringFor({ x: walker.x, z: walker.z, yaw: walker.yaw * 180 / Math.PI }); x = m.x; z = m.z; } afloat.ghost = afloat.driven = afloat.running = false; passage = null; rig.outside = null; return moorBoat(x, z); },
+    /** For tests: a point of your boat's own frame in the world; and how far your left hand is from the tiller's grip, aboard (m). */
+    boatPoint: p => boat.toWorld(p),
+    tillerGap: () => (board.k >= 1 && figureRig && you.on ? (h => (g => Math.hypot(h[0] - g[0], h[1] - g[1], h[2] - g[2]))(boat.toWorld(Penero.grip(boat.helm))))(toWorld(figureRig.hand(0).centre)) : null),
     /** Finding your way (tests): how much of the seabed is read (0..1); the way from your boat to a place by name; being taken there; the crossing as it stands. */
     seaways: () => seaways.build(40),
     wayTo: name => { const t = (features.labels || []).find(l => l.name === name), to = t && seaways.anchorage(t.pos[0], t.pos[1]), way = to && seaways.route([boat.x, boat.z], to); return way ? { length: way.length, points: way.points.length, to, straight: Math.hypot(to[0] - boat.x, to[1] - boat.z), least: Math.min(...way.points.map(p => seaways.depthAt(p[0], p[1]))) } : null; },

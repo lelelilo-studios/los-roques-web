@@ -72,9 +72,12 @@ class Builder {
 /** The floor's height inside at x (the floorboards follow the keel's rise towards the bow). */
 export const floorAt = x => { const s = section((x + 3.8) / 7.6); return Math.max(-0.11, s.keel + 0.2); };
 /** Where things are aboard (the boat's own frame): the seat at the tiller, where your feet go, the tiller's grip with the helm amidships. */
-// (`seat`: where you sit on the stern bench, to starboard; `turn`: how far to starboard of the bow you face there
-// (to port: half turned to the tiller); `tiller`: how long its arm is from the pin the outboard turns on.)
-export const ABOARD = { seat: [-2.98, 0.33, 0.3], thwart: 0.33, turn: -40 * Math.PI / 180, feet: [-2.6, floorAt(-2.6), 0.1], pivot: [-3.9, 0.5, 0], tiller: 0.7, box: [3.95, 1.25, 1.08] };
+// (`seat`: where you sit on the stern bench, to starboard; `turn`: how far to starboard of the bow you face there:
+// 65 degrees to port, sideways on to the tiller, looking forward over your right shoulder, as a boat is steered
+// by a tiller. The grip then sweeps from beside your left hip, hard over one way, to an arm's length before
+// you the other. Half turned only (40 degrees), it went behind your back. `tiller`: how long its arm is from the
+// pin the outboard turns on.)
+export const ABOARD = { seat: [-2.98, 0.33, 0.35], thwart: 0.33, turn: -65 * Math.PI / 180, feet: [-2.6, floorAt(-2.6), 0.1], pivot: [-3.9, 0.5, 0], tiller: 0.7, box: [3.95, 2.4, 1.08] };
 
 function hullGeometry() {
   const b = new Builder(), N = 30, T = 0.028;

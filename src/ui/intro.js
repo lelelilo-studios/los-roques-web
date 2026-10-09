@@ -19,6 +19,8 @@ const TIPS = [
   'Hold the button again and move the mouse to tip your hand',
   '<kbd>X</kbd> to sit down by the water',
   '<kbd>V</kbd> to see yourself · hold <kbd>Alt</kbd> and move the mouse to look round her',
+  'Your boat waits off the sand, ahead and to your right · <kbd>B</kbd> beside it climbs in',
+  'At the tiller: <kbd>W</kbd> <kbd>S</kbd> the throttle · <kbd>A</kbd> <kbd>D</kbd> steer · <kbd>M</kbd> the chart: click a cay and the boat takes you there',
   '<kbd>Shift</kbd> to run · <kbd>Space</kbd> to stand on your toes',
   'The wheel parts and closes your fingers',
   '<kbd>Tab</kbd> lifts you into the air, to choose another island',

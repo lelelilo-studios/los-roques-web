@@ -30,10 +30,10 @@ export const WATER_IOR = 1.34;
  * is drawn as ribbons), and `fp.grainShare` the part of all the grains that are drawn.
  */
 export const TIERS = {
-  low: { maps: 'lo', block: 16, maxPixels: 1.0e6, dprCap: 1.5, bicubicNormals: false, fps: 30, clouds: null, fp: { sand: 'plain', shadowMap: 0, shadowTaps: 4, life: 0, patch: 0 , grains: 0, grainShare: 1 } },
-  medium: { maps: 'hi', block: 32, maxPixels: 2.1e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 64, steps: 28, lightSteps: 3, scale: 0.34, shadowEvery: 6 }, fp: { sand: 'plain', shadowMap: 1024, shadowTaps: 4, life: 1, patch: 1024 , grains: 16384, grainShare: 0.25 } },
-  high: { maps: 'hi', block: 32, maxPixels: 3.7e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 48, lightSteps: 4, scale: 0.5, shadowEvery: 2 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2, patch: 2048 , grains: 65536, grainShare: 1 } },
-  ultra: { maps: 'hi', block: 48, maxPixels: 8.3e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 80, lightSteps: 5, scale: 0.5, shadowEvery: 1 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2, patch: 2048 , grains: 65536, grainShare: 1 } },
+  low: { maps: 'lo', block: 16, maxPixels: 1.0e6, dprCap: 1.5, bicubicNormals: false, fps: 30, clouds: null, fp: { sand: 'plain', shadowMap: 0, shadowTaps: 4, life: 0, patch: 0 , grains: 0, grainShare: 1, wake: 256, wakeFlat: true } },
+  medium: { maps: 'hi', block: 32, maxPixels: 2.1e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 64, steps: 28, lightSteps: 3, scale: 0.34, shadowEvery: 6 }, fp: { sand: 'plain', shadowMap: 1024, shadowTaps: 4, life: 1, patch: 1024 , grains: 16384, grainShare: 0.25, wake: 512 } },
+  high: { maps: 'hi', block: 32, maxPixels: 3.7e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 48, lightSteps: 4, scale: 0.5, shadowEvery: 2 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2, patch: 2048 , grains: 65536, grainShare: 1, wake: 768 } },
+  ultra: { maps: 'hi', block: 48, maxPixels: 8.3e6, dprCap: 2, bicubicNormals: true, fps: 60, clouds: { shape: 128, steps: 80, lightSteps: 5, scale: 0.5, shadowEvery: 1 }, fp: { sand: 'full', shadowMap: 4096, shadowTaps: 8, life: 2, patch: 2048 , grains: 65536, grainShare: 1, wake: 1024 } },
 };
 
 /** A browser drawing on the processor, with no graphics card behind it: its driver says so in its name. */
