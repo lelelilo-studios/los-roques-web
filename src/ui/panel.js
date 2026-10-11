@@ -80,7 +80,8 @@ export function buildPanel(root, app) {
     el('p', { text: 'The islands, shorelines, water depths and seabed in this simulation are derived from Sentinel-2 imagery (10 m), the Copernicus elevation model, the Allen Coral Atlas reef maps and OpenStreetMap. Depths inside the lagoon are estimated from the colour of the water, so they are plausible rather than surveyed. Detail finer than about 11 m (beach profiles, ripples, waves, foam) is generated.' }),
     el('p', { text: 'The sun follows the real date and time for 11.85° N. Wind, waves, cloud and sea temperature follow monthly climate normals, or, with “Live”, the current conditions from Open-Meteo. The small tide follows the moon (high water an hour after it crosses the meridian); with the seasonal sea level it decides whether the Cayo de Agua sandbar is a dry strip between two seas or washed over by the waves of both.' }),
     el('h3', { text: 'Data' }),
-    el('ul', {}, ...app.attribution.map(a => el('li', { text: a })), el('li', { text: 'Live weather: Open-Meteo.com (CC BY 4.0). Climate normals: NASA POWER, Open-Meteo.' })),
+    el('ul', {}, ...app.attribution.map(a => el('li', { text: a })), el('li', { text: 'Live weather: Open-Meteo.com (CC BY 4.0). Climate normals: NASA POWER, Open-Meteo.' }),
+      el('li', { text: 'Her walk is shaped on recordings of people walking: the data used in this project was obtained from mocap.cs.cmu.edu; the database was created with funding from NSF EIA-0196217.' })),
     el('form', { method: 'dialog' }, el('button', { text: 'Close' })));
 
   root.append(panel, divider, dialog);

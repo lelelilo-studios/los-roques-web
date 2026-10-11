@@ -9,42 +9,14 @@
 // Plain numbers, no three: it is measured in a test (tests/handact.test.mjs). world/hand.js asks it what the hand
 // is doing and makes everything that comes of it; humanref.js REACH has the timings a person keeps.
 import { POSE_LENGTH, MCP, ABD, PIP, DIP, T_PLANE, ARCH } from './handpose.js';
+import { Mover } from './motion.js';
 
 const clamp01 = v => Math.min(1, Math.max(0, v));
 /** The smooth way from 0 to 1 over 0..1: no speed and no acceleration at either end, fastest half way. */
 export const ease = k => { const t = clamp01(k); return t * t * t * (10 - 15 * t + 6 * t * t); };
 
-/**
- * One number that goes to where it is sent smoothly: from where it is, as fast as it is going and however that
- * is changing, to its goal in a given time, arriving at rest. Sent somewhere else on the way, it goes on from
- * what it was doing: nothing jumps.
- */
-export class Mover {
-  constructor(x = 0) { this.set(x); }
-  /** There, at rest, at once. */
-  set(x) { this.x = x; this.v = 0; this.a = 0; this.goal = x; this.t = 0; this.T = 0; this.c = null; }
-  /** Go to `goal` in `T` seconds (if it is already on its way there, it goes on as it was). */
-  to(goal, T) {
-    if (goal === this.goal && (this.c || this.x === goal)) return this;
-    this.goal = goal; this.t = 0; this.T = Math.max(T, 1e-3);
-    const d = goal - this.x, v = this.v, a = this.a, t = this.T;
-    this.c = [this.x, v, a / 2, (20 * d - 12 * v * t - 3 * a * t * t) / (2 * t * t * t), (-30 * d + 16 * v * t + 3 * a * t * t) / (2 * t ** 4), (12 * d - 6 * v * t - a * t * t) / (2 * t ** 5)];
-    return this;
-  }
-  step(dt) {
-    if (!this.c) return this.x;
-    this.t += dt;
-    if (this.t >= this.T) { this.x = this.goal; this.v = 0; this.a = 0; this.c = null; return this.x; }
-    const [c0, c1, c2, c3, c4, c5] = this.c, t = this.t;
-    this.x = c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * c5))));
-    this.v = c1 + t * (2 * c2 + t * (3 * c3 + t * (4 * c4 + t * 5 * c5)));
-    this.a = 2 * c2 + t * (6 * c3 + t * (12 * c4 + t * 20 * c5));
-    return this.x;
-  }
-  get done() { return !this.c; }
-  /** How far along it is, 0..1 of its time. */
-  get part() { return this.c ? this.t / this.T : 1; }
-}
+// (`Mover`, the one number that goes to where it is sent smoothly, is motion.js's: her whole body uses it now.)
+export { Mover };
 
 // How long things take (seconds), by what is being taken: dry sand, wet sand, water (humanref.js REACH; the
 // plan's appendix B). Wet sand is heavier and gives less; water is not dug.

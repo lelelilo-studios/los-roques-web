@@ -74,6 +74,25 @@ function solve4(A, b) {
   for (let c = 3; c >= 0; c--) { for (let q = c + 1; q < 4; q++) x[c] -= A[c][q] * x[q]; x[c] /= A[c][c]; }
   return x;
 }
+/**
+ * How a back shares a movement among its joints, from the hips up (spine05 .. spine01): how much of the whole
+ * each has made by the time it is reached. A turn about the upright is nearly all made above the waist (the
+ * joints of the loins turn a degree or two each, those of the chest several); a bend to the side or forward is
+ * made low, in the loins: a pelvis that lists under a chest that keeps upright is taken up just above it, so
+ * that the chest stays over the hips and is not carried out to the side. (White and Panjabi, Clinical Biomechanics of the
+ * Spine, as I have it from memory: the shares are rounded.) It used to be a fifth at each joint for everything.
+ */
+const SPINE = { turn: [0.04, 0.1, 0.3, 0.62, 1], list: [0.4, 0.7, 0.88, 0.96, 1], tilt: [0.3, 0.55, 0.75, 0.9, 1] };
+/**
+ * And how her back carries her chest's own roll when she walks (each joint's share of it, from the hips up): her
+ * ribs roll a degree and a half each way about their own middle, not about her waist. Her loins lean the other
+ * way under them by as much, so that her chest and her head stay over her hips: the recorded walker's chest
+ * keeps within three millimetres of the upright over his waist, and his head within four, while both roll
+ * (tools/ref/motion.json; subject 35). Shared straight up her back, the whole of her trunk leaned with her ribs
+ * like a mast, her head went two centimetres to each side of her hips, and her eye, which is yours, swayed 6 cm
+ * where her pelvis swayed 3.5; a person's head sways no further than the pelvis under it.
+ */
+const SPINE_WALK = [-1, -1, -1, 0.5, 1];
 /** How far a shoulder goes out on its collar bone alone, before her back turns to take it further (m). */
 const GIRDLE_GIVE = 0.015;
 
@@ -240,6 +259,27 @@ export class FigureRig {
     return out;
   }
 
+  /**
+   * The places and turns her movement is measured by (measure.js `measure`), as she is posed now, in the body's
+   * own frame: pelvis, chest and head each { at, R: its turn from rest }, and hips, knees, ankles, balls of the
+   * feet, toes, shoulders, elbows, wrists, knuckles, each [left, right]. The same handful of places a recorded
+   * person is measured by (pipeline/motion/asf.mjs `landmarks`).
+   */
+  landmarks() {
+    const at = name => { const b = this.need(name); return this.carry(b, this.bones[b].head); }, tail = name => { const b = this.need(name); return this.carry(b, this.bones[b].tail); };
+    const R = name => { const b = this.need(name); this.current(b); return this.R[b].slice(); }, two = name => [at(`${name}.L`), at(`${name}.R`)];
+    const hips = two('upperleg01'), mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+    // (The ball of a foot: between the roots of its great toe and its little one, as the foot carries it.)
+    const ball = s => { const f = this.need(`foot.${s}`), a = this.bones[this.need(`toe1-1.${s}`)].head, b = this.bones[this.need(`toe5-1.${s}`)].head; return this.carry(f, mid(a, b)); };
+    return {
+      // (Her pelvis is measured where a recorded person's is: at the waist, a hand's breadth over the middle of the hips.)
+      pelvis: { at: (c => { const up = turn(this.R[this.trunk], [0, 0.117 * (this.sides[0].thigh + this.sides[0].shin), 0]); return [c[0] + up[0], c[1] + up[1], c[2] + up[2]]; })(mid(hips[0], hips[1])), R: R('root') }, chest: { at: at('neck01'), R: R('spine01') }, head: { at: at('head'), top: tail('head'), R: R('head') },
+      waist: at('spine03'), neck: at('neck02'),
+      hips, knees: two('lowerleg01'), ankles: two('foot'), balls: [ball('L'), ball('R')], toes: [tail('toe2-3.L'), tail('toe2-3.R')],
+      shoulders: two('upperarm01'), elbows: two('lowerarm01'), wrists: two('wrist'), knuckles: two('finger3-1'),
+    };
+  }
+
   handCaps(i) {
     if (!this.fit) return null;
     const s = this.sides[i], rods = this.fit[i].rods, rod = name => { const b = this.need(name), r = rods[name]; return { a: this.carry(b, r.head), b: this.carry(b, r.tail), r: r.r, w: r.w, t: r.t }; };
@@ -299,11 +339,15 @@ export class FigureRig {
     // (And her pelvis lists with each pace, the hip of the leg in the air dropping (`list`), her shoulders
     // tilting the other way (`tiltTop`): about the line from her back to her front, a part at each joint of her spine.)
     const list = j.list || 0, tiltTop = j.tiltTop || 0, fore = unit(cross(across, along)), breathing = j.breath || 0;
-    const low = j.pelvis || 0, high = -0.6 * low - 0.3 * (j.headTurn || 0), Rp = mul(about(fore, list), mul(about(along, low), lean));
+    // (`chestTwist`: how far the chest is turned against the pelvis, when the solver says (walking as a recorded
+    // person walks); else six tenths of the pelvis's turn, the other way. `pelvisTilt`, `chestTilt`: her pelvis
+    // tipping forward and back with her stride, and her chest against it, so that it keeps upright.)
+    const low = j.pelvis || 0, high = (j.chestTwist !== undefined ? low + j.chestTwist : -0.6 * low) - 0.3 * (j.headTurn || 0), tipLow = j.pelvisTilt || 0, tipTop = tipLow + (j.chestTilt || 0);
+    const Rp = mul(about(fore, list), mul(about(along, low), mul(about(across, -tipLow), lean)));
     const trunkAt = (shift, bend = bent) => {
       this.drive(trunk, Rp, add(add(j.hip, shift), turn(Rp, sub(this.bones[trunk].head, this.hip0))));
       // (And she breathes: as her chest fills, her upper back straightens a degree and her breastbone comes up.)
-      this.spine.forEach((b, k) => { const part = fraction(bend, (k + 1) / 5); this.hinge(b, mul(about(across, 0.018 * breathing * Math.max(0, k - 1) / 3), mul(about(fore, list + (tiltTop - list) * (k + 1) / 5), mul(about(turn(part, along), low + (high - low) * (k + 1) / 5), mul(part, lean))))); });
+      this.spine.forEach((b, k) => { const part = fraction(bend, (k + 1) / 5); this.hinge(b, mul(about(across, 0.018 * breathing * Math.max(0, k - 1) / 3 - (tipLow + (tipTop - tipLow) * SPINE.tilt[k])), mul(about(fore, list * (1 - SPINE.list[k]) + tiltTop * (SPINE.list[k] + (SPINE_WALK[k] - SPINE.list[k]) * (j.walking || 0))), mul(about(turn(part, along), low + (high - low) * SPINE.turn[k]), mul(part, lean))))); });
     };
     // A shoulder goes out to what the hand reaches for (`reached`: how far the solver has moved it for that),
     // and her back takes it there. The collar bone gives a finger's breadth; beyond that her shoulders turn
@@ -361,7 +405,7 @@ export class FigureRig {
         bent = backOf(p);
       }
     }
-    const alongTop = turn(bent, along), Rt = mul(about(fore, tiltTop), mul(about(alongTop, high), mul(bent, lean)));
+    const alongTop = turn(bent, along), Rt = mul(about(across, -tipTop), mul(about(fore, tiltTop), mul(about(alongTop, high), mul(bent, lean))));
     // Her head is carried by her neck, and her neck by her chest: each bone turns where its parent holds it, and
     // none is moved to meet another. So where her eye is, is what the pose makes it. (The head used to be put
     // on the camera and the neck drawn out between it and the chest: half as long again, looking down.) What
@@ -373,10 +417,12 @@ export class FigureRig {
     // (`eyeBase`: where her eye would be with her head level and her back not bent to any reach. `eyeFree`: the
     // same with her head turned and nodding as it is: what her hands' places are reckoned from, so that leaning
     // to a place does not move the place she leans to.)
-    const looking = j.eye ? mul(about([0, 1, 0], -(j.headTurn || 0)), about([1, 0, 0], j.headNod || 0)) : IDENTITY;
+    // (Walking as a recorded person walks, her head is not held dead level: it turns, nods and rolls a degree or
+    // two with each stride, as his did (`headYaw`, `headNodBy`, `headRoll`: measure.js signs).)
+    const looking = j.eye ? mul(about([0, 1, 0], -((j.headTurn || 0) + (j.headYaw || 0))), mul(about([1, 0, 0], (j.headNod || 0) - (j.headNodBy || 0)), about([0, 0, 1], -(j.headRoll || 0)))) : IDENTITY;
     let free = null;
     if (j.eye) {
-      const Rb = mul(about(fore, tiltTop), mul(about(along, high), lean)), headTo = Rh => { const round = mul(transpose(Rb), Rh); this.neck.forEach((b, k) => this.hinge(b, mul(Rb, fraction(round, HEAD[k])))); this.hinge(this.head, Rh); return this.carry(this.head, [0, this.eye, 0]); };
+      const Rb = mul(about(across, -tipTop), mul(about(fore, tiltTop), mul(about(along, high), lean))), headTo = Rh => { const round = mul(transpose(Rb), Rh); this.neck.forEach((b, k) => this.hinge(b, mul(Rb, fraction(round, HEAD[k])))); this.hinge(this.head, Rh); return this.carry(this.head, [0, this.eye, 0]); };
       trunkAt([0, 0, 0], IDENTITY);
       free = headTo(looking); this.frame++;
       trunkAt([0, 0, 0], IDENTITY);
@@ -400,7 +446,10 @@ export class FigureRig {
         shift[1] = Math.min(shift[1], Math.max(0, A[1] + Math.sqrt(Math.max(L * L - dx * dx - dz * dz, 0)) - H[1]));
       }
       // (Going down on to her seat, it is let go of by as much as she is down.)
-      if (j.eye) shift[1] *= 1 - seat;
+      // (And walking as a recorded person walks: there her legs say how high her hips ride (her standing knee
+      // bends and straightens as a knee does), and her eye is where her back and neck then carry it. Lifted to
+      // an eye height asked from above, her hips went up until her knee was dead straight, and stayed there.)
+      if (j.eye) shift[1] *= (1 - seat) * (1 - (j.walking || 0));
       this.frame++;
     }
     // (Rocked towards a reach no further than both legs still reach their ankles.)
@@ -459,7 +508,8 @@ export class FigureRig {
       // (Which way the elbow bends is taken from the solver's own arm, its elbow off the line from its shoulder
       // to its wrist: an arm nearly straight has its elbow a finger's breadth off that line, and against her
       // shoulder, a finger's breadth from the solver's, the way to it swung right round from frame to frame.)
-      const wrist = afloat ? moved(j.wrists[i]) : j.wrists[i].slice(), elbowTo = sub(j.elbows[i], [(j.shoulders[i][0] + j.wrists[i][0]) / 2, (j.shoulders[i][1] + j.wrists[i][1]) / 2, (j.shoulders[i][2] + j.wrists[i][2]) / 2]);
+      const hung = j.shouldersAt?.[i] || j.shoulders[i];          // (where the solver's own arm hangs from: its shoulder, gone round with the chest when she walks as recorded)
+      let wrist = afloat ? moved(j.wrists[i]) : j.wrists[i].slice(); const elbowTo = sub(j.elbows[i], [(hung[0] + j.wrists[i][0]) / 2, (hung[1] + j.wrists[i][1]) / 2, (hung[2] + j.wrists[i][2]) / 2]);
       const bend = len(elbowTo) > 1e-4 ? elbowTo : [0, -1, 0.3], armFrom = from0 => { const e = reach(from0, wrist.slice(), s.upper, s.fore, bend);      // (a copy: reach() draws its target in when it is too far)
         let pl = cross(sub(e, from0), sub(wrist, e)); pl = len(pl) > 1e-4 ? unit(pl) : turn(Rt, s.armPlane); return [e, pl, aim(sub(s.E, s.S), s.armPlane, sub(e, from0), pl)]; };
       // (The cap of the shoulder goes a third of the way round with the upper arm: it does not stay out where the
@@ -467,6 +517,12 @@ export class FigureRig {
       // bone has the joint and then from where the cap has it, a finger's breadth away at most.)
       const [, , Rfirst] = armFrom(this.carry(s.bone.clavicle, s.S)), Rcap = mul(fraction(mul(Rfirst, transpose(Rclav)), 0.35), Rclav);
       this.hinge(s.bone.shoulder01, Rcap);
+      // (An arm that swings free, walking as a recorded person walks, is the solver's arm hung from her own shoulder:
+      // the same upper arm and forearm, the same bend at the elbow, wherever a finger's breadth of difference between
+      // the two shoulders puts the hand. Held to the solver's wrist instead, a nearly straight arm could not always
+      // reach it, and its elbow was straightened in jerks.)
+      const free = (j.walking || 0) * (j.reached && len(j.reached[i]) > 1e-4 ? 0 : 1);
+      if (free > 0) { const at = this.carry(s.bone.shoulder01, s.S), k = (s.upper + s.fore) / ((len(sub(j.elbows[i], hung)) + len(sub(j.wrists[i], j.elbows[i]))) || 1); wrist = wrist.map((v, c) => v + (at[c] + (j.wrists[i][c] - hung[c]) * k - v) * free); }
       const S = this.carry(s.bone.shoulder01, s.S), [E, plane, Rupper] = armFrom(S);
       // (What her back has still to do: from where the shoulder now is, the arm would have to be all but
       // straight to get the hand to its place, or cannot. She is posed again with her back taking the shoulder
