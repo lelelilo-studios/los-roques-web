@@ -10,7 +10,7 @@
 // swimming. `seated`: how far her legs are drawn up (0..1), how wide her feet (0..1), her toes (radians), and
 // how far back she leans.
 import { BodyMotion } from './bodymotion.js';
-import { seatParts } from './moves.js';
+import { seatParts, boardParts } from './moves.js';
 import { Follower, noise1 } from './motion.js';
 
 export class Person {
@@ -34,6 +34,7 @@ export class Person {
     // `headLook`: where her head has got to, against her body and up or down; `chestLook`: what her chest has
     // taken of it. Her head used to be wherever you looked in the same frame, level and exact: a turret.)
     this.headTurn = new Follower({ omega: 16, zeta: 1 }); this.headLook = new Follower({ omega: 16, zeta: 1 }); this.chestLook = new Follower({ omega: 8, zeta: 1 }); this.lookFresh = true;
+    this.rideRoll = new Follower({ omega: 9, zeta: 0.8 }); this.ridePitch = new Follower({ omega: 9, zeta: 0.8 });
   }
 
   /** A point of the world as her boat's pitch and roll leave it, when it carries her (turned about her seat); itself otherwise. */
@@ -128,11 +129,18 @@ export class Person {
     // Sitting down and getting up are movements, a second long: from a squat over your feet back on to your
     // seat, a hand going to the sand behind you and your legs out in front; and the same undone. (`seated`: how
     // far along; the two poses are mixed, joint by joint.)
-    // (On the sand it is a movement of parts, each in its turn: world/moves.js. Into her boat it is still one mix: `eased`.)
-    const k = walker.seated, eased = k * k * (3 - 2 * k), parts = walker.carried ? null : seatParts(k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: c.seatSink, touch: reach, touchL: reachL, turn, look };
+    // (A movement of parts, each in its turn: world/moves.js. On to the sand, and into her boat.)
+    const k = walker.seated, eased = k * k * (3 - 2 * k), parts = walker.carried ? boardParts(k) : seatParts(k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: c.seatSink, touch: reach, touchL: reachL, turn, look };
     // (In your boat: on its bench, your feet on its floorboards, your hand on the tiller once you are sat. Getting
     // in and out, your knees come up to clear the side.)
-    if (walker.carried) Object.assign(sit, { recline: c.carried.recline, hop: 0, sink: 0, touch: null, touchL: null, bench: { drop: c.carried.drop, ahead: 0.4, tuck: Math.sin(Math.PI * Math.min(1, k)) ** 2, grip: k > 0.8 ? c.carried.grip() : null } });
+    // Aboard, her seat goes with the boat and her back takes it up: as the boat rolls and pitches under her, her
+    // chest and her head keep three quarters of the way to upright, a moment behind, with a little give. (She was
+    // tilted with the hull as one piece, like a figure screwed to the thwart; through her eyes, the horizon
+    // rolled as far as the boat did.)
+    const tilt = c.tiltNow ? c.tiltNow() : null;
+    if (tilt && walker.carried) { const R = tilt.R, u = [R[0][1], R[1][1], R[2][1]], lim = v => Math.asin(Math.max(-0.6, Math.min(0.6, v)));
+      this.rideRoll.step(dt, lim(u[0] * cy + u[2] * sy) * k); this.ridePitch.step(dt, lim(-u[0] * sy + u[2] * cy) * k); } else { this.rideRoll.set(0); this.ridePitch.set(0); }
+    if (walker.carried) Object.assign(sit, { recline: c.carried.recline - 0.7 * this.ridePitch.x, hop: 0, sink: 0, touch: null, touchL: null, bench: { drop: c.carried.drop, ahead: 0.4, tuck: Math.sin(Math.PI * Math.min(1, k)) ** 2, grip: k > 0.8 ? c.carried.grip() : null } });
     // (Setting off, the hips come forward over the feet during the first pace, not in the first three frames; and
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
@@ -141,6 +149,7 @@ export class Person {
     const j = body.joints;
     // (For her skeleton and her eyes: what her chest has taken of the look, and where you are in fact looking.)
     j.chestLook = chest; j.lookTurn = c.turn; j.lookUp = walker.look; j.time = c.time;
+    if (walker.carried) j.tiltTop = (j.tiltTop || 0) + 0.75 * this.rideRoll.x;
     // The hips ride down to each footfall and up over the standing leg, smoothly: as far down as the legs have
     // needed lately (`deep`), in time with the feet. (Left to the legs alone they came down all at once as the
     // heel reached out: five centimetres in four frames, a stamp at every pace.)
@@ -164,7 +173,7 @@ export class Person {
     // Where that leaves the body's frame in the world, and your eye. (Your weight is where the walker is.)
     Object.assign(you, { on: true, home: j.home, x: walker.x - (j.home[0] * cy - j.home[2] * sy), y: feetY, z: walker.z - (j.home[0] * sy + j.home[2] * cy), cy, sy, heading, folded, eyeUp, reachable: c.reachable });
     // (Aboard, the whole of you is pitched and rolled with the boat, about your seat.)
-    you.tilt = c.tiltNow ? c.tiltNow() : null;
+    you.tilt = tilt;
     // (Asked for less movement: your eye keeps its height and its line; the body under it still walks.)
     // Your eye is her eye: where her head, on her neck, carries it (figurepose.js). Her skeleton is posed here,
     // before the camera is put anywhere, and the camera goes to it. (The camera used to be put where the solver

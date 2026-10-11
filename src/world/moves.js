@@ -40,3 +40,13 @@ export function seatParts(k) {
  */
 export function afloatParts(k) { return { trunk: span(k, 0, 0.7), arms: span(k, 0.08, 0.8), legs: [span(k, 0.32, 0.9), span(k, 0.48, 1)] }; }
 export function footingParts(k) { return { legs: [span(k, 0, 0.6), span(k, 0.14, 0.74)], trunk: span(k, 0.22, 1), arms: span(k, 0.3, 1) }; }
+
+/**
+ * Getting into her boat and out of it (k: 0 on her feet beside it .. 1 on its bench): one leg over the side and then
+ * the other, her seat following on to the bench, her trunk coming with it, her hands last (the left to the tiller).
+ * By rule: the recorded people who step over something (Carnegie Mellon 143/14-16, 113/22) were not measured.
+ * Same parts as `seatParts`.
+ */
+export function boardParts(k) {
+  return { k, feet: [span(k, 0.08, 0.6), span(k, 0.38, 0.94)], hips: span(k, 0.2, 0.86), trunk: span(k, 0.1, 0.92), prop: span(k, 0.5, 1), hand: span(k, 0.45, 1) };
+}

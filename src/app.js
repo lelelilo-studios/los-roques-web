@@ -467,7 +467,10 @@ export async function start(canvas, onProgress = () => {}) {
     const astern = bedFor(boat.x - Math.sin(boat.heading) * 3.8, boat.z + Math.cos(boat.heading) * 3.8), tilt = board.to || afloat.ghost ? Math.min(1, Math.max(0, (0.75 - (here - astern)) / 0.35)) : 1;
     afloat.tilt += (tilt - afloat.tilt) * (1 - Math.exp(-dt * 2.5));
     const origin = [rig.eye.x, rig.eye.z];
-    penero.place(boat.matrix(origin), boat.helm, afloat.tilt, [here, (east - here) / 1.6, (south - here) / 1.6], afloat.spray);
+    // (The tiller as it is shown, and held: it follows the helm as a hand moves a tiller, coming to rest with a little
+    // give. It went at one rate and stopped dead.)
+    if (dt > 0) { const w = 11, h = Math.min(dt, 1 / 30), at = afloat.helmShown ?? boat.helm; afloat.helmV = (afloat.helmV || 0) + (w * w * (boat.helm - at) - 2 * 0.85 * w * (afloat.helmV || 0)) * h; afloat.helmShown = at + afloat.helmV * h; }
+    penero.place(boat.matrix(origin), afloat.helmShown ?? boat.helm, afloat.tilt, [here, (east - here) / 1.6, (south - here) / 1.6], afloat.spray);
     penero.hull.visible = penero.outboard.visible = penero.tiller.visible = true;
     // Its lines: from the stem head and from the quarter, hanging by their slack, lying on the sand and the bed.
     for (const [k, rope] of penero.ropes.entries()) {
@@ -688,7 +691,7 @@ export async function start(canvas, onProgress = () => {}) {
   };
   /** What your left hand holds, seated at the tiller: where the grip is in your body's own frame, and the way your fingers lie over it. */
   const tillerGrip = () => {
-    const g = Penero.grip(boat.helm), d = [g[0] - SEAT[0], g[1] - SEAT[1], g[2] - SEAT[2]], ct = Math.cos(SEAT_TURN), st = Math.sin(SEAT_TURN), a = boat.helm * 32 * Math.PI / 180;
+    const shown = afloat.helmShown ?? boat.helm, g = Penero.grip(shown), d = [g[0] - SEAT[0], g[1] - SEAT[1], g[2] - SEAT[2]], ct = Math.cos(SEAT_TURN), st = Math.sin(SEAT_TURN), a = shown * 32 * Math.PI / 180;
     // (The boat's forward and starboard to the body's right and back: the body faces SEAT_TURN to starboard of the bow.)
     const body = (f, s) => [-f * st + s * ct, -(f * ct + s * st)], at = body(d[0], d[2]), axis = body(Math.cos(a), -Math.sin(a));
     let across = [-axis[1], axis[0]];
@@ -1525,7 +1528,7 @@ export async function start(canvas, onProgress = () => {}) {
     moor(x, z) { if (x === undefined) { const m = mooringFor({ x: walker.x, z: walker.z, yaw: walker.yaw * 180 / Math.PI }); x = m.x; z = m.z; } afloat.ghost = afloat.driven = afloat.running = false; passage = null; rig.outside = null; return moorBoat(x, z); },
     /** For tests: a point of your boat's own frame in the world; and how far your left hand is from the tiller's grip, aboard (m). */
     boatPoint: p => boat.toWorld(p),
-    tillerGap: () => (board.k >= 1 && figureRig && you.on ? (h => (g => Math.hypot(h[0] - g[0], h[1] - g[1], h[2] - g[2]))(boat.toWorld(Penero.grip(boat.helm))))(toWorld(figureRig.hand(0).centre)) : null),
+    tillerGap: () => (board.k >= 1 && figureRig && you.on ? (h => (g => Math.hypot(h[0] - g[0], h[1] - g[1], h[2] - g[2]))(boat.toWorld(Penero.grip(afloat.helmShown ?? boat.helm))))(toWorld(figureRig.hand(0).centre)) : null),
     /** Finding your way (tests): how much of the seabed is read (0..1); the way from your boat to a place by name; being taken there; the crossing as it stands. */
     seaways: () => seaways.build(40),
     wayTo: name => { const t = (features.labels || []).find(l => l.name === name), to = t && seaways.anchorage(t.pos[0], t.pos[1]), way = to && seaways.route([boat.x, boat.z], to); return way ? { length: way.length, points: way.points.length, to, straight: Math.hypot(to[0] - boat.x, to[1] - boat.z), least: Math.min(...way.points.map(p => seaways.depthAt(p[0], p[1]))) } : null; },
