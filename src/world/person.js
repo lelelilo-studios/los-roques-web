@@ -53,7 +53,7 @@ export class Person {
     const turnAll = Math.atan2(Math.sin(walker.yaw - heading), Math.cos(walker.yaw - heading)), turn = aboard ? Math.max(-1.45, Math.min(1.45, turnAll)) : turnAll, state = walker.sitting ? 'sit' : 'stand';
     // (Put down somewhere, come out of the water, sat down or got up: your feet are under you. On your way into
     // your boat or out of it they go with you.)
-    if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand') || (walker.carried && walker.seated < 1) || you.carriedWas !== !!walker.carried) { gait.reset(walker.x, walker.z, heading); you.dip = you.dipV = you.deep = you.deepS = you.peak = you.shallow = 0; this.motion.reset(); }
+    if (!you.on || walker.placed || (you.was === 'sit' && state === 'stand') || (walker.carried && walker.seated < 1) || you.carriedWas !== !!walker.carried) { gait.reset(walker.x, walker.z, heading); you.dip = you.dipV = you.deep = you.deepS = you.peak = you.shallow = 0; this.motion.reset(!you.on || !!walker.placed); }
     if (!you.on || walker.placed) this.lookFresh = true;
     you.was = state; walker.placed = false; you.carriedWas = !!walker.carried;
     return { heading, cy, sy, feetY, turn, state };
@@ -75,8 +75,9 @@ export class Person {
     // (Her head is never more than thirteen degrees behind your look, so that your eye, which rides nine centimetres
     // ahead of her neck, is never two centimetres from where your look would have it; and it is there within a
     // quarter of a second. The camera looks where you look, exactly and at once: app.js.)
-    const behind = (f, to, most) => { f.step(dt, to); if (Math.abs(f.x - to) > most) f.x = to + Math.sign(f.x - to) * most; return f.x; };
-    if (this.lookFresh || !(dt > 0)) { this.headTurn.set(c.turn); this.headLook.set(walker.look); this.chestLook.set(c.turn); this.lookFresh = false; }
+    // (Held at that limit it goes round at the rate your look does: let off again it does not start from some other speed.)
+    const behind = (f, to, most) => { const rate = dt > 0 && f.goal !== undefined ? (to - f.goal) / dt : 0; f.goal = to; f.step(dt, to); if (Math.abs(f.x - to) > most) { f.x = to + Math.sign(f.x - to) * most; f.v = rate; } return f.x; };
+    if (this.lookFresh || !(dt > 0)) { this.headTurn.set(c.turn); this.headLook.set(walker.look); this.chestLook.set(c.turn); this.headTurn.goal = c.turn; this.headLook.goal = walker.look; this.lookFresh = false; }
     const turn = behind(this.headTurn, c.turn, 0.23), look = behind(this.headLook, walker.look, 0.25), chest = this.chestLook.step(dt, turn);
     // (Her hips as her skeleton has them: a few millimetres from where the solver put them, up or down, by
     // what it took to bring her eye to its height. A heel that comes up as the leg needs it has to know: told
@@ -100,7 +101,10 @@ export class Person {
     }
     // (A test may put the eye lower than anyone can squat, to look at the sand: the body is then posed in its
     // deepest squat, for the shadow, and left out of the picture: it would be folded through the camera.)
-    const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02, breath = Math.sin(c.time * 1.45);
+    // (What of this frame is hers to remember: where she is in a recorded walk or run, how she leans, how she stands, her breath.)
+    this.motion.leg = gait.prop.leg;
+    const motion = this.motion.step(dt, g, { speed: Math.hypot(walker.vx, walker.vz), forward: walker.vx * Math.sin(c.heading) - walker.vz * Math.cos(c.heading), crouch: Math.max(walker.crouched, walker.seated), time: c.time, still: gait.still, sitting: walker.sitting });
+    const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02, breath = motion.breath;
     // Seated, the keys that walk you move your legs: S draws them up and W stretches them out, A / D bring your
     // feet together and apart, Space curls your toes.
     // (You sit leaning back a little on your hand; reaching for the sand beside you, you lean forward over it.)
@@ -120,14 +124,11 @@ export class Person {
     // (Setting off, the hips come forward over the feet during the first pace, not in the first three frames; and
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
-    // (What of this frame is a recorded person's walk: in time with her feet, as far as she is walking.)
-    this.motion.leg = gait.prop.leg;
-    const motion = this.motion.step(dt, g, { speed: Math.hypot(walker.vx, walker.vz), forward: walker.vx * Math.sin(c.heading) - walker.vz * Math.cos(c.heading), crouch: Math.max(walker.crouched, k) });
     if (k >= 1) body.pose(sit);
     else body.pose({ gait: g, motion, bank: walker.bank || 0, time: c.time, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
     const j = body.joints;
     // (For her skeleton and her eyes: what her chest has taken of the look, and where you are in fact looking.)
-    j.chestLook = chest; j.lookTurn = c.turn; j.lookUp = walker.look;
+    j.chestLook = chest; j.lookTurn = c.turn; j.lookUp = walker.look; j.time = c.time;
     // The hips ride down to each footfall and up over the standing leg, smoothly: as far down as the legs have
     // needed lately (`deep`), in time with the feet. (Left to the legs alone they came down all at once as the
     // heel reached out: five centimetres in four frames, a stamp at every pace.)

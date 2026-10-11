@@ -106,7 +106,8 @@ function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0
       // (Further than the arm goes from where the shoulder is: she leans out to it. The shoulder goes on towards
       // the place by what it is short, up to three fingers' breadth, and her back takes it there (figurepose.js); only
       // what is still out of reach then is reached for as far as the hand gets.)
-      const more = Math.min(flat - can, work.lean ?? 0.05) * (1 - up) * reaching;
+      // (Up to that softly: stopped dead at three fingers' breadth, her back stopped leaning in one frame and her eye was knocked.)
+      const short = flat - can, far = work.lean ?? 0.05, more = Math.max(0, 0.5 * (short + far - Math.sqrt((short - far) ** 2 + 0.012 ** 2))) * (1 - up) * reaching;
       sh[0] += (want[0] - sh[0]) / flat * more; sh[2] += (want[2] - sh[2]) / flat * more;
       const left = flat - more;
       if (left > can) { want[0] = sh[0] + (want[0] - sh[0]) * can / left; want[2] = sh[2] + (want[2] - sh[2]) * can / left; }
@@ -755,7 +756,10 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   // (With a recorded walk on: her pelvis lists as his did, and her chest against it, each the size a woman's is.
   // Here a list is the left hip lower, positive; measure.js has the right side lower positive.)
   const listGait = (gait ? (gait.list || 0) * (1 - Math.min(1, Math.max(0, (PROP.stand - eye) / PROP.crouchBy))) : 0) * (1 - driven);
-  const list = listGait - (mo ? mo.pelvisList : 0) - bank, tiltTop = -0.5 * listGait - (mo ? mo.chestRoll : 0) - bank;
+  // (Standing with her weight on one leg: the hip of the other let down three degrees, her shoulders a degree and a half the
+  // other way, her pelvis turned a little. `stood`: -1 on her left leg .. 1 on her right, as far as she has settled.)
+  const stood = mo ? mo.weight || 0 : 0;
+  const list = listGait - (mo ? mo.pelvisList : 0) - bank + 0.048 * stood, tiltTop = -0.5 * listGait - (mo ? mo.chestRoll : 0) - bank - 0.025 * stood;
   const sy = eye - PROP.eyeToShoulder + 0.004 * breath - (gait ? 0.95 * sunk : 0), shoulder = [0, sy, PROP.back + 0.02];      // (It used to back away from the eye as you looked down, up to 10 cm, to keep out of your view: and the neck was drawn out to it.)
   const joints = { knees: [], ankles: [], hips: [], wrists: [], fingertips: [], shoulders: [], reached: [], elbows: [], feet: [], hands: [], crouch, lean };
   // Hips: under the shoulders standing, behind and below them as the trunk leans into a crouch.
@@ -781,8 +785,9 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   // (Her hips over to the right, metres: what the gait makes of it, or, walking as recorded, the recorded sway in time with her feet.)
   // (The recorded sway is of a point at the waist, a hand's breadth over the hips: as her pelvis lists, the hips
   // themselves go the other way under it, over the foot that stands.)
-  const shift = gait ? gait.shift * (1 - driven) + (mo ? mo.pelvisSway - 0.117 * PROP.thigh * 2 * Math.sin(mo.pelvisList) : 0) : 0;
-  const home = [-shift, 0, balance - 0.03 + (gait ? 0.065 * (carry ?? gait.amount) * (1 - crouch) : 0)];
+  // (And standing, over the leg that has her weight, with the little wandering nobody stands without.)
+  const shift = gait ? gait.shift * (1 - driven) + (mo ? mo.pelvisSway - 0.117 * PROP.thigh * 2 * Math.sin(mo.pelvisList) + 0.022 * stood + (mo.drift ? mo.drift[0] : 0) : 0) : 0;
+  const home = [-shift, 0, balance - 0.03 + (gait ? 0.065 * (carry ?? gait.amount) * (1 - crouch) : 0) + (mo && mo.drift ? mo.drift[1] : 0)];
   const steps = gait ? gait.feet : [-1, 1].map(side => footAt(phase + (side < 0 ? 0 : Math.PI), travel, amount, stance, (0.09 + 0.05 * run) * (1 - 0.6 * crouch)));
   const feet = gait ? gait.feet.map(f => [f.ankle[0] + home[0], f.ankle[1], f.ankle[2] + home[2]]) : [-1, 1].map((side, i) => {
     const f = steps[i], ankle = [side * (PROP.hip + 0.025), f.up - sink * f.planted, balance - 0.03 - f.ahead - 0.1 * crouch * amount];
@@ -895,7 +900,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     const ph = phase + (side < 0 ? 0 : Math.PI), c = gait ? Math.max(-1, Math.min(1, gait.arm[side < 0 ? 0 : 1] / 0.3)) : Math.cos(ph), mine = steps[side < 0 ? 0 : 1];
     // (Which way the foot points: turned out a little; as the gait left it, if it was put down before you turned.)
     const out = gait ? mine.out : side * 0.12, tipped = tilt * mine.planted * (gait ? 0 : 1);
-    const pelvis = gait ? gait.turn * (1 - driven) - (mo ? mo.pelvisTurn : 0) : 0, hipJ = [side * PROP.hip * Math.cos(pelvis), hip[1] + side * PROP.hip * Math.sin(list), hip[2] - side * PROP.hip * Math.sin(pelvis)], ankle = feet[side < 0 ? 0 : 1];
+    const pelvis = gait ? gait.turn * (1 - driven) - (mo ? mo.pelvisTurn : 0) - 0.03 * stood : 0, hipJ = [side * PROP.hip * Math.cos(pelvis), hip[1] + side * PROP.hip * Math.sin(list), hip[2] - side * PROP.hip * Math.sin(pelvis)], ankle = feet[side < 0 ? 0 : 1];
     // (The feet stay as wide apart as they were when you squat: it is the knees that part.)
     // (Squatting, the knees go forward and a little outward, over the feet: not out to the sides.)
     // (and up: squatting, the line from hip to ankle runs forward, and a knee asked only to go forward could as well go under it.)
@@ -1055,7 +1060,7 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
   // six tenths of the pelvis's turn the other way, which is 1.6 of it against the pelvis; walking as recorded,
   // what brings her chest to its recorded turn in the world.
   // `shift`: her hips over to the right (m). `sunk`: how far her hips ride under their standing height (m).)
-  const pelvisNow = gait ? gait.turn * (1 - driven) - (mo ? mo.pelvisTurn : 0) : 0;
+  const pelvisNow = gait ? gait.turn * (1 - driven) - (mo ? mo.pelvisTurn : 0) - 0.03 * stood : 0;
   return { ...joints, hip, shoulder, home, breath, pelvis: pelvisNow, ...(mo ? { chestTwist: -1.6 * gait.turn * (1 - driven) - mo.chestYaw + mo.pelvisTurn, pelvisTilt: mo.pelvisTilt, chestTilt: mo.chestTilt, headYaw: mo.headYaw, headNodBy: mo.headNod, headRoll: mo.headRoll, walking: walked, driven } : {}), shift, sunk: joints.sunkNow ?? sunk, list, tiltTop, headTurn: head.turn, headNod: head.nod, eyeLevel, eye: [head.eye[0], eyeLevel[1] + head.eye[1], head.eye[2]] };
 }
 

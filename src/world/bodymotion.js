@@ -11,7 +11,7 @@
 // Plain numbers, no three: it is run in tests and tools as it is in the page.
 import { WALK, RUN } from './humanmotion.js';
 import { womanAt } from './humanref.js';
-import { Follower, Inertial, noise1 } from './motion.js';
+import { Follower, Inertial, noise1, hash } from './motion.js';
 
 const RAD = Math.PI / 180, clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const waveAt = (w, u) => { let v = w[0]; for (let k = 1; 2 * k < w.length; k++) v += w[2 * k - 1] * Math.cos(2 * Math.PI * k * u) + w[2 * k] * Math.sin(2 * Math.PI * k * u); return v; };
@@ -80,19 +80,28 @@ export class BodyMotion {
   /** @param {number} leg  her leg, thigh and shin (m) */
   constructor(leg = 0.77) {
     this.leg = leg; this.amount = new Follower({ omega: 5.5, zeta: 1 }); this.ran = new Follower({ omega: 9, zeta: 1 }); this.leant = new Follower({ omega: 7, zeta: 0.75 }); this.forwardWas = null; this.gathering = 0; this.take = {};
+    // (Standing: how far she has settled into it, which leg has her weight and when she will next change it; her breath.)
+    this.stood = new Follower({ omega: 2.2, zeta: 1 }); this.weight = new Follower({ omega: 3.4, zeta: 0.72 }); this.side = -1; this.shifts = 0; this.shiftAt = null;
+    this.effort = 0; this.breathAt = 0; this.breaths = 0;
     for (const c of DRIVEN) this.take[c] = new Inertial(7);
     this.was = null; this.before = null; this.moved = false; this.now = null; this.turns = 0; this.psiWas = null;
     /** What the solver keeps for her from one frame to the next (bodyshape.js poseBody): how high her hips ride and how fast they are going there, the height her legs last asked for, and how far under their standing height that left them. */
     this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined };
   }
-  /** Put down somewhere: nothing of where she was is carried over. */
-  reset() { this.amount.set(0); this.ran.set(0); this.leant.set(0); this.forwardWas = null; this.gathering = 0; for (const c of DRIVEN) this.take[c].clear(); this.was = null; this.before = null; this.moved = false; this.now = null; this.turns = 0; this.psiWas = null; this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined }; }
+  /**
+   * Her feet put back under her (she has got up, got in or out of her boat): nothing of her walk is carried over.
+   * `placed`: she has been put down somewhere new altogether: then nothing at all is, her breath and which leg she
+   * stands on begin again with the clock, so that the same doing from the same start is the same every time.
+   */
+  reset(placed = true) { this.amount.set(0); this.ran.set(0); this.leant.set(0); this.forwardWas = null; this.gathering = 0; this.stood.set(0); this.weight.set(0); this.shiftAt = null; for (const c of DRIVEN) this.take[c].clear(); this.was = null; this.before = null; this.moved = false; this.now = null; this.turns = 0; this.psiWas = null; this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined }; this.shifts = 0;
+    if (placed) { this.effort = 0; this.breathAt = 0; this.breaths = 0; } }
 
   /**
    * One frame.
    * @param {number} dt
    * @param {object} g  the gait's frame (gait.js update): psi, strides, jumped, amount, along, run
-   * @param {object} c  speed (m/s), forward (m/s along the way she faces, backward negative), crouch 0..1
+   * @param {object} c  speed (m/s), forward (m/s along the way she faces, backward negative), crouch 0..1, time (s),
+   *   still (s since she last moved), sitting
    * @returns {object} `amount` (0 standing .. 1 in a steady walk forward), `psi`, and each measure as it is now,
    *   about its own middle and already made her size and scaled by `amount` (measure.js names and signs);
    *   `middle`: where the arms sit (MIDDLE, scaled by `amount`)
@@ -142,6 +151,28 @@ export class BodyMotion {
       this.forwardWas = f;
       out.lean = this.leant.step(dt, (f >= 0 ? 0.08 : 0.03) * clamp(f / 1.4, -1, 1.6) + clamp(0.02 * this.gathering, -0.07, 0.07)); }
     for (const [name, v] of Object.entries(MIDDLE)) out.middle[name] = v * walk + MIDDLE_RUN[name] * run;
+    // Standing. Nobody stands on two legs alike for long: her weight is mostly on one, the hip of the other let
+    // down and its knee easy, her shoulders a little the other way; and every quarter to half a minute she
+    // changes legs, over a second, coming to rest with a little give. Under that she is never quite still: her
+    // weight wanders a few millimetres, slowly, forward and back more than from side to side (Duarte and
+    // Zatsiorsky 1999, Motor Control 3: 12-27: people left to stand shift, fidget and drift, a shift or two a
+    // minute). `stand`: how far she has settled into standing (it takes a second or two, and is gone as she
+    // moves); the rest are hers to add: `weight` -1 on her left leg .. 1 on her right, `drift` [to the right,
+    // forward] (m). When she changes is settled by a count, not by chance: the same every time.
+    { const time = c.time ?? 0, quiet = g.moving === false && !(c.crouch > 0.05) && !c.sitting && (c.speed || 0) < 0.05 && (c.still ?? 9) > 0.5;
+      const stand = Math.max(0, this.stood.step(dt, quiet ? 1 : 0, quiet ? 2.2 : 9));
+      if (this.shiftAt === null) { this.side = hash(7, Math.floor(time)) < 0.5 ? -1 : 1; this.shiftAt = time + 6 + 10 * hash(this.shifts, 41); }
+      if (quiet && time >= this.shiftAt) { this.side = -this.side; this.shifts++; this.shiftAt = time + 14 + 18 * hash(this.shifts, 41); }
+      out.stand = stand; out.weight = this.weight.step(dt, quiet ? this.side : 0) * stand;
+      out.drift = [0.0035 * noise1(203, time * 0.31) * stand, 0.006 * noise1(207, time * 0.23) * stand]; }
+    // Her breath: fourteen a minute at rest, no two quite the same length; quicker and deeper for a while after she
+    // has run, and coming back over half a minute. In a little faster than out. (`breath`: -1 out .. 1 in, more
+    // than that when she is blown; `effort` 0..1.) It was one sine for ever, every 4.33 s, running or not.
+    { const hard = clamp(((c.speed || 0) - 1.7) / 1.2, 0, 1);
+      if (dt > 0) this.effort += (hard - this.effort) * (1 - Math.exp(-dt / (hard > this.effort ? 7 : 22)));
+      const rate = (0.235 + 0.36 * this.effort) * (1 + 0.14 * noise1(71, this.breaths * 0.9));
+      this.breathAt += rate * dt; if (this.breathAt >= 1) { this.breathAt -= 1; this.breaths++; }
+      const p = 2 * Math.PI * this.breathAt; out.breath = (1 + 1.1 * this.effort) * Math.sin(p + 0.45 * Math.sin(p)); out.effort = this.effort; }
     this.now = out;
     return out;
   }

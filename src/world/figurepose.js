@@ -7,7 +7,8 @@
 // thigh from the hip to the knee, the shin from the knee to the ankle, both turned so that the knee's hinge
 // lies across the plane of the leg; arms likewise, the hand's turn spread up the forearm.
 import { reach } from './bodyshape.js';
-import { HandModel, POSE_LENGTH, fingerAngles, fingerGaps, fitHand, handBones, limitWrist, shoulderTurn, thumbAngles, wristAngles } from './handpose.js';
+import { HandModel, POSE_LENGTH, MCP, PIP, DIP, T_MCP, T_IP, fingerAngles, fingerGaps, fitHand, handBones, limitWrist, shoulderTurn, thumbAngles, wristAngles } from './handpose.js';
+import { noise1 } from './motion.js';
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -560,6 +561,15 @@ export class FigureRig {
       // Fingers, thumb and the bones of the palm: as the hand's pose has them (handpose.js). A pose is twenty-one
       // angles (`fingers`); a hand given only the old `curl` and `spread` takes the pose those stand for.
       const model = this.models[i], pose = h.fingers || model.fromCurl(h.curl ?? 0.1, h.spread || 0, this.posed[i]);
+      // (A hand at ease is not a cast of one: each finger is curled a little more than the one before it, towards the
+      // little one, and none of them is ever quite still: each drifts a few degrees, slowly, by itself, and the
+      // thumb with them. Only a hand with nothing to do: one at work has its own pose, finger by finger. `j.time`
+      // is the clock: the drift is read off it, nothing is kept. It was one curl for all four, for ever.)
+      if (!h.fingers && j.time !== undefined) for (let n = 0; n < 4; n++) {
+        const d = 0.05 * (n - 1.2) + 0.075 * noise1(31 + 7 * i + n, j.time * 0.21 + n * 1.7) + 0.03 * noise1(57 + 5 * i + n, j.time * 0.67 + n);
+        pose[MCP + n] += d; pose[PIP + n] += 0.9 * d; pose[DIP + n] += 0.5 * d;
+        if (n === 0) { const t = 0.05 * noise1(83 + i, j.time * 0.19); pose[T_MCP] += t; pose[T_IP] += 0.6 * t; }
+      }
       for (const [b, R] of model.solve(pose, this.solved[i]).rot) this.hinge(b, mul(Rhand, R));
     }
     // The head, turned and nodding as you look, on the neck (above).
