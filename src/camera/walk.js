@@ -310,12 +310,15 @@ export class Walker {
       // Under we go: with the dive key in water deep enough, or by swimming forward while looking well down.
       // (Only with the dive key. Swimming forward while you looked well down used to take you under too: now that is
       // how you swim along face down, looking at the bottom through your mask.)
-      this.diveTimer = 0;
+      this.diveTimer = 0; this.liftV = 0;
       if (input.down && d >= 0.9) this.diving = true;
     } else {
       // (Left to yourself you float up, a foot a second near the surface, more slowly the deeper you are: your lungs are squeezed there.)
       const idle = !input.up && !input.down && Math.abs(input.fwd) < 0.01 && Math.abs(input.right) < 0.01, rise = idle ? 0.3 * Math.exp(-Math.max(0, this.surf - this.eyeY) / 3) : 0;
-      this.eyeY += (vy + (input.up ? 0.8 : 0) - (input.down ? 0.6 : 0) + rise) * dt;
+      // (Rising and sinking gather and die away over a third of a second: they began and stopped at full speed, a lift
+      // switched on and off.)
+      this.liftV = (this.liftV || 0) + ((input.up ? 0.8 : 0) - (input.down ? 0.6 : 0) + rise - (this.liftV || 0)) * (1 - Math.exp(-dt / 0.3));
+      this.eyeY += (vy + this.liftV) * dt;
       const lo = g2 + 0.35, hi = this.surf - FLOAT;
       if (hi < lo + 0.05 || (this.eyeY >= hi && (vy > 0.01 || input.up || idle))) this.diving = false;      // back up through the surface
       this.eyeY = Math.min(Math.max(this.eyeY, lo), Math.max(lo, hi));

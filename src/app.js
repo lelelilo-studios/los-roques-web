@@ -1227,7 +1227,7 @@ export async function start(canvas, onProgress = () => {}) {
       const under = walker.swimUnder ?? (walker.diving ? 1 : 0), heading = walker.swimYaw ?? walker.yaw, bank = walker.swimBank || 0;
       // (Placed from your own eye: which is where the camera is, unless you are being looked at from outside.)
       const sx = rig.own.x - rig.eye.x, sz = rig.own.z - rig.eye.z;
-      body.pose({ swim: true, stroke: walker.stroke, under, float: walker.swimFloat || 0, tread: walker.swimTread || 0, kick: walker.kick || 0 }); body.place(sx, walker.eyeY + walker.bob, sz, heading, under * walker.look);
+      body.pose({ swim: true, stroke: walker.stroke, under, float: walker.swimFloat || 0, tread: walker.swimTread || 0, kick: walker.kick || 0, time: clock.time }); body.place(sx, walker.eyeY + walker.bob, sz, heading, under * walker.look);
       if (figure) {
         // (Just lifted off your feet: part of the way over from standing still, in the frame you stood in.)
         const over = goingOver(dt, body.joints, 'swim', { x: sx, y: walker.eyeY + walker.bob, z: sz, yaw: heading, pitch: under * walker.look });
