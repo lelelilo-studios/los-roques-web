@@ -9,7 +9,7 @@
 // taken up and dies away: nothing jumps), and which stride this is (no two are alike: each differs from the
 // usual one along the ways his own strides differed, by an amount that wanders from stride to stride).
 // Plain numbers, no three: it is run in tests and tools as it is in the page.
-import { WALK } from './humanmotion.js';
+import { WALK, RUN } from './humanmotion.js';
 import { womanAt } from './humanref.js';
 import { Follower, Inertial, noise1 } from './motion.js';
 
@@ -49,33 +49,61 @@ export function sizes(pace, leg) {
 /** Where each measure sits, about which it moves (radians): the arms as he carries them, a little evened out between left and right. */
 export const MIDDLE = { armL: 0.01, armR: 0.03, armOutL: 0.085, armOutR: 0.07, elbowL: 0.5, elbowR: 0.47, elbowWayL: -0.12, elbowWayR: -0.2 };
 
+/**
+ * The same at a run (`pace` among the running paces women were measured at). Runners differ more than walkers: the
+ * recorded one turns his chest 23 degrees where the women's middle is 42; hers is seven tenths of theirs. Her
+ * pelvis lists two thirds of theirs (his lists half), her arms swing four fifths of theirs. Her head goes with
+ * her shoulders less than half as far as his: it is your eye.
+ */
+export function sizesRun(pace, leg) {
+  const W = name => womanAt(name, pace, true) * RAD, his = RUN.size, arm = 0.8 * W('arm'), elbow = 1.1 * W('elbow');
+  return {
+    pelvisTurn: W('pelvisTurn'), pelvisList: 0.65 * W('pelvisList'), pelvisTilt: his.pelvisTilt, chestYaw: 0.7 * W('chestYaw'), chestRoll: W('chestRoll'), chestTilt: 0.7 * his.chestTilt,
+    headYaw: 0.4 * his.headYaw, headNod: 0.6 * his.headNod, headRoll: his.headRoll,
+    armL: 1.05 * arm, armR: 0.95 * arm, armOutL: his.armOutL, armOutR: his.armOutR, elbowL: 1.05 * elbow, elbowR: 0.95 * elbow, elbowWayL: his.elbowWayL, elbowWayR: his.elbowWayR,
+    kneeWayL: his.kneeWayL, kneeWayR: his.kneeWayR,
+    // (Her hips' rise and fall at a run is her legs' and the air's, gait.js: not read off his.)
+    pelvisRise: 0, pelvisSway: womanAt('sway', pace, true) * 1.45 * leg,
+  };
+}
+/**
+ * A runner's stride is read a twentieth of itself on from hers: his is cut where his foot is furthest ahead of him, which
+ * at a run is that much before it touches (it is drawn back to land); hers where her foot lands.
+ */
+const RUN_AHEAD = 0.055;
+/** And how a runner carries her arms: upper arms back, elbows bent past a right angle, forearms a little across her (his own middles). */
+export const MIDDLE_RUN = { armL: -0.3, armR: -0.31, armOutL: 0.09, armOutR: 0.06, elbowL: 1.9, elbowR: 1.93, elbowWayL: 0.33, elbowWayR: 0.25 };
+
 export class BodyMotion {
   /** @param {number} leg  her leg, thigh and shin (m) */
   constructor(leg = 0.77) {
-    this.leg = leg; this.amount = new Follower({ omega: 5.5, zeta: 1 }); this.take = {};
+    this.leg = leg; this.amount = new Follower({ omega: 5.5, zeta: 1 }); this.ran = new Follower({ omega: 9, zeta: 1 }); this.leant = new Follower({ omega: 7, zeta: 0.75 }); this.forwardWas = null; this.gathering = 0; this.take = {};
     for (const c of DRIVEN) this.take[c] = new Inertial(7);
     this.was = null; this.now = null; this.turns = 0; this.psiWas = null;
     /** What the solver keeps for her from one frame to the next (bodyshape.js poseBody): how high her hips ride and how fast they are going there, the height her legs last asked for, and how far under their standing height that left them. */
-    this.keep = { hipY: null, hipV: 0, high: null, sunk: undefined };
+    this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined };
   }
   /** Put down somewhere: nothing of where she was is carried over. */
-  reset() { this.amount.set(0); for (const c of DRIVEN) this.take[c].clear(); this.was = null; this.now = null; this.turns = 0; this.psiWas = null; this.keep = { hipY: null, hipV: 0, high: null, sunk: undefined }; }
+  reset() { this.amount.set(0); this.ran.set(0); this.leant.set(0); this.forwardWas = null; this.gathering = 0; for (const c of DRIVEN) this.take[c].clear(); this.was = null; this.now = null; this.turns = 0; this.psiWas = null; this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined }; }
 
   /**
    * One frame.
    * @param {number} dt
    * @param {object} g  the gait's frame (gait.js update): psi, strides, jumped, amount, along, run
-   * @param {object} c  speed (m/s), crouch 0..1
+   * @param {object} c  speed (m/s), forward (m/s along the way she faces, backward negative), crouch 0..1
    * @returns {object} `amount` (0 standing .. 1 in a steady walk forward), `psi`, and each measure as it is now,
    *   about its own middle and already made her size and scaled by `amount` (measure.js names and signs);
    *   `middle`: where the arms sit (MIDDLE, scaled by `amount`)
    */
   step(dt, g, c) {
-    const run = g.run || 0, pace = c.speed / Math.sqrt(9.81 * this.leg);
+    // (How much of a run it is comes on and goes off over a pace, as a runner's carriage does: the gait's own word for it
+    // follows her speed at once, and she can lose half of that in two frames.)
+    const run = clamp(this.ran.step(dt, g.run || 0), 0, 1), pace = c.speed / Math.sqrt(9.81 * this.leg), walk = 1 - run;
     // (How much of a steady walk forward she is in: it comes on over a pace or two as she sets off, as arms do.)
     // (And goes off a little quicker than it came, as she stops.)
-    const want = clamp((g.amount || 0) * (g.along ?? 1) * (1 - (c.crouch || 0)) * (g.moving === false ? 0 : 1), 0, 1) * (1 - run), amount = Math.max(0, this.amount.step(dt, want, want < this.amount.x ? 8 : 5.5));
-    const size = sizes(Math.max(pace, 0.2), this.leg), psi = g.psi || 0, out = { amount, psi, middle: {}, keep: this.keep, dt, speed: c.speed || 0 };
+    // (Walking or running: `walking` and `running` are its two shares, for what belongs to the one or the other.)
+    const want = clamp((g.amount || 0) * (g.along ?? 1) * (1 - (c.crouch || 0)) * (g.moving === false ? 0 : 1), 0, 1), amount = Math.max(0, this.amount.step(dt, want, want < this.amount.x ? 8 : 5.5));
+    const size = sizes(Math.max(pace, 0.2), this.leg), fast = run > 0 ? sizesRun(pace, this.leg) : null, psi = g.psi || 0, out = { amount, walking: amount * walk, running: amount * run, psi, middle: {}, keep: this.keep, dt, speed: c.speed || 0 };
     // (This stride against her usual one: how far along each of his ways of differing. It wanders smoothly
     // through the stride, by the count of her strides, so that it is the same wherever the clock is read.)
     // (The strides are counted here, as the clock comes round: the gait counts them as her left foot lands, which
@@ -83,10 +111,13 @@ export class BodyMotion {
     if (this.psiWas !== null && !g.jumped) this.turns += psi < this.psiWas - 0.5 ? 1 : psi > this.psiWas + 0.5 ? -1 : 0;
     this.psiWas = psi;
     const along = this.turns + psi, score = WALK.modes.map((m, k) => 1.7 * m.sd * noise1(101 + k, along * 0.83 + k * 3.1));
+    // (A runner's strides differ too; four recorded ones say how only roughly, so by half what they say.)
+    const scoreRun = run > 0 ? RUN.modes.map((m, k) => 0.85 * m.sd * noise1(151 + k, along * 0.83 + k * 3.1)) : null;
     for (const name of DRIVEN) {
-      let v = waveAt(WALK.shape[name], psi);
-      WALK.modes.forEach((m, k) => { v += score[k] * waveAt(m.shape[name], psi); });
-      out[name] = v * size[name] * amount;
+      let v = 0;
+      if (walk > 0) { let w = waveAt(WALK.shape[name], psi); WALK.modes.forEach((m, k) => { w += score[k] * waveAt(m.shape[name], psi); }); v += w * size[name] * walk; }
+      if (run > 0) { let r = waveAt(RUN.shape[name], psi + RUN_AHEAD); RUN.modes.forEach((m, k) => { r += scoreRun[k] * waveAt(m.shape[name], psi + RUN_AHEAD); }); v += r * fast[name] * run; }
+      out[name] = v * amount;
     }
     // (The stride's clock set afresh, or her first frame: what each measure was doing less what it would now do
     // is taken up, and let go to nothing over a third of a second.)
@@ -94,7 +125,15 @@ export class BodyMotion {
     this.fresh = false;
     for (const name of DRIVEN) out[name] += this.take[name].step(dt);
     this.was = { ...out };
-    for (const [name, v] of Object.entries(MIDDLE)) out.middle[name] = v;
+    // How far she leans the way she is going (radians, forward positive): into her speed going forward, a little back
+    // going backward, not at all sideways; and into the gathering of it, as a body does that is setting off (forward)
+    // or pulling up (back against it), which comes to rest with a little give. (She leant forward by her speed
+    // alone, whichever way she went: forward walking backward, and no further setting off than under way.)
+    { const f = c.forward ?? c.speed ?? 0;
+      if (dt > 0 && this.forwardWas !== null) this.gathering += ((f - this.forwardWas) / dt - this.gathering) * (1 - Math.exp(-dt * 10));
+      this.forwardWas = f;
+      out.lean = this.leant.step(dt, (f >= 0 ? 0.08 : 0.03) * clamp(f / 1.4, -1, 1.6) + clamp(0.02 * this.gathering, -0.07, 0.07)); }
+    for (const [name, v] of Object.entries(MIDDLE)) out.middle[name] = v * walk + MIDDLE_RUN[name] * run;
     this.now = out;
     return out;
   }

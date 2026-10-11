@@ -109,7 +109,7 @@ export class Person {
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
     // (What of this frame is a recorded person's walk: in time with her feet, as far as she is walking.)
     this.motion.leg = gait.prop.leg;
-    const motion = this.motion.step(dt, g, { speed: Math.hypot(walker.vx, walker.vz), crouch: Math.max(walker.crouched, k) });
+    const motion = this.motion.step(dt, g, { speed: Math.hypot(walker.vx, walker.vz), forward: walker.vx * Math.sin(c.heading) - walker.vz * Math.cos(c.heading), crouch: Math.max(walker.crouched, k) });
     if (k >= 1) body.pose(sit);
     else body.pose({ gait: g, motion, bank: walker.bank || 0, time: c.time, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look: walker.look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
     const j = body.joints;

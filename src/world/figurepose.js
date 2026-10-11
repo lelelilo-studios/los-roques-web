@@ -90,7 +90,8 @@ const SPINE = { turn: [0.04, 0.1, 0.3, 0.62, 1], list: [0.4, 0.7, 0.88, 0.96, 1]
  * keeps within three millimetres of the upright over his waist, and his head within four, while both roll
  * (tools/ref/motion.json; subject 35). Shared straight up her back, the whole of her trunk leaned with her ribs
  * like a mast, her head went two centimetres to each side of her hips, and her eye, which is yours, swayed 6 cm
- * where her pelvis swayed 3.5; a person's head sways no further than the pelvis under it.
+ * where her pelvis swayed 3.5; a person's head sways no further than the pelvis under it. (Walking. At a run the
+ * recorded runner's head does go from side to side with his ribs, two centimetres each way: there it is shared straight.)
  */
 const SPINE_WALK = [-1, -1, -1, 0.5, 1];
 /** How far a shoulder goes out on its collar bone alone, before her back turns to take it further (m). */
@@ -449,7 +450,7 @@ export class FigureRig {
       // (And walking as a recorded person walks: there her legs say how high her hips ride (her standing knee
       // bends and straightens as a knee does), and her eye is where her back and neck then carry it. Lifted to
       // an eye height asked from above, her hips went up until her knee was dead straight, and stayed there.)
-      if (j.eye) shift[1] *= (1 - seat) * (1 - (j.walking || 0));
+      if (j.eye) shift[1] *= (1 - seat) * (1 - (j.driven ?? j.walking ?? 0));
       this.frame++;
     }
     // (Rocked towards a reach no further than both legs still reach their ankles.)
@@ -521,7 +522,7 @@ export class FigureRig {
       // the same upper arm and forearm, the same bend at the elbow, wherever a finger's breadth of difference between
       // the two shoulders puts the hand. Held to the solver's wrist instead, a nearly straight arm could not always
       // reach it, and its elbow was straightened in jerks.)
-      const free = (j.walking || 0) * (j.reached && len(j.reached[i]) > 1e-4 ? 0 : 1);
+      const free = (j.driven ?? j.walking ?? 0) * (j.reached && len(j.reached[i]) > 1e-4 ? 0 : 1);
       if (free > 0) { const at = this.carry(s.bone.shoulder01, s.S), k = (s.upper + s.fore) / ((len(sub(j.elbows[i], hung)) + len(sub(j.wrists[i], j.elbows[i]))) || 1); wrist = wrist.map((v, c) => v + (at[c] + (j.wrists[i][c] - hung[c]) * k - v) * free); }
       const S = this.carry(s.bone.shoulder01, s.S), [E, plane, Rupper] = armFrom(S);
       // (What her back has still to do: from where the shoulder now is, the arm would have to be all but

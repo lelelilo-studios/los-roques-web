@@ -94,38 +94,43 @@ export function unwrap(v) { const out = [v[0]]; for (let i = 1; i < v.length; i+
  * The way a body is going, moment by moment: `heading` (radians, clockwise from north) from where its pelvis
  * travels when it travels, and from which way its pelvis faces when it does not; `speed` (m/s); and each foot's
  * place against the pelvis in that frame: `fore` (ahead positive) and `aside` (to the right positive), [left, right].
+ * `travel`: the way it is going whichever way it faces, and `on`, `onBall`: each ankle and ball of the foot along that.
  */
 export function course(frames, fps) {
   const n = frames.length, x = lowpass(frames.map(f => f.at[0]), fps, 0.7), z = lowpass(frames.map(f => f.at[2]), fps, 0.7), face = lowpass(unwrap(frames.map(f => f.pelvisTurn)), fps, 0.5);
-  const heading = [], speed = [];
+  const heading = [], speed = [], way = [];
   for (let i = 0; i < n; i++) {
     const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1), vx = (x[b] - x[a]) * fps / (b - a || 1), vz = (z[b] - z[a]) * fps / (b - a || 1), v = Math.hypot(vx, vz);
     speed.push(v);
     // (Going forward, the way it travels; slower than a shuffle, or going backward or sideways, the way it faces.)
     const along = Math.atan2(vx, -vz), k = clamp((v - 0.25) / 0.25, 0, 1) * (Math.cos(wrapPi(along - face[i])) > 0.6 ? 1 : 0);
     heading.push(face[i] + wrapPi(along - face[i]) * k);
+    // (And the way it travels whichever way it faces, backward and sideways too: a foot comes down where it is going.)
+    way.push(face[i] + wrapPi(along - face[i]) * clamp((v - 0.25) / 0.25, 0, 1));
   }
-  const h = lowpass(heading, fps, 0.7), fore = [[], []], aside = [[], []], foreBall = [[], []];
+  const h = lowpass(heading, fps, 0.7), t = lowpass(unwrap(way), fps, 0.7), fore = [[], []], aside = [[], []], foreBall = [[], []], on = [[], []], onBall = [[], []];
   for (let i = 0; i < n; i++) {
     const s = Math.sin(h[i]), c = Math.cos(h[i]), f = frames[i];
     for (let k = 0; k < 2; k++) {
       const d = sub(f.ankles[k], f.at), e = sub(f.balls[k], f.at);
       fore[k].push(d[0] * s - d[2] * c); aside[k].push(d[0] * c + d[2] * s); foreBall[k].push(e[0] * s - e[2] * c);
+      on[k].push(d[0] * Math.sin(t[i]) - d[2] * Math.cos(t[i])); onBall[k].push(e[0] * Math.sin(t[i]) - e[2] * Math.cos(t[i]));
     }
   }
-  return { heading: h, speed, fore, aside, foreBall, x, z };
+  return { heading: h, travel: t, speed, fore, aside, foreBall, on, onBall, x, z };
 }
 
 /**
  * When each foot comes down and leaves the ground, from where it is against the pelvis (Zeni, Richards and
  * Higginson 2008: a heel comes down when the foot is furthest ahead of the pelvis, the toes leave when it is
- * furthest behind): good to a frame or two walking and running, on the level, in any direction of travel.
+ * furthest behind): good to a frame or two walking and running, on the level, in any direction of travel (ahead and
+ * behind are along the way the body is going, which backward or sideways is not the way it faces).
  * Returns [{ foot: 0 | 1, down: frame, off: frame }] in the order they come down; `off` is the leaving that follows.
  */
 export function footfalls(frames, fps, co = course(frames, fps)) {
   const out = [];
   for (let k = 0; k < 2; k++) {
-    const f = lowpass(co.fore[k], fps, 6), b = lowpass(co.foreBall[k], fps, 6), n = f.length, reach = Math.max(...f) - Math.min(...f);
+    const f = lowpass((co.on || co.fore)[k], fps, 6), b = lowpass((co.onBall || co.foreBall)[k], fps, 6), n = f.length, reach = Math.max(...f) - Math.min(...f);
     if (reach < 0.08) continue;
     const downs = [], offs = [];
     for (let i = 2; i < n - 2; i++) {
@@ -165,6 +170,9 @@ export function cycles(frames, fps, { channels = CHANNELS, cut = 6 } = {}) {
     const at = k => a + (b - a) * k / POINTS, line = (v0, v1, k) => v0 + (v1 - v0) * k / POINTS;
     const h0 = co.heading[a], sn = Math.sin(h0), cs = Math.cos(h0), dx = frames[b].at[0] - frames[a].at[0], dz = frames[b].at[2] - frames[a].at[2], length = Math.hypot(dx, dz);
     const stride = { from: a, to: b, time, speed: length / time, length, stance: [(left[s].off - a) / (b - a), (r.off - r.down) / (b - a)], rightDown: (r.down - a) / (b - a), mean: {}, curve: {} };
+    // (Which way she is going against the way she faces, half way through it: 0 forward, pi backward, a quarter turn
+    // sideways, to her right positive; and how far she turns over it.)
+    if (co.travel) { const m = Math.round((a + b) / 2); stride.way = wrapPi(co.travel[m] - co.heading[m]); stride.turned = wrapPi(co.heading[b] - co.heading[a]); }
     // (How far apart the feet pass, across the way she goes: each ankle's place as it bears her, half way through its stance.)
     { const mid = f => Math.round((f.down + f.off) / 2); stride.width = co.aside[1][Math.min(frames.length - 1, mid(r))] - co.aside[0][mid(left[s])]; }
     for (const c of channels) {
