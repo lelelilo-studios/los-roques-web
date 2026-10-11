@@ -1213,7 +1213,9 @@ export async function start(canvas, onProgress = () => {}) {
       hand.act(dt, { ...you.reachable, wind: [breeze.x * lee, breeze.y * lee], joints: body.joints, eye: rig.eye, material: body.mesh.material, world: toWorld, turn: v => [v[0] * cy - v[2] * sy, v[1], v[0] * sy + v[2] * cy] });
     }
     else if (walking) {
-      if (hand.ik > 0 || hand.amount > 0 || handL.ik > 0 || handL.amount > 0) { hand.reset(); handL.reset(); }          // (swimming: the hands have other work)
+      // (Swimming, the hands have other work: what they held is let fall first, from where they were, and is seen to
+      // fall. It was gone in that frame, hand and handful.)
+      if (hand.ik > 0 || hand.amount > 0 || handL.ik > 0 || handL.amount > 0) { for (const h of [hand, handL]) { if (h.amount > 0) h.spill(clock.time); h.reset(); } }
       for (const c of shared.uContact.value) c.w = 0;
       // (Going under and coming up are movements: the body tips over into the dive and levels as it comes up, in under a second.)
       const under = walker.swimUnder ?? (walker.diving ? 1 : 0), heading = walker.swimYaw ?? walker.yaw, bank = walker.swimBank || 0;

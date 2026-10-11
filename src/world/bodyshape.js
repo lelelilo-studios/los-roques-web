@@ -19,6 +19,7 @@ export const THIGH = 0.45, SHIN = 0.42, ANKLE = 0.06, TORSO = 0.5, HIP = 0.09, S
  * stand = eye height standing; crouchBy = how far the eye comes down to a full crouch.
  */
 import { kneeStance } from './humanref.js';
+import { noise1 } from './motion.js';
 import { limitWrist, mixPose, slerpFrame, swivel } from './handpose.js';
 
 /**
@@ -76,7 +77,7 @@ function inward(side, f) {
  * arm passes through nothing (`blocks`), a step at a time (`work.memo`); and if the hand is asked to be held as no
  * wrist can hold it, it gives. Returns { wrist, elbow, f, N }.
  */
-function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0) {
+function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0, arch = 0.066) {
   const to = work.at, curl = work.curl ?? 0.2, lift = work.wrist ? Math.min(1, Math.max(0, work.lift ?? 0)) : 0, up = work.eased ? lift : lift * lift * (3 - 2 * lift), inc = work.incline || 0;
   // (How far the palm has rolled over: with the lift, unless the hand says otherwise: it begins to turn in the sand.)
   const turn = work.wrist ? Math.min(1, Math.max(0, work.turn ?? up)) : 0;
@@ -118,6 +119,11 @@ function workArm(side, sh, wrist0, elbow0, f0, N0, work, reaching, blocks, pole0
   if (m) { if (up > 0 && m.ground) for (let i = 0; i < 3; i++) want[i] = m.ground[i]; else if (up <= 0) m.ground = want.slice(); }
   if (up > 0) for (let i = 0; i < 3; i++) want[i] += (work.wrist[i] - want[i]) * up;
   const wrist = [0, 1, 2].map(i => wrist0[i] + (want[i] - wrist0[i]) * reaching);
+  // (Not by the straight way: a hand going to a place on the ground rises a little as it sets out and comes down on to
+  // the place, as reaching hands do; a fifteenth of how far it goes, most half way. It slid there along a ruled
+  // line. Going down only: held up, the hand is where it is put. (`arch`: by how much of the way. Seated it is
+  // nought, as it was: her seated reach is already as sudden as a reach is let be, and this made it more so.)
+  if (arch > 0) { const far = Math.hypot(want[0] - wrist0[0], want[1] - wrist0[1], want[2] - wrist0[2]), over = Math.sin(Math.PI * Math.min(1, Math.max(0, reaching))); wrist[1] += arch * far * over * over * (1 - up); }
   { const d = [wrist[0] - sh[0], wrist[1] - sh[1], wrist[2] - sh[2]], l = Math.hypot(d[0], d[1], d[2]), most = (PROP.upperArm + PROP.forearm) * 0.999; if (l > most) for (let i = 0; i < 3; i++) wrist[i] = sh[i] + d[i] * most / l; }
   let [hf, hN] = slerpFrame(f0, N0, f, N, reaching);
   // (Held up to look at, a wrist is not bent back as far as it will go: `work.back` degrees at most, by default 26;
@@ -554,7 +560,7 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
       // (Seated upright, the shoulder dips towards the hand: the sand beside you is an arm's length down.)
       if (recline === null) { sh[1] -= 0.1 * reaching * (1 - up); sh[2] -= 0.14 * reaching * (1 - up); } else sh[1] -= 0.06 * reaching * (1 - up);
       sh[0] += side * 0.03 * reaching * (1 - up);
-      held = workArm(side, sh, wrist, elbow, flat, facing, work, reaching, legBlocks(hipJ, knee, ankle), pole);
+      held = workArm(side, sh, wrist, elbow, flat, facing, work, reaching, legBlocks(hipJ, knee, ankle), pole, 0);
       for (let i = 0; i < 3; i++) wrist[i] = held.wrist[i];
       elbow = held.elbow;
     }
@@ -564,11 +570,12 @@ export function poseSit(t, h, { eye, draw = 0, splay = 0, wiggle = 0, touch = nu
     const point = !!held, curl = grip ? 0.85 : point ? 0.12 + ((work.curl ?? 0.2) - 0.12) * reaching : 0.12, spread = point ? (work.spread ?? 0) * reaching : grip ? 0 : 0.1;
     if (detail) {
       // (Her own fingers: at rest laid flat on the sand, at work as the hand has them.)
-      const fingers = fingersOf(side, 0.12, point ? work.fingers : null, reaching);
+      // (And on the tiller, closed round it: `grip` (handpose.js). They lay flat along the top of it.)
+      const fingers = grip && handModel(side)?.poses?.grip ? handModel(side).poses.grip : fingersOf(side, 0.12, point ? work.fingers : null, reaching);
       if (!held) { const [f, N] = limitWrist(sh, elbow, wrist, flat, facing, side, ARM); held = { f, N }; }
       const tubeTip = t.hand(wrist, held.f, held.N, side, curl, SKIN, spread, elbow, sleeve), tip = fingertip(side, t.palm, fingers, tubeTip);
       joints.fingertips.push(tip);
-      joints.hands.push({ ...t.palm, curl, spread, ...(fingers ? { fingers } : {}) });
+      joints.hands.push({ ...t.palm, curl, spread, ...(fingers ? { fingers } : {}), atEase: grip || propped ? 0 : 1 - Math.min(1, reaching) });
       if (point) joints[side > 0 ? 'touching' : 'touchingL'] = { tip, wrist: wrist.slice(), amount: reaching, palm: { ...t.palm } };
     } else {
       const tip = [wrist[0] + flat[0] * 0.17, wrist[1], wrist[2] + flat[2] * 0.17];
@@ -640,7 +647,7 @@ export function mixPoses(a, b, k, parts = null) {
   if (a.reached && b.reached) out.reached = a.reached.map((p, i) => mix(p, b.reached[i] || p)); else delete out.reached;
   out.feet = a.feet.map((f, i) => ({ pitch: num(f.pitch, b.feet[i].pitch), out: num(f.out, b.feet[i].out), planted: num(f.planted, b.feet[i].planted), toes: num(f.toes, b.feet[i].toes) }));
   // (A hand goes from the one way of holding it to the other by one turn, and its joints each by their own way.)
-  out.hands = a.hands.map((h, i) => { const g = b.hands[i] || h, [f, N] = slerpFrame(h.f, h.N, g.f, g.N, k); return { ...h, f, N, curl: num(h.curl, g.curl), spread: num(h.spread, g.spread), ...(h.fingers && g.fingers ? { fingers: mixPose(h.fingers, g.fingers, k) } : {}) }; });
+  out.hands = a.hands.map((h, i) => { const g = b.hands[i] || h, [f, N] = slerpFrame(h.f, h.N, g.f, g.N, k); return { ...h, f, N, curl: num(h.curl, g.curl), spread: num(h.spread, g.spread), atEase: num(h.atEase, g.atEase), ...(h.fingers && g.fingers ? { fingers: mixPose(h.fingers, g.fingers, k) } : {}) }; });
   for (const name of ['pelvis', 'list', 'tiltTop', 'breath', 'headTurn', 'headNod', 'crouch', 'lean']) out[name] = num(a[name], b[name]);
   // (What a recorded walk puts into her trunk, her head and where her arms hang from goes out of her as she goes
   // into a posture that has none of it, as everything else does: not all of it at the half way.)
@@ -726,7 +733,7 @@ function mixParts(a, b, k, K) {
     out.wrists.push(wrist); out.elbows.push(reach(sh, wrist, PROP.upperArm, PROP.forearm, pole));
     out.fingertips.push(plus(wrist, lerp3(off(a.fingertips[i], a.wrists[i]), off(b.fingertips[i] || a.fingertips[i], b.wrists[i] || a.wrists[i]), t)));
     const g = b.hands[i] || h, [f, N] = slerpFrame(h.f, h.N, g.f, g.N, t);
-    return { ...h, f, N, curl: num(h.curl, g.curl, t), spread: num(h.spread, g.spread, t), ...(h.fingers && g.fingers ? { fingers: mixPose(h.fingers, g.fingers, t) } : {}) };
+    return { ...h, f, N, curl: num(h.curl, g.curl, t), spread: num(h.spread, g.spread, t), atEase: num(h.atEase, g.atEase, t), ...(h.fingers && g.fingers ? { fingers: mixPose(h.fingers, g.fingers, t) } : {}) };
   });
   for (const name of ['pelvis', 'list', 'tiltTop', 'breath', 'headTurn', 'headNod', 'lean']) out[name] = num(a[name], b[name], K.trunk);
   out.crouch = num(a.crouch, b.crouch, K.hips);
@@ -1019,7 +1026,8 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     joints.hips.push(hipJ); joints.knees.push(knee); joints.ankles.push(ankle);
     // The arm swings against its leg; the elbow bends more the faster you go.
     // (Standing, her arms are not hung up: they drift a degree or so, each by itself, as arms do that hang from a body that breathes and sways.)
-    const adrift = gait ? (1 - gait.amount) * (1 - crouch) * (0.02 * Math.sin(0.43 * time + side * 1.3) + 0.012 * Math.sin(1.07 * time + side * 2.1) + 0.006 * breath) : 0;
+    // (By no clock of their own: two sines, each arm's on fixed periods, came round the same every fifteen seconds.)
+    const adrift = gait ? (1 - gait.amount) * (1 - crouch) * (0.024 * noise1(171 + side, time * 0.13) + 0.012 * noise1(177 + side, time * 0.41) + 0.006 * breath) : 0;
     // (With a recorded walk on, the arm swings and its elbow bends as his did, the size a woman's do: what the
     // gait made of them from her feet gives way. `LR`: which arm.)
     const LR = side < 0 ? 'L' : 'R', swungBy = mo ? mo['arm' + LR] + driven * mo.middle['arm' + LR] : 0, bentBy = mo ? mo['elbow' + LR] + driven * (mo.middle['elbow' + LR] - 0.3) : 0;
@@ -1102,7 +1110,8 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
       const tip = fingertip(side, t.palm, fingers, tubeTip);
       joints.fingertips.push(tip);
       // (How the hand is held: the frame of its palm, how far the fingers are curled and parted, and every joint of it.)
-      joints.hands.push({ ...t.palm, curl: point ? loose + ((work.curl ?? 0.2) - loose) * reaching : loose, spread: point ? (work.spread ?? 0) * reaching : 0, ...(fingers ? { fingers } : {}) });
+      // (`atEase`: how far this hand has nothing to do, 0..1: figurepose.js lets its fingers and wrist drift by as much.)
+      joints.hands.push({ ...t.palm, curl: point ? loose + ((work.curl ?? 0.2) - loose) * reaching : loose, spread: point ? (work.spread ?? 0) * reaching : 0, ...(fingers ? { fingers } : {}), atEase: 1 - Math.min(1, reaching) });
       if (point) joints[side > 0 ? 'touching' : 'touchingL'] = { tip, wrist: wrist.slice(), amount: reaching, palm: { ...t.palm } };
     } else {
       t.tube(elbow, wrist, [0.036, 0.04], [0.026, 0.03], SKIN);

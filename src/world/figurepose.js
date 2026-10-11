@@ -491,7 +491,10 @@ export class FigureRig {
       this.hinge(s.bone.foot, Rf);
       // (With the heel up the toes stay flat on the ground; otherwise they go with the foot, and can curl up or grip.)
       const Rtoes = foot.pitch < 0 && j.feet ? (foot.out === undefined ? IDENTITY : about([0, 1, 0], -(foot.out - s.side * 0.12))) : foot.toes ? mul(Rf, about([1, 0, 0], foot.toes)) : Rf;
-      for (const t of s.toes) this.hinge(t, Rtoes);
+      // (Each toe by itself: curling up or gripping, the big toe goes furthest and the little ones less, and no two by quite
+      // the same amount from one moment to the next. All five went as one.)
+      if (foot.toes && !(foot.pitch < 0 && j.feet) && j.time !== undefined) s.toes.forEach((t, k) => this.hinge(t, mul(Rf, about([1, 0, 0], foot.toes * (1 - 0.09 * k) * (1 + 0.22 * noise1(151 + 5 * k + (s.side > 0 ? 40 : 0), j.time * 0.9 + k))))));
+      else for (const t of s.toes) this.hinge(t, Rtoes);
 
       // The arm: the shoulder joint goes where the solver has it (it comes forward when you reach).
       // (The solver's shoulders go round with the chest.)
@@ -540,7 +543,11 @@ export class FigureRig {
       // (The way the palm faces is made square to the way the hand points: two directions mixed from two poses are not.)
       // (And the hand is held on this arm as a wrist can hold it: the solver keeps to that with its own arm, a
       // finger's breadth from hers, and two poses mixed may be outside it. A little is allowed over the solver's limits.)
-      const [hf, hN] = j.hands?.[i] ? limitWrist(S, E, wrist, h.f, h.N, s.side, WRIST_LIMITS, plane) : [unit(h.f), h.N];
+      // (And the wrist of a hand at ease is not locked: it gives three degrees and less, slowly, bending and to either
+      // side, before it is held to what a wrist does.)
+      const loose = j.time !== undefined && j.hands?.[i] ? h.atEase || 0 : 0, drifted = (f, N) => { if (!(loose > 0)) return [f, N];
+        const A = cross(f, N), a = loose * 0.055 * noise1(131 + i, j.time * 0.17), b = loose * 0.035 * noise1(137 + i, j.time * 0.23 + 3), f1 = unit(f.map((v, q) => v + N[q] * a + A[q] * b)), k = dot(N, f1); return [f1, unit(N.map((v, q) => v - f1[q] * k))]; };
+      const [df, dN] = drifted(h.f, h.N), [hf, hN] = j.hands?.[i] ? limitWrist(S, E, wrist, df, dN, s.side, WRIST_LIMITS, plane) : [unit(h.f), h.N];
       const rest = [s.f, s.N, cross(s.f, s.N).map(v => v * s.side)], held = [hf, hN, cross(hf, hN).map(v => v * s.side)];
       const Rhand = between(rest, held);
       // (The hand's turn about the forearm is shared up the forearm, as the two bones in it do: none at the elbow.)
@@ -560,15 +567,21 @@ export class FigureRig {
       this.hinge(s.bone.wrist, Rhand);
       // Fingers, thumb and the bones of the palm: as the hand's pose has them (handpose.js). A pose is twenty-one
       // angles (`fingers`); a hand given only the old `curl` and `spread` takes the pose those stand for.
-      const model = this.models[i], pose = h.fingers || model.fromCurl(h.curl ?? 0.1, h.spread || 0, this.posed[i]);
-      // (A hand at ease is not a cast of one: each finger is curled a little more than the one before it, towards the
-      // little one, and none of them is ever quite still: each drifts a few degrees, slowly, by itself, and the
-      // thumb with them. Only a hand with nothing to do: one at work has its own pose, finger by finger. `j.time`
-      // is the clock: the drift is read off it, nothing is kept. It was one curl for all four, for ever.)
-      if (!h.fingers && j.time !== undefined) for (let n = 0; n < 4; n++) {
-        const d = 0.05 * (n - 1.2) + 0.075 * noise1(31 + 7 * i + n, j.time * 0.21 + n * 1.7) + 0.03 * noise1(57 + 5 * i + n, j.time * 0.67 + n);
-        pose[MCP + n] += d; pose[PIP + n] += 0.9 * d; pose[DIP + n] += 0.5 * d;
-        if (n === 0) { const t = 0.05 * noise1(83 + i, j.time * 0.19); pose[T_MCP] += t; pose[T_IP] += 0.6 * t; }
+      const model = this.models[i], ease = j.time !== undefined ? (h.fingers ? h.atEase || 0 : 1) : 0;
+      let pose = h.fingers || model.fromCurl(h.curl ?? 0.1, h.spread || 0, this.posed[i]);
+      // (A hand at ease is not a cast of one: none of its fingers is ever quite still: each drifts a few degrees,
+      // slowly, by itself, and the thumb with them. Only a hand with nothing to do (`atEase`, 0..1: the solver says): one at work, or on the
+      // sand, or on the tiller, has its own pose, finger by finger. `j.time` is the clock: the drift is read off
+      // it, nothing is kept. It was one pose for all time. And written into her own copy of the pose, not the
+      // solver's. (In build 123 this was here and did nothing: it looked for a hand with no pose of its own, and
+      // every hand of hers has one.))
+      if (ease > 0) {
+        if (pose !== this.posed[i]) { for (let q = 0; q < POSE_LENGTH; q++) this.posed[i][q] = pose[q]; pose = this.posed[i]; }
+        for (let n = 0; n < 4; n++) {
+          const d = ease * (0.075 * noise1(31 + 7 * i + n, j.time * 0.21 + n * 1.7) + 0.03 * noise1(57 + 5 * i + n, j.time * 0.67 + n));
+          pose[MCP + n] = Math.max(0, pose[MCP + n] + d); pose[PIP + n] = Math.max(0, pose[PIP + n] + 0.9 * d); pose[DIP + n] = Math.max(0, pose[DIP + n] + 0.5 * d);
+          if (n === 0) { const t = ease * 0.05 * noise1(83 + i, j.time * 0.19); pose[T_MCP] += t; pose[T_IP] += 0.6 * t; }
+        }
       }
       for (const [b, R] of model.solve(pose, this.solved[i]).rot) this.hinge(b, mul(Rhand, R));
     }

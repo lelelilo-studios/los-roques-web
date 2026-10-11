@@ -229,6 +229,9 @@ export const ATTITUDES = {
   siftWide: [[20, 22, 24, 27], [16, 17, 17, 18], [10, 10, 10, 10], [8, 7, 7], 5, { beside: 6, lift: 16, mcp: 5, ip: 6 }],        // and wide apart
   rake: [[35, 38, 40, 42], [45, 45, 45, 45], [28, 28, 28, 28], [9, 8, 8], 0, { plane: 40, lift: 12, mcp: 5, ip: 10 }],           // bent like the tines of a rake
   release: [[14, 16, 18, 22], [12, 14, 15, 16], [8, 8, 8, 8], [10, 8, 8], 0, { plane: 38, lift: 26, mcp: 0, ip: 0 }],            // opening as it lets go
+  grip: [[55, 58, 60, 63], [68, 70, 70, 71], [32, 33, 33, 34], [0.5, 0.5, 0.5], 8, { beside: 1, lift: 30, mcp: 18, ip: 28 }],    // closed round a bar as thick as a tiller, the thumb under it
+  stroke: [[10, 11, 13, 16], [9, 9, 10, 11], [5, 5, 5, 5], [0.4, 0.4, 0.4], 6, { beside: 0.5, lift: 9, mcp: 3, ip: 3 }],         // pulling at the water: a paddle, fingers together, a little hollowed
+  ease: [[21, 23, 26, 29], [25, 25, 26, 27], [14, 14, 14, 14], [4, 3, 3], 2, { beside: 3, lift: 14, mcp: 4, ip: 5 }],            // let go between pulls, the fingers a little apart
 };
 // How far the middle finger leans towards the thumb's side of where the body was modelled with it, when the
 // fingers lie together (radians): the hand was modelled with its fingers fanned, the middle one pointing a
