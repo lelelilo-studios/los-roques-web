@@ -10,7 +10,8 @@
 // swimming. `seated`: how far her legs are drawn up (0..1), how wide her feet (0..1), her toes (radians), and
 // how far back she leans.
 import { BodyMotion } from './bodymotion.js';
-import { Follower } from './motion.js';
+import { seatParts } from './moves.js';
+import { Follower, noise1 } from './motion.js';
 
 export class Person {
   /**
@@ -83,9 +84,14 @@ export class Person {
     // what it took to bring her eye to its height. A heel that comes up as the leg needs it has to know: told
     // only the solver's hips, it came up late whenever hers were higher, and the eye was jolted as the foot left.)
     const lifted = figureRig?.shiftNow && you.on ? figureRig.shiftNow[1] : 0;
-    const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, wish: walker.sitting ? null : walker.wish, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: c.groundAt, sink: c.sink, hold: walker.sitting, time: c.time,
+    // (Asked to sit down as she walks, she brings her feet under her first, as she squats: her feet are left to the
+    // gait until they are, and she goes back on to her seat only then (walk.js `feetReady`). Held where a stride had
+    // left them, the foot behind her was under her seat as it came down.)
+    const held = walker.sitting && (walker.seated > 0 || gait.rested !== false);
+    const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, wish: walker.sitting ? null : walker.wish, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: c.groundAt, sink: c.sink, hold: held, time: c.time,
       // (Your hip joints as last posed, carried on by how far you have come since.)
       hips: you.on && body.joints?.hips && !walker.sitting && walker.seated < 0.02 ? body.joints.hips.map(q => { const w = this.toWorld(q); return [w[0] + walker.vx * dt, w[1] + lifted, w[2] + walker.vz * dt]; }) : null });
+    walker.feetReady = !walker.sitting || walker.seated > 0 || gait.rested !== false;
     // Your toes, standing: Space curls them up and digs them into the sand, as it does when you sit; and left to
     // themselves, standing a while, the toes of one foot and then the other lift and settle again every few
     // seconds, as bare feet do on sand. (They press what they touch: the patch of real sand takes their marks.)
@@ -109,15 +115,21 @@ export class Person {
     // feet together and apart, Space curls your toes.
     // (You sit leaning back a little on your hand; reaching for the sand beside you, you lean forward over it.)
     // (Eased both ways, like any movement of the trunk.)
-    if (dt > 0) { const down = Math.max(reach ? reach.amount * (1 - (reach.lift || 0)) : 0, reachL ? reachL.amount * (1 - (reachL.lift || 0)) : 0), to = walker.sitting ? 0.22 - 0.34 * down : 0.22; seated.leanTo = to; seated.leanV = (seated.leanV || 0) + (36 * (to - seated.lean) - 12 * (seated.leanV || 0)) * dt; seated.lean += seated.leanV * dt; }
+    // (And seated she is not a statue: she leans back a degree more and a degree less, slowly, as she rests on her hand.)
+    // (By how far she is on her seat, not by whether she is sitting down or getting up: asked to get up, or to sit
+    // again, with a hand on the sand, what she leant to changed in that frame, and her shoulder with it.)
+    if (dt > 0) { const down = Math.max(reach ? reach.amount * (1 - (reach.lift || 0)) : 0, reachL ? reachL.amount * (1 - (reachL.lift || 0)) : 0), to = 0.22 - 0.34 * down * walker.seated * walker.seated * (3 - 2 * walker.seated) + 0.022 * noise1(311, c.time * 0.11) * (1 - down); seated.leanTo = to; seated.leanV = (seated.leanV || 0) + (36 * (to - seated.lean) - 12 * (seated.leanV || 0)) * dt; seated.lean += seated.leanV * dt; }
     if (walker.sitting && dt > 0) {
-      seated.draw = Math.min(1, Math.max(0, seated.draw + input.fwd * -dt * 0.9)); seated.splay = Math.min(1, Math.max(0, seated.splay + input.right * dt * 0.9));
+      // (Her legs gather their pace and lose it over a tenth of a second: they began and stopped at full pace.)
+      seated.drawV = (seated.drawV || 0) + (input.fwd * -0.9 - (seated.drawV || 0)) * (1 - Math.exp(-dt / 0.1)); seated.splayV = (seated.splayV || 0) + (input.right * 0.9 - (seated.splayV || 0)) * (1 - Math.exp(-dt / 0.1));
+      seated.draw = Math.min(1, Math.max(0, seated.draw + seated.drawV * dt)); seated.splay = Math.min(1, Math.max(0, seated.splay + seated.splayV * dt));
       seated.wiggle += ((input.up ? 0.45 * Math.sin(c.time * 9) - 0.15 : 0) - seated.wiggle) * (1 - Math.exp(-dt * 12));
     }
     // Sitting down and getting up are movements, a second long: from a squat over your feet back on to your
     // seat, a hand going to the sand behind you and your legs out in front; and the same undone. (`seated`: how
     // far along; the two poses are mixed, joint by joint.)
-    const k = walker.seated, eased = k * k * (3 - 2 * k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: c.seatSink, touch: reach, touchL: reachL, turn, look };
+    // (On the sand it is a movement of parts, each in its turn: world/moves.js. Into her boat it is still one mix: `eased`.)
+    const k = walker.seated, eased = k * k * (3 - 2 * k), parts = walker.carried ? null : seatParts(k), sit = { sit: true, eye: walker.sit, recline: seated.lean, hop: walker.scoot || 0, draw: seated.draw, splay: seated.splay, wiggle: seated.wiggle, breath, sink: c.seatSink, touch: reach, touchL: reachL, turn, look };
     // (In your boat: on its bench, your feet on its floorboards, your hand on the tiller once you are sat. Getting
     // in and out, your knees come up to clear the side.)
     if (walker.carried) Object.assign(sit, { recline: c.carried.recline, hop: 0, sink: 0, touch: null, touchL: null, bench: { drop: c.carried.drop, ahead: 0.4, tuck: Math.sin(Math.PI * Math.min(1, k)) ** 2, grip: k > 0.8 ? c.carried.grip() : null } });
@@ -125,7 +137,7 @@ export class Person {
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
     if (k >= 1) body.pose(sit);
-    else body.pose({ gait: g, motion, bank: walker.bank || 0, time: c.time, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: eased } } : {}) });
+    else body.pose({ gait: g, motion, bank: walker.bank || 0, time: c.time, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: parts ? k : eased, parts } } : {}) });
     const j = body.joints;
     // (For her skeleton and her eyes: what her chest has taken of the look, and where you are in fact looking.)
     j.chestLook = chest; j.lookTurn = c.turn; j.lookUp = walker.look; j.time = c.time;

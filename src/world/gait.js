@@ -95,7 +95,7 @@ export class Gait {
   /** Standing at ease at (x, z), facing `heading`: both feet down, side by side. */
   reset(x, z, heading) {
     this.feet.forEach((f, i) => { const [hx, hz] = this.home(i, x, z, heading); Object.assign(f, { x: hx, z: hz, yaw: heading + f.side * TOE_OUT, down: true, since: 9, strike: 0, pitch: 0, lift: 0, pivot: 0, from: null, to: null, ankle: [hx, this.prop.ankle, hz], planted: 1, ahead: 0, sunk: undefined, stoodAt: undefined, landNow: null, until: undefined }); });
-    this.phase = 0; this.still = 9; this.moving = false; this.shift = 0; this.shiftV = 0; this.settling = -1; this.events.length = 0;
+    this.phase = 0; this.still = 9; this.moving = false; this.shift = 0; this.shiftV = 0; this.settling = -1; this.rested = true; this.events.length = 0;
     this.vary = [1, 1]; this.varyTo = [1, 1]; this.late = [0, 0]; this.ride = 0; this.dice = 12345; this.strides = 0; this.paces = 0; this.jumped = true;
     for (const f of this.feet) { f.v = [0, 0, 0]; f.pitchV = 0; }
   }
@@ -160,7 +160,9 @@ export class Gait {
           if (off > 1 && off > most) { most = off; worst = i; }
         });
         if (worst >= 0) { this.phase = stance - (worst ? Math.PI : 0) - 1e-4; this.settling = worst; this.hurry = most > 2.2; this.jumped = true; }
-      }
+        // (`rested`: both feet are under her where they belong, and down: she may sit down from here. person.js)
+        this.rested = worst < 0 && this.settling < 0;
+      } else this.rested = false;
       // The clock: a pace of travel is half a turn. A foot in the air comes down within half a second whatever
       // you do (you do not stand on one leg because you stopped).
       const before = this.phase;
@@ -212,7 +214,7 @@ export class Gait {
           if (f.w >= 1) {
             // Down. (How far ahead of you it lands decides how far its toes are up as the heel touches.)
             const length = Math.hypot(tx - f.from.x, tz - f.from.z);
-            f.down = true; f.x = tx; f.z = tz; f.yaw = f.to.yaw; f.since = 0; f.lift = 0; if (i === 0 && moving) this.strides = (this.strides || 0) + 1;
+            f.down = true; f.x = tx; f.z = tz; f.yaw = f.to.yaw; f.since = 0; f.lift = 0; f.squat = 0; if (i === 0 && moving) this.strides = (this.strides || 0) + 1;
             f.strike = clamp(STRIKE * ((tx - c.x) * Math.sin(f.yaw) - (tz - c.z) * Math.cos(f.yaw)), 0, 0.36) * (1 - 0.7 * run); f.touch = BACK_TOUCH * backing;
             this.events.push({ side: i, x: tx + Math.sin(f.yaw) * 0.06, z: tz - Math.cos(f.yaw) * 0.06, yaw: f.yaw, stride: speed / 1.4, length });
             f.from = f.to = null;
@@ -298,7 +300,11 @@ export class Gait {
         const mine = SIDED[f.side < 0 ? 0 : 1], sided = (v, k = narrow) => 1 + (v - 1) * k;
         const byStance = (TOE_OFF * sided(mine.push) + 0.22 * run) * clamp((share - 0.58 + 0.13 * run) / (0.42 + 0.13 * run), 0, 1) ** (2.6 - 1.3 * run) * clamp(pace / (0.5 * legs), 0.25, 1) * clamp(speed / 0.5, 0, 1);
         const byPlace = PUSH * clamp((-f.ahead - 0.33 * L) / (0.115 * L), 0, 1) ** 1.3;
-        let push = Math.max((byStance * fwd + byPlace * (1 - fwd)) * (1 - crouch), 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)), 0.4 * (f.pivot || 0));
+        // (Squatting, her heels come up; and for a foot that has only now come down under her as she squats, they come up
+        // from the sand, over a sixth of a second. Crouching out of a walk, a foot was set down flat and was on its
+        // toes in the next frame but one, its ankle five centimetres higher and her knee and hand with it.)
+        const squatUp = 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)); f.squat = t > 0.002 ? 0 : Math.min(squatUp, (f.squat ?? squatUp) + 2.6 * dt);
+        let push = Math.max((byStance * fwd + byPlace * (1 - fwd)) * (1 - crouch), f.squat, 0.4 * (f.pivot || 0));
         ground = c.groundAt(f.x, f.z);
         // And the heel comes up as far as the leg needs it to: a leg left behind you does not pull your hips
         // down after it, it goes up on to its ball until, all but straight, it reaches. (c.hips: where your hip

@@ -1027,7 +1027,7 @@ export async function start(canvas, onProgress = () => {}) {
     // Your hand (world/hand.js): what it is to do this frame. It can go down to the ground when you are crouched
     // or seated, on sand or in water no deeper than your knee. (Its frame is the body's, as last posed.)
     const ox = walker.x - (you.home[0] * cy - you.home[2] * sy), oz = walker.z - (you.home[0] * sy + you.home[2] * cy);
-    const settling = Math.max(0, walker.body - (walker.bodyWant ?? walker.body)) + (walker.sitting ? Math.abs(seated.lean - (seated.leanTo ?? seated.lean)) * 0.45 : 0);
+    const settling = Math.max(0, walker.body - (walker.bodyWant ?? walker.body)) + Math.abs(seated.lean - (seated.leanTo ?? seated.lean)) * 0.45 * walker.seated * walker.seated * (3 - 2 * walker.seated);
     const reachable = { want: !!input.hand, open: input.open, openBy: input.openBy || 0, steerBy: input.steerBy || null, eyeAt: you.on ? you.eyeAt : null, headTurn: turn, going: Math.hypot(walker.vx, walker.vz), settling, sitting: walker.sitting, seated: walker.seated * walker.seated * (3 - 2 * walker.seated), low: walker.crouched, canReach: (walker.crouched > 0.8 || walker.sitting) && walker.depth < 0.5 && !deck && !walker.carried, time: clock.time, look: walker.look, body: walker.body, feet: feetY,
       x: ox, z: oz, yaw: heading, cy, sy, surf: walker.surf, groundAt: (x, z) => footing.heightAt(x, z), wetAt: wetSandAt };
     // (Both hands holding something, held up: they come together.)
@@ -1042,8 +1042,9 @@ export async function start(canvas, onProgress = () => {}) {
     // falling from you as you get up.
     if (dt > 0) {
       const wet = wetSandAt(walker.x, walker.z, footing.heightAt(walker.x, walker.z)) ? 1 : 0, was = you.seatWas ?? 0, scooting = (walker.scootLeft || 0) > 0;
-      if (was < 0.6 && walker.seated >= 0.6 && walker.sitting) sound.seat('down', wet);
-      if (was > 0.85 && walker.seated <= 0.85 && !walker.sitting) sound.seat('up', wet);
+      // (As her seat comes down on to the sand, and as it leaves it: world/moves.js has it down at 0.74 of the way.)
+      if (was < 0.68 && walker.seated >= 0.68 && walker.sitting) sound.seat('down', wet);
+      if (was > 0.7 && walker.seated <= 0.7 && !walker.sitting) sound.seat('up', wet);
       if (scooting && !you.scooting) sound.seat('scoot', wet);
       you.seatWas = walker.seated; you.scooting = scooting;
     }

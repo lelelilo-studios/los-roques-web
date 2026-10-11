@@ -27,6 +27,10 @@ export function paceLength(speed, crouch = 0, legs = 1) {
 }
 
 const smooth = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+// Back on to your seat from a squat, and forward off it again: how long (s). And how far off your seat you are
+// (`seated` under this) before you begin to rise from the squat. (Recorded people take two and a half seconds to sit
+// down on the ground from standing and as long to get up: world/moves.js.)
+export const SEAT_TIME = 1.55, RISE_AT = 0.32;
 
 export class Walker {
   /**
@@ -70,7 +74,7 @@ export class Walker {
   /** How far down you are, 0 standing .. 1 in a full crouch. */
   get crouched() { return Math.min(1, Math.max(0, (this.stand - this.body) / (this.stand - this.crouch))); }
   place({ x, z, yaw = this.yaw, look = this.look, height = this.stand, eye = null }) {
-    Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, seated: 0, bodyV: 0, turnRate: 0, turning: false, slant: 0, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
+    Object.assign(this, { x, z, yaw, look, heading: yaw, head: null, placed: true, seated: 0, seatRate: 0, bodyV: 0, turnRate: 0, turning: false, slant: 0, vx: 0, vz: 0, phase: 0, bob: 0, sway: 0, roll: 0, thud: 0, turned: 0, lastYaw: yaw, diveTimer: 0, stride: 0, sitting: false, sat: false });
     const g = this.ground.heightAt(x, z);
     this.surf = this.surfaceAt(x, z); this.surfMean = this.surf;
     this.body = height; this.bodyTo = height; this.bodyV = 0;
@@ -99,7 +103,7 @@ export class Walker {
       const c = this.carried(dt);
       this.pinned = false;
       this.yaw += c.turned; this.x = c.x; this.z = c.z; this.heading = c.heading;
-      this.vx = this.vz = 0; this.sitting = c.seated >= 1; this.seated = c.seated; this.sat = !!input.sit;
+      this.vx = this.vz = 0; this.sitting = c.seated >= 1; this.seated = c.seated; this.seatRate = 0; this.sat = !!input.sit;
       this.body = this.bodyTo = this.bodyWant = c.body; this.bodyV = 0;
       this.surf += (this.surfaceAt(this.x, this.z) - this.surf) * (1 - Math.exp(-dt / 0.25)); this.surfMean = this.surf;
       this.depth = Math.max(0, c.depth || 0); this.afloat = false; this.diving = false; this.onFeet = false; this.eyeOff = 0;
@@ -242,10 +246,24 @@ export class Walker {
     // still on the sand, was dragged in under you.)
     // (`atWork`, 0..1: how far a hand is still down at the sand, as it comes up from it.)
     const reaching = Math.max(input.hand || input.hand2 ? 1 : 0, input.atWork || 0);
-    const want = this.sitting ? this.sit - (this.gaited ? 0 : 0.06 * reaching) : input.down && !this.diving && d < 0.9 ? this.crouch + stoop - 0.12 * reaching : this.stand;
+    let want = this.sitting ? this.sit - (this.gaited ? 0 : 0.06 * reaching) : input.down && !this.diving && d < 0.9 ? this.crouch + stoop - 0.12 * reaching : this.stand;
+    // On to your seat and off it. With a body it is a movement of two parts, as a person's is (world/moves.js): down
+    // into a squat over your feet, then back on to your seat, a hand going to the sand first; and up again the
+    // same undone: forward over your feet off that hand, then up. `seated` is how far along the second part is.
+    // Going down it waits for the squat; coming up, your rise waits for it. It gathers and loses its pace over a
+    // seventh of a second: change your mind half way and you slow, stop and go back, as a body does.
+    // (It was one ramp of 1.1 s, with your eye going its own way to its new height at once: getting up, you stood
+    // up from where you sat, never over your feet.)
+    if (this.gaited) {
+      const to = this.sitting ? 1 : 0, low = Math.min(1, Math.max(0, (this.stand - this.body) / Math.max(0.05, this.stand - this.sit)));
+      // (`feetReady`: her feet are under her (world/person.js): asked to sit as she walks, she brings them there first.)
+      const rate = Math.sign(to - this.seated) * (this.sitting ? smooth(0.5, 0.82, low) * (this.feetReady === false ? 0 : 1) : 1) / SEAT_TIME;
+      this.seatRate = (this.seatRate || 0) + (rate - (this.seatRate || 0)) * (1 - Math.exp(-dt / 0.14));
+      this.seated = Math.min(1, Math.max(0, this.seated + this.seatRate * dt));
+      if (this.seated === to) this.seatRate = 0;
+    } else { const to = this.sitting ? 1 : 0; this.seated += Math.sign(to - this.seated) * Math.min(Math.abs(to - this.seated), dt / 1.1); }
+    if (this.gaited && !this.sitting && this.seated > 0) want = this.sit + (want - this.sit) * smooth(0, 1, (RISE_AT - this.seated) / RISE_AT);
     this.bodyWant = want;                                         // (where your eye is on its way to: app.js holds the hand off the sand until you are nearly there)
-    // (Down into a squat and up again in two thirds of a second; on to your seat and off it in a second and more.)
-    { const to = this.sitting ? 1 : 0; this.seated += Math.sign(to - this.seated) * Math.min(Math.abs(to - this.seated), dt / 1.1); }
     if (this.gaited) {
       // (Eased at both ends: you neither drop nor shoot up. A spring without overshoot.)
       // (What it is drawn towards moves off gently too: you begin to sink at about the rate things fall, not faster.)
