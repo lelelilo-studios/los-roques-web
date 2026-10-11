@@ -343,7 +343,7 @@ export class FigureRig {
     // (`chestTwist`: how far the chest is turned against the pelvis, when the solver says (walking as a recorded
     // person walks); else six tenths of the pelvis's turn, the other way. `pelvisTilt`, `chestTilt`: her pelvis
     // tipping forward and back with her stride, and her chest against it, so that it keeps upright.)
-    const low = j.pelvis || 0, high = (j.chestTwist !== undefined ? low + j.chestTwist : -0.6 * low) - 0.3 * (j.headTurn || 0), tipLow = j.pelvisTilt || 0, tipTop = tipLow + (j.chestTilt || 0);
+    const low = j.pelvis || 0, high = (j.chestTwist !== undefined ? low + j.chestTwist : -0.6 * low) - 0.3 * (j.chestLook ?? j.headTurn ?? 0), tipLow = j.pelvisTilt || 0, tipTop = tipLow + (j.chestTilt || 0);
     const Rp = mul(about(fore, list), mul(about(along, low), mul(about(across, -tipLow), lean)));
     const trunkAt = (shift, bend = bent) => {
       this.drive(trunk, Rp, add(add(j.hip, shift), turn(Rp, sub(this.bones[trunk].head, this.hip0))));

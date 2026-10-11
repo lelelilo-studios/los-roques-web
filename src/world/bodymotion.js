@@ -17,6 +17,8 @@ const RAD = Math.PI / 180, clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const waveAt = (w, u) => { let v = w[0]; for (let k = 1; 2 * k < w.length; k++) v += w[2 * k - 1] * Math.cos(2 * Math.PI * k * u) + w[2 * k] * Math.sin(2 * Math.PI * k * u); return v; };
 /** The measures driven, as humanmotion.js names them (measure.js has what each is, and its sign). */
 export const DRIVEN = Object.keys(WALK.shape);
+/** Those of them that are a limb swinging from a joint, and go on a moment when she stops. */
+const SWINGING = ['armL', 'armR', 'elbowL', 'elbowR'];
 
 /**
  * How large each measure is for her, peak to peak (radians; rise and sway in metres), walking at `pace`
@@ -79,12 +81,12 @@ export class BodyMotion {
   constructor(leg = 0.77) {
     this.leg = leg; this.amount = new Follower({ omega: 5.5, zeta: 1 }); this.ran = new Follower({ omega: 9, zeta: 1 }); this.leant = new Follower({ omega: 7, zeta: 0.75 }); this.forwardWas = null; this.gathering = 0; this.take = {};
     for (const c of DRIVEN) this.take[c] = new Inertial(7);
-    this.was = null; this.now = null; this.turns = 0; this.psiWas = null;
+    this.was = null; this.before = null; this.moved = false; this.now = null; this.turns = 0; this.psiWas = null;
     /** What the solver keeps for her from one frame to the next (bodyshape.js poseBody): how high her hips ride and how fast they are going there, the height her legs last asked for, and how far under their standing height that left them. */
     this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined };
   }
   /** Put down somewhere: nothing of where she was is carried over. */
-  reset() { this.amount.set(0); this.ran.set(0); this.leant.set(0); this.forwardWas = null; this.gathering = 0; for (const c of DRIVEN) this.take[c].clear(); this.was = null; this.now = null; this.turns = 0; this.psiWas = null; this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined }; }
+  reset() { this.amount.set(0); this.ran.set(0); this.leant.set(0); this.forwardWas = null; this.gathering = 0; for (const c of DRIVEN) this.take[c].clear(); this.was = null; this.before = null; this.moved = false; this.now = null; this.turns = 0; this.psiWas = null; this.keep = { hipY: null, hipV: 0, high: null, walked: undefined, sunk: undefined }; }
 
   /**
    * One frame.
@@ -123,7 +125,13 @@ export class BodyMotion {
     // is taken up, and let go to nothing over a third of a second.)
     if (this.was && (g.jumped || this.fresh)) for (const name of DRIVEN) this.take[name].kick(this.was[name] - out[name] - this.take[name].x);
     this.fresh = false;
+    // (As she stops, her arms swing on a little with what they were doing and come to rest: an arm is a weight on a
+    // shoulder, it does not stop in the air where her feet happened to stop. `moved`: whether she was going last frame.)
+    const moves = g.moving !== false;
+    if (this.moved && !moves && this.was && this.before && dt > 0) for (const name of SWINGING) this.take[name].kick(0, 0.7 * (this.was[name] - this.before[name]) / dt);
+    this.moved = moves;
     for (const name of DRIVEN) out[name] += this.take[name].step(dt);
+    this.before = this.was;
     this.was = { ...out };
     // How far she leans the way she is going (radians, forward positive): into her speed going forward, a little back
     // going backward, not at all sideways; and into the gathering of it, as a body does that is setting off (forward)

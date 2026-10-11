@@ -1160,10 +1160,15 @@ export async function start(canvas, onProgress = () => {}) {
         // Her eyes: her head has nodded six tenths of the way to where you look, and her eyes take the rest. With the
         // camera held round in front of her for a moment (Alt), she glances at it.
         { const j = body.joints, at = rig.behind.held && rig.out > 0.9 ? (you.glance = (you.glance || 0) + dt) : (you.glance = 0);
-          let gy = 0, gp = walker.look - (j.headNod || 0);
+          // (And they are where you look before her head is: they take what it has still to come round, up to thirty-five degrees.)
+          let gy = Math.max(-0.6, Math.min(0.6, (j.lookTurn ?? j.headTurn ?? 0) - (j.headTurn || 0))), gp = walker.look - (j.headNod || 0);
           if (at > 0.7) { const dx = rig.eye.x - rig.own.x, dy = rig.eye.y - rig.own.y, dz = rig.eye.z - rig.own.z, to = Math.atan2(dx, -dz), off = Math.atan2(Math.sin(to - walker.yaw), Math.cos(to - walker.yaw)), up = Math.atan2(dy, Math.hypot(dx, dz)) - (j.headNod || 0); if (Math.abs(off) < 0.6 && up > -0.5 && up < 0.42) { gy = off; gp = up; } }
-          you.gaze = (you.gaze || [0, 0]).map((v, c) => v + ((c ? gp : gy) - v) * (1 - Math.exp(-dt * 12)));
-          figure.look(dt, you.gaze[0], you.gaze[1], walker.turnRate || 0, faceRandom); figure.face.place(figure.mesh.matrix, figure.mesh.visible ? headSeen() : 0); }
+          // (Eyes move at once; only a glance at the camera, and back from it, is taken over a moment.)
+          you.glanced = at > 0.7 ? 1 : Math.max(0, (you.glanced || 0) - dt * 4);
+          you.gaze = (you.gaze || [0, 0]).map((v, c) => (you.glanced > 0 ? v + ((c ? gp : gy) - v) * (1 - Math.exp(-dt * 12)) : c ? gp : gy));
+          // (She blinks as her head swings round, which is as you look round: not as her body comes round after it.)
+          { const was = you.yawWas ?? walker.yaw; you.headRate = dt > 0 ? Math.atan2(Math.sin(walker.yaw - was), Math.cos(walker.yaw - was)) / dt : 0; you.yawWas = walker.yaw; }
+          figure.look(dt, you.gaze[0], you.gaze[1], you.headRate || 0, faceRandom); figure.face.place(figure.mesh.matrix, figure.mesh.visible ? headSeen() : 0); }
         // (Her real hand, as the rig has posed it: where its palm is, which way it faces, where the fingers leave it.)
         // (And her fingers as rods, where they are: what she holds lies on them, and falls between them.)
         if (body.joints.touching && !you.folded) body.joints.touching.palm = { ...figureRig.hand(1), caps: figureRig.handCaps(1), skin: () => figureRig.handSkin(1) };
@@ -1505,7 +1510,7 @@ export async function start(canvas, onProgress = () => {}) {
     /** The camera behind her swung round her by so many degrees, and held there (`hold` false: let go, it comes back behind). */
     swing: (yaw = 0, pitch = 0, hold = true) => { rig.behind.held = hold; if (hold) { rig.behind.swing = [0, 0]; rig.behind.swingBy(yaw * Math.PI / 180, pitch * Math.PI / 180); } },
     /** Where the camera is and what is under it: { at, own (her eye), out (0 her eyes .. 1 behind her), away, ground, sea (heights there), under (the picture is the underwater one), diving } */
-    camera: () => { const f = rig.floorAt(rig.eye.x, rig.eye.z); return { at: [rig.eye.x, rig.eye.y, rig.eye.z], own: [rig.own.x, rig.own.y, rig.own.z], out: rig.out, away: rig.away, ground: f.ground, sea: f.sea, under: shared.uUnderEye.value > 0.5, diving: !!walker.under, length: rig.behind.len, lift: rig.behind.lift, block: rig.behind.block, fov: rig.camera.fov }; },
+    camera: () => { const f = rig.floorAt(rig.eye.x, rig.eye.z); return { at: [rig.eye.x, rig.eye.y, rig.eye.z], own: [rig.own.x, rig.own.y, rig.own.z], out: rig.out, away: rig.away, ground: f.ground, sea: f.sea, under: shared.uUnderEye.value > 0.5, diving: !!walker.under, length: rig.behind.len, lift: rig.behind.lift, block: rig.behind.block, fov: rig.camera.fov, dir: rig.camera.getWorldDirection(new THREE.Vector3()).toArray(), look: [walker.yaw, walker.look] }; },
     /** Your boat (tests): where it is and how it lies; `moor(x, z)` sets it down off the beach nearest a place. */
     boat: () => (afloat.placed ? { x: boat.x, y: boat.y, z: boat.z, heading: boat.heading, pitch: boat.pitch, roll: boat.roll, speed: boat.speed, turning: boat.turning, throttle: boat.throttle, helm: boat.helm, revs: boat.revs, slam: boat.slam, aground: boat.aground, wet: boat.wet, aboard: board.k, waves: seaAt(boat.x, boat.z).hs, sea: [-3, -1.5, 0, 1.5, 3].reduce((a, x) => a + seaFor(boat.x + Math.sin(boat.heading) * x, boat.z - Math.cos(boat.heading) * x).h / 5, 0), depth: seaFor(boat.x, boat.z).h - bedFor(boat.x, boat.z), lines: boat.lines.map(l => ({ taut: l.taut || 0, length: l.length })), triangles: penero.triangles } : null),
     moor(x, z) { if (x === undefined) { const m = mooringFor({ x: walker.x, z: walker.z, yaw: walker.yaw * 180 / Math.PI }); x = m.x; z = m.z; } afloat.ghost = afloat.driven = afloat.running = false; passage = null; rig.outside = null; return moorBoat(x, z); },
