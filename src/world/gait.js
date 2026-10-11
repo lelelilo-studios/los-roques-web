@@ -121,7 +121,16 @@ export class Gait {
     // (Which way you are going, against the way you face: known for as long as you are moving at all, so that
     // the length of a pace does not jump as you come to rest.)
     const going = speed > 1e-3, along = going ? (c.vx * fx + c.vz * fz) / speed : 1, across = going ? (c.vx * rx + c.vz * rz) / speed : 0;
-    const run = ease(clamp((speed * Math.max(along, 0) - 1.6) / 1.2, 0, 1)), stance = Math.PI * (1.2 - 0.58 * run), pace = Math.max(paceFor(speed, along, across, crouch, legs), 0.05);
+    const run = ease(clamp((speed * Math.max(along, 0) - 1.6) / 1.2, 0, 1)), stance = Math.PI * (1.2 - 0.58 * run);
+    // Wading (`c.depth`: how deep the water is where she stands, m). Ankle deep she walks as on the sand. From her shins
+    // to her knees she lifts each foot clear of the water and sets it down ahead, a high step, shorter; from her
+    // thighs up she cannot, and pushes her legs through it, slowly, at the pace the water lets her (camera/walk.js
+    // wadeSpeed); chest deep she is on her toes. (By rule. People in water to the chest choose a slower pace than
+    // on land and bear a third of their weight, Barela, Stolf and Duarte 2006, J Electromyogr Kinesiol 16: 250-256,
+    // of which I have read the summary only; of the high step in the shallows I know no measurement.) It was
+    // the dry walk slowed down at every depth: in the shallows the same low, long pace in slow motion.
+    const deep = c.depth || 0, wet = k => ease(clamp(k, 0, 1)), high = wet((deep - 0.1) / 0.18) * (1 - wet((deep - 0.46) / 0.16)), tiptoe = wet((deep - 1.05) / 0.25);
+    const pace = Math.max(paceFor(speed, along, across, crouch, legs) * (1 - 0.22 * high), 0.05);
     // (Sideways the feet close up and part again, and may not cross: the trailing foot comes in to a hand's breadth
     // from the other, the leading one steps out to half a metre from it. Standing wider and stepping further, as
     // it was, the legs were astride by two thirds of a metre at every step.)
@@ -303,7 +312,7 @@ export class Gait {
         // (Squatting, her heels come up; and for a foot that has only now come down under her as she squats, they come up
         // from the sand, over a sixth of a second. Crouching out of a walk, a foot was set down flat and was on its
         // toes in the next frame but one, its ankle five centimetres higher and her knee and hand with it.)
-        const squatUp = 0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)); f.squat = t > 0.002 ? 0 : Math.min(squatUp, (f.squat ?? squatUp) + 2.6 * dt);
+        const squatUp = Math.max(0.5 * ease(clamp((crouch - 0.45) / 0.5, 0, 1)), 0.3 * tiptoe); f.squat = t > 0.002 ? 0 : Math.min(squatUp, (f.squat ?? squatUp) + 2.6 * dt);
         let push = Math.max((byStance * fwd + byPlace * (1 - fwd)) * (1 - crouch), f.squat, 0.4 * (f.pivot || 0));
         ground = c.groundAt(f.x, f.z);
         // And the heel comes up as far as the leg needs it to: a leg left behind you does not pull your hips
@@ -389,7 +398,9 @@ export class Gait {
         // foot on its ball had it, at the rate the recorded ankles rise.)
         // (At a run the heel is thrown up behind her: the ankle rises a metre and more a second for a sixth of a second.)
         { const walk = narrow * (1 - gone), ran = narrow * gone, own = clamp(v0[1], -0.5, 1.8), rise = Math.max(own, (0.62 * walk + 1.9 * ran) * prop.leg / 0.77 * (1 + (mine.clear - 1) * (walk + ran)) + own * (1 - walk - ran)), on = coast(rise, 0.05 + 0.03 * walk + 0.09 * ran) - (rise - own) * 0.025 * (1 - Math.exp(-w * T / 0.025)), to = h1 + 0.007 * walk * (1 - ease(clamp((w - 0.78) / 0.22, 0, 1)));
-          up = from.ankle[1] + on + (to - from.ankle[1] - on) * ease(clamp((w - 0.06 - 0.14 * walk) / (0.9 - 0.24 * walk), 0, 1)) + clear * Math.sin(Math.PI * w) ** 2; }
+          up = from.ankle[1] + on + (to - from.ankle[1] - on) * ease(clamp((w - 0.06 - 0.14 * walk) / (0.9 - 0.24 * walk), 0, 1)) + clear * Math.sin(Math.PI * w) ** 2;
+          // (The high step: the ankle carried over the water, a little short of all the way; highest before the middle of its swing.)
+          if (high > 0) up += high * Math.min(0.27, Math.max(0, deep - 0.15)) * Math.sin(Math.PI * Math.min(1, w / 0.86) ** 0.85) ** 1.6; }
         // (Never so low that the toes, or the heel, would be in the sand: clear of it by a centimetre in mid swing.)
         { const need = (pitch < 0 ? ballDown(-pitch)[1] : heelUp(pitch)[1]) + 0.012 * Math.sin(Math.PI * w), k = 0.012; up = 0.5 * (up + need + Math.sqrt((up - need) ** 2 + k * k)) - 0.5 * k * (1 - Math.sin(Math.PI * w)); }
         ground = from.ground + (c.groundAt(to.x, to.z) - from.ground) * e;

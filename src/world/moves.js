@@ -30,3 +30,13 @@ export function seatParts(k) {
     hand: span(k, 0.5, 1),                        // the other hand from its knee back along its thigh as the leg goes out
   };
 }
+
+/**
+ * Going afloat from her feet (k: 0 standing .. 1 swimming): she leans in and reaches forward, and her feet leave the
+ * bottom one after the other. And finding her feet again (k: 0 swimming .. 1 standing): her legs swing down under
+ * her, one and then the other, and she comes upright over them, her arms last. No recording of either: the order
+ * is how a body in water must do it (what bears her changes from her feet to the water and back).
+ * @returns {{ trunk: number, arms: number, legs: number[] }}  how far along each part is
+ */
+export function afloatParts(k) { return { trunk: span(k, 0, 0.7), arms: span(k, 0.08, 0.8), legs: [span(k, 0.32, 0.9), span(k, 0.48, 1)] }; }
+export function footingParts(k) { return { legs: [span(k, 0, 0.6), span(k, 0.14, 0.74)], trunk: span(k, 0.22, 1), arms: span(k, 0.3, 1) }; }

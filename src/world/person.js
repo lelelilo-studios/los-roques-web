@@ -88,7 +88,7 @@ export class Person {
     // gait until they are, and she goes back on to her seat only then (walk.js `feetReady`). Held where a stride had
     // left them, the foot behind her was under her seat as it came down.)
     const held = walker.sitting && (walker.seated > 0 || gait.rested !== false);
-    const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, wish: walker.sitting ? null : walker.wish, crouch: walker.crouched, legs: walker.legs, base: feetY, groundAt: c.groundAt, sink: c.sink, hold: held, time: c.time,
+    const g = gait.update(dt, { x: walker.x, z: walker.z, heading, vx: walker.vx, vz: walker.vz, wish: walker.sitting ? null : walker.wish, crouch: walker.crouched, legs: walker.legs, depth: walker.carried ? 0 : walker.depth, base: feetY, groundAt: c.groundAt, sink: c.sink, hold: held, time: c.time,
       // (Your hip joints as last posed, carried on by how far you have come since.)
       hips: you.on && body.joints?.hips && !walker.sitting && walker.seated < 0.02 ? body.joints.hips.map(q => { const w = this.toWorld(q); return [w[0] + walker.vx * dt, w[1] + lifted, w[2] + walker.vz * dt]; }) : null });
     walker.feetReady = !walker.sitting || walker.seated > 0 || gait.rested !== false;
@@ -109,7 +109,7 @@ export class Person {
     // deepest squat, for the shadow, and left out of the picture: it would be folded through the camera.)
     // (What of this frame is hers to remember: where she is in a recorded walk or run, how she leans, how she stands, her breath.)
     this.motion.leg = gait.prop.leg;
-    const motion = this.motion.step(dt, g, { speed: Math.hypot(walker.vx, walker.vz), forward: walker.vx * Math.sin(c.heading) - walker.vz * Math.cos(c.heading), crouch: Math.max(walker.crouched, walker.seated), time: c.time, still: gait.still, sitting: walker.sitting });
+    const motion = this.motion.step(dt, g, { speed: Math.hypot(walker.vx, walker.vz), forward: walker.vx * Math.sin(c.heading) - walker.vz * Math.cos(c.heading), crouch: Math.max(walker.crouched, walker.seated), time: c.time, still: gait.still, sitting: walker.sitting, depth: walker.carried ? 0 : walker.depth });
     const eyeUp = Math.max(walker.body, walker.crouch - 0.13), folded = eyeUp > walker.body + 0.02, breath = motion.breath;
     // Seated, the keys that walk you move your legs: S draws them up and W stretches them out, A / D bring your
     // feet together and apart, Space curls your toes.
@@ -137,7 +137,7 @@ export class Person {
     // only as far as you are going forward: sideways or backward they stay over your feet.)
     if (dt > 0) { you.carryV = (you.carryV || 0) + (30 * ((g.amount || 0) * (g.along ?? 1) - (you.carry || 0)) - 11 * (you.carryV || 0)) * dt; you.carry = (you.carry || 0) + you.carryV * dt; }
     if (k >= 1) body.pose(sit);
-    else body.pose({ gait: g, motion, bank: walker.bank || 0, time: c.time, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look, wade: Math.min(1, Math.max(0, (walker.depth - 0.9) / 0.4)), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: parts ? k : eased, parts } } : {}) });
+    else body.pose({ gait: g, motion, bank: walker.bank || 0, time: c.time, dip: you.dip, carry: you.carry || 0, turn, stride: walker.stride, eye: eyeUp, look, wade: (k => k * k * (3 - 2 * k))(Math.min(1, Math.max(0, (walker.depth - 0.62) / 0.38))), breath, touch: reach, touchL: reachL, ...(k > 0 ? { seat: { ...sit, k: parts ? k : eased, parts } } : {}) });
     const j = body.joints;
     // (For her skeleton and her eyes: what her chest has taken of the look, and where you are in fact looking.)
     j.chestLook = chest; j.lookTurn = c.turn; j.lookUp = walker.look; j.time = c.time;

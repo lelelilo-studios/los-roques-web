@@ -220,6 +220,16 @@ export class Walker {
 
     // Move, sliding along walls and refusing slopes steeper than 39 degrees.
     let nx = this.x + this.vx * dt, nz = this.z + this.vz * dt;
+    // The sea moves you. On your feet in it from the shins up, a wave carries you a little shoreward as its crest
+    // passes and its backwash a little seaward: at the rate water moves under a wave in the shallows (its height
+    // over the depth, times the wave's own speed there), by as much of you as is in it; and your feet take a step
+    // to keep under you when it has carried you a hand's breadth (world/gait.js). You stood in the sea as on a floor.
+    if (this.gaited && onGround && !this.sitting && !(this.seated > 0) && dt > 0) {
+      const e = 0.6, gx = (this.ground.heightAt(this.x + e, this.z) - this.ground.heightAt(this.x - e, this.z)) / (2 * e), gz = (this.ground.heightAt(this.x, this.z + e) - this.ground.heightAt(this.x, this.z - e)) / (2 * e), gl = Math.hypot(gx, gz);
+      const eta = (this.surfQuick ?? this.surf) - (this.surfMean ?? this.surf), deep = Math.max(d, 0.3), u = gl > 0.004 ? Math.max(-0.22, Math.min(0.22, eta / deep)) * Math.sqrt(9.81 * deep) * 0.45 * smooth(0.15, 0.9, d) : 0;
+      const k = 1 - Math.exp(-dt / 0.3); this.washX = (this.washX || 0) + ((gl > 0.004 ? gx / gl * u : 0) - (this.washX || 0)) * k; this.washZ = (this.washZ || 0) + ((gl > 0.004 ? gz / gl * u : 0) - (this.washZ || 0)) * k;
+      nx += this.washX * dt; nz += this.washZ * dt;
+    } else this.washX = this.washZ = 0;
     const ok = (x, z) => {
       if (this.blocked(x, z)) return false;
       if (this.rect && (x < this.rect.x || x > this.rect.x + this.rect.w || z < this.rect.z || z > this.rect.z + this.rect.h)) return false;

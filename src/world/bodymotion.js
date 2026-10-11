@@ -149,7 +149,9 @@ export class BodyMotion {
     { const f = c.forward ?? c.speed ?? 0;
       if (dt > 0 && this.forwardWas !== null) this.gathering += ((f - this.forwardWas) / dt - this.gathering) * (1 - Math.exp(-dt * 10));
       this.forwardWas = f;
-      out.lean = this.leant.step(dt, (f >= 0 ? 0.08 : 0.03) * clamp(f / 1.4, -1, 1.6) + clamp(0.02 * this.gathering, -0.07, 0.07)); }
+      // (And into the water she pushes through, from her thighs up: six degrees more, as far as she is going.)
+      const through = clamp(((c.depth || 0) - 0.46) / 0.3, 0, 1);
+      out.lean = this.leant.step(dt, (f >= 0 ? 0.08 : 0.03) * clamp(f / 1.4, -1, 1.6) + clamp(0.02 * this.gathering, -0.07, 0.07) + 0.11 * through * through * (3 - 2 * through) * clamp(f / 0.4, -0.5, 1)); }
     for (const [name, v] of Object.entries(MIDDLE)) out.middle[name] = v * walk + MIDDLE_RUN[name] * run;
     // Standing. Nobody stands on two legs alike for long: her weight is mostly on one, the hip of the other let
     // down and its knee easy, her shoulders a little the other way; and every quarter to half a minute she

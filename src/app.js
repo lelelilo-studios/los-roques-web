@@ -15,6 +15,7 @@ import { BOOM } from './camera/boom.js';
 import { proportions, setProportions } from './world/bodyshape.js';
 import { Gait } from './world/gait.js';
 import { Person } from './world/person.js';
+import { afloatParts, footingParts } from './world/moves.js';
 import { Spray } from './world/spray.js';
 import { Falling } from './world/falling.js';
 import { Hand } from './world/hand.js';
@@ -937,10 +938,13 @@ export async function start(canvas, onProgress = () => {}) {
     out.hands = j.hands.map(h => ({ ...h, f: way(h.f), N: way(h.N) }));
     return out;
   }
-  function mixForms(a, b, k) {
-    const mix = (q, r) => [q[0] + (r[0] - q[0]) * k, q[1] + (r[1] - q[1]) * k, q[2] + (r[2] - q[2]) * k], num = (q, r) => q + (r - q) * k, near = k < 0.5 ? a : b;
+  /** (`parts`, world/moves.js: how far along her trunk, her arms and each leg are, each in its turn; without it, all of her by `k`.) */
+  function mixForms(a, b, k, parts = null) {
+    const P = parts || { trunk: k, arms: k, legs: [k, k] }, by = { hips: () => P.trunk, shoulders: () => P.trunk, knees: i => P.legs[i], ankles: i => P.legs[i], elbows: () => P.arms, wrists: () => P.arms };
+    const mixBy = (q, r, t) => [q[0] + (r[0] - q[0]) * t, q[1] + (r[1] - q[1]) * t, q[2] + (r[2] - q[2]) * t], mix = (q, r) => mixBy(q, r, P.trunk), num = (q, r) => q + (r - q) * P.trunk, near = k < 0.5 ? a : b;
     const out = { hip: mix(a.hip, b.hip), shoulder: mix(a.shoulder, b.shoulder), eye: mix(a.eye, b.eye), pelvis: num(a.pelvis, b.pelvis), headTurn: num(a.headTurn, b.headTurn), headNod: num(a.headNod, b.headNod), feet: near.feet, drawn: near.drawn };
-    for (const name of LIMBS) out[name] = a[name].map((q, i) => mix(q, b[name][i]));
+    for (const name of LIMBS) out[name] = a[name].map((q, i) => mixBy(q, b[name][i], by[name](i)));
+    k = P.arms;
     // (A hand goes from the one way of holding it to the other by one turn, and its joints each by their own way:
     // a swimmer's hand has no pose of its own, only how far it is curled, and takes the pose that stands for.)
     const jointsOf = (h, i) => h.fingers || (figureRig ? figureRig.models[i].fromCurl(h.curl ?? 0.1, h.spread || 0) : null);
@@ -957,12 +961,14 @@ export async function start(canvas, onProgress = () => {}) {
     // (Put down somewhere: you are there as you are, at once.)
     if (you.cut || !b.kind) { b.kind = kind; b.k = 1; b.from = null; you.cut = false; }
     if (b.kind !== kind) { b.from = b.last; b.kind = kind; b.k = b.from ? 0 : 1; }
-    if (dt > 0 && b.k < 1) b.k = Math.min(1, b.k + dt / 0.5);
+    // (Going afloat takes her most of a second, and finding her feet a little more: each part of her in its turn,
+    // world/moves.js. It was half a second, all of her at once along a line.)
+    if (dt > 0 && b.k < 1) b.k = Math.min(1, b.k + dt / (kind === 'swim' ? 0.95 : 1.05));
     let out = { joints, frame, raw: true };
     if (b.k < 1 && b.from) {
       // (The pose you were in comes along with your eye, as it was.)
       const k = b.k * b.k * (3 - 2 * b.k), was = { ...b.from.frame, x: own[0] + b.from.rel[0], y: own[1] + b.from.rel[1], z: own[2] + b.from.rel[2] };
-      out = kind === 'stand' ? { joints: mixForms(moved(b.from.j, was, frame), live, k), frame, raw: false } : { joints: mixForms(b.from.j, moved(live, frame, was), k), frame: was, raw: false };
+      out = kind === 'stand' ? { joints: mixForms(moved(b.from.j, was, frame), live, k, footingParts(b.k)), frame, raw: false } : { joints: mixForms(b.from.j, moved(live, frame, was), k, afloatParts(b.k)), frame: was, raw: false };
     } else b.from = null;
     b.last = { j: out.raw ? live : out.joints, frame: { ...out.frame }, rel: [out.frame.x - own[0], out.frame.y - own[1], out.frame.z - own[2]] };
     return out;
