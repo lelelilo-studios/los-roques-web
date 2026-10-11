@@ -12,7 +12,7 @@ export const BOOM = {
   glide: 0.45, release: 0.35,          // seconds out of her eyes and back; seconds for a swing to come back behind
   swungPitch: -0.1,                    // where the boom tips to by itself when it is swung round her (radians: a little above her head's level)
   pitch: [-1.25, 0.45],                // how far the boom itself tips (radians: looking down, the camera climbs; looking up, it stops short of the sand)
-  follow: [12, 6],                     // how quickly it follows her eye, sideways and up and down (1/s)
+  follow: [12, 4, 3.5],                // how quickly it follows her eye: along the way she looks, up and down, and across (1/s)
   fov: 55,                             // degrees across the short side of the picture (her own eyes: 65)
   tilt: 0.105,                         // and it looks this much lower than she does (6 degrees): she stands in the lower half of the picture, feet and all, the horizon over her head
   headNear: [0.28, 0.45],              // her head is not drawn within the first, and is whole beyond the second (m from her eye): it comes in with her hair, not before it
@@ -46,7 +46,11 @@ export class Boom {
     // The boom's root: just over her head, followed a little late. (Set down somewhere else, it is there at once.)
     const root = { x: own.x, y: own.y + this.above, z: own.z }, p = this.pivot;
     if (!p || Math.hypot(root.x - p.x, root.y - p.y, root.z - p.z) > 3) this.pivot = { ...root };
-    else { const kh = 1 - Math.exp(-d * B.follow[0]), kv = 1 - Math.exp(-d * B.follow[1]); p.x += (root.x - p.x) * kh; p.z += (root.z - p.z) * kh; p.y += (root.y - p.y) * kv; }
+    // (Along the way she looks it keeps up with her; across it, and up and down, it follows more slowly: her head sways a
+    // few centimetres from side to side and rides up and down at every pace, as a head does, and the camera is not on
+    // her head. Following at one rate all round, it took on nine tenths of her sway and went from side to side with her.)
+    else { const kh = 1 - Math.exp(-d * B.follow[0]), ks = 1 - Math.exp(-d * B.follow[2]), kv = 1 - Math.exp(-d * B.follow[1]), ax = Math.sin(yaw), az = -Math.cos(yaw), dx = root.x - p.x, dz = root.z - p.z, along = dx * ax + dz * az, across = -dx * az + dz * ax;
+      p.x += ax * along * kh - az * across * ks; p.z += az * along * kh + ax * across * ks; p.y += (root.y - p.y) * kv; }
     // (Swung round her, the boom leaves her look for a level of its own, a little above hers, that the mouse
     // then raises and lowers: looking down at the sand in her hand, she is not looked at from the sky.)
     const at = this.pivot, by = yaw + this.swing[0], bp = clamp(look + (B.swungPitch - look) * swung + this.swing[1], B.pitch[0], B.pitch[1]), cb = Math.cos(bp);

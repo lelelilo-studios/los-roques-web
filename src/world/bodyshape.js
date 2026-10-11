@@ -920,18 +920,23 @@ export function poseBody(t, h, { phase = 0, stride, eye, look = 0, colours = {},
     let reachable = base - 0.003 * gait.amount * (1 - crouch);
     const most = (PROP.thigh + PROP.shin) * (0.997 + 0.0021 * walked), can = (ankle, i, most = (PROP.thigh + PROP.shin) * (0.997 + 0.0021 * walked)) => { const side = i ? 1 : -1, dx = ankle[0] - side * PROP.hip * Math.cos(gait.turn), dz = ankle[2] - (hip[2] - side * PROP.hip * Math.sin(gait.turn)); return ankle[1] + Math.sqrt(Math.max(most * most - dx * dx - dz * dz, 0.04)) - side * PROP.hip * Math.sin(list); };      // (less what the list has already let that hip down by)
     const part = (a, b, v) => { const k = Math.min(1, Math.max(0, (v - a) / (b - a))); return k * k * (3 - 2 * k); };
+    const aloft = steps.every(q => q.down === false);
     feet.forEach((planted, i) => {
       const f = steps[i];
       // (At a run the leg behind her is thrown out straight and leaves: her hips are not brought down to a foot
       // in the last of its stance, nor to one that has left and is folding up behind her. They were, four
       // centimetres at every pace, and stayed down through the air: her eye was knocked each time.)
-      const flying = gait.run || 0;
+      // (And with neither foot down nothing of her legs holds her hips at all, running or not: slowing out of a run she is
+      // in the air for a moment at a walker's pace, and her hips were brought down to where her feet would land,
+      // ten to twenty centimetres in that moment, and thrown up again as a foot came down: her eye was knocked
+      // at up to 280 m/s2. In every run she came out of; the mixed-doings check missed it by its timing.)
+      const flying = aloft ? 1 : gait.run || 0;
       if (f.down !== false) { reachable = Math.min(reachable, base + Math.min(0, can(planted, i) - base) * (1 - flying * part(0.6, 0.85, f.share ?? 0))); return; }
       // (A foot in the air: what it asked for as it left the ground fades over the first third of its swing;
       // what it will ask for where it lands comes on over the rest. Not what it would ask for where it is:
       // it is not standing there.)
       reachable = Math.min(reachable, base + Math.min(0, can(planted, i) - base) * (1 - part(0, 0.3, f.w)) * (1 - flying));
-      if (f.land) reachable = Math.min(reachable, base + Math.min(0, can([f.land[0] + home[0], f.land[1], f.land[2] + home[2]], i) - base) * part(0.35, 0.95, f.w));
+      if (f.land && !aloft) reachable = Math.min(reachable, base + Math.min(0, can([f.land[0] + home[0], f.land[1], f.land[2] + home[2]], i) - base) * part(0.35, 0.95, f.w));
     });
     joints.dipWant = Math.min(0.1, base - reachable);
     let asked = base - dip;

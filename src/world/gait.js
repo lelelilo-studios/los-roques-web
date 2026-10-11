@@ -181,12 +181,24 @@ export class Gait {
       if (airborne() || this.settling >= 0) turn = Math.max(turn, (TAU - stance) / (moving ? 0.6 : this.hurry ? 0.2 : 0.34) * dt);
       this.phase = before + turn;
       const rate = turn / dt;
-      this.rate = rate;
+      this.rate = rate; this.early = 0;
       feet.forEach((f, i) => {
         const u = (((before + turn + (i ? Math.PI : 0)) % TAU) + TAU) % TAU;
         // Lifted when its stance is over (if you are going anywhere, or it has a step to take); or at once if
         // you have gone so far from it that the leg cannot reach (you changed your mind about where to go).
-        const due = u >= stance && f.since > 0.08 && (moving || this.settling === i), far = moving && feet[1 - i].down && Math.hypot(f.x - c.x, f.z - c.z) > 0.72 * prop.leg;
+        // (`soon`: set down an eighth of a stride and more before its turn; a foot always lands a frame or two before it.)
+        // (A foot set down before its own turn to stand has come round, as one is when she slows out of a run and its
+        // swing, a runner's, is over sooner than the walker's clock has it: it stands from then, and is not due to
+        // lift until the clock has been through its standing. It was lifted again at once, a tenth of a second
+        // after it came down; the other foot stood on past its time, her hips sinking twenty centimetres over it,
+        // then both were in the air at a walk, and her eye was knocked at up to 280 m/s2 as one came down. Every
+        // time she came out of a run.)
+        if (u < stance) f.soon = false;
+        // (And a walker has always a foot on the ground: once she is no longer running, a foot does not leave while the other is in the air.)
+        const due = u >= stance && !f.soon && f.since > 0.08 && (moving || this.settling === i) && (run >= 0.5 || feet[1 - i].down || !moving), far = moving && feet[1 - i].down && Math.hypot(f.x - c.x, f.z - c.z) > 0.72 * prop.leg && (f.x - c.x) * c.vx + (f.z - c.z) * c.vz < 0;
+        // (`far`: a foot left too far BEHIND her is taken up. One far ahead of her has only now been set down, at the end of a
+        // runner's reach as she slows to a walk: it was taken up again at once, the foot behind her stood on past its
+        // time with her hips sinking over it, then both were in the air, and her eye was knocked as one came down.)
         // (At a run, as soon as the leg behind her is out all but straight: a runner's foot leaves when her leg has no more
         // to give, a little before or after the beat. Kept down to the beat, the leg was drawn out to its end and the knee
         // straightened as the toes left, where a runner's is bending. `early`: by how much of the stride it left early.)
@@ -223,7 +235,7 @@ export class Gait {
           if (f.w >= 1) {
             // Down. (How far ahead of you it lands decides how far its toes are up as the heel touches.)
             const length = Math.hypot(tx - f.from.x, tz - f.from.z);
-            f.down = true; f.x = tx; f.z = tz; f.yaw = f.to.yaw; f.since = 0; f.lift = 0; f.squat = 0; if (i === 0 && moving) this.strides = (this.strides || 0) + 1;
+            f.down = true; f.soon = u >= stance && TAU - u > 0.75; if (f.soon && moving && run < 0.5) this.early = TAU - u; f.x = tx; f.z = tz; f.yaw = f.to.yaw; f.since = 0; f.lift = 0; f.squat = 0; if (i === 0 && moving) this.strides = (this.strides || 0) + 1;
             f.strike = clamp(STRIKE * ((tx - c.x) * Math.sin(f.yaw) - (tz - c.z) * Math.cos(f.yaw)), 0, 0.36) * (1 - 0.7 * run); f.touch = BACK_TOUCH * backing;
             this.events.push({ side: i, x: tx + Math.sin(f.yaw) * 0.06, z: tz - Math.cos(f.yaw) * 0.06, yaw: f.yaw, stride: speed / 1.4, length });
             f.from = f.to = null;
@@ -243,6 +255,10 @@ export class Gait {
           }
         }
       });
+      // (A foot set down ahead of its turn as she slows out of a run: the stride's clock is set by it, as it is by a
+      // first step: this foot's standing begins now, and the other's is half a stride on. Left as it was, this
+      // foot stood three quarters of a stride and was a leg's length behind her before the clock let it go.)
+      if (this.early > 0) { this.phase += this.early; this.jumped = true; feet.forEach(f => { f.soon = false; }); }
     }
     // A run is a bounce: you are lowest as you pass over the foot that bears you, and between one foot and the
     // next you are off the ground, rising and falling as a thing thrown does. (`ride`: metres up from where
