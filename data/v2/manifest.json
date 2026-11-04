@@ -1,0 +1,517 @@
+{
+ "compressed": "gzip",
+ "version": "2-cayo-de-agua",
+ "grid": {
+  "crs": "EPSG:32619",
+  "mpp": 11,
+  "width": 640,
+  "height": 768,
+  "originE": 721529.0,
+  "originN": 1325763.0,
+  "centreE": 744057.0,
+  "centreN": 1311683.0,
+  "centreLat": 11.8566495,
+  "centreLon": -66.75975,
+  "convergenceDeg": 0.46052,
+  "rect": {
+   "x": -22528.0,
+   "z": -1408.0,
+   "w": 7040,
+   "h": 8448
+  },
+  "window": {
+   "col": 0,
+   "row": 1152,
+   "width": 640,
+   "height": 768,
+   "gridWidth": 4096,
+   "gridHeight": 2560,
+   "of": "v1 hi grid"
+  },
+  "waveFade": [
+   0.985,
+   1.0
+  ]
+ },
+ "world": {
+  "x": "E - centreE (east)",
+  "z": "centreN - N (south)",
+  "units": "m",
+  "pixel": "col = (x - rect.x) / mpp, row = (z - rect.z) / mpp; pixel centres at +0.5"
+ },
+ "scene": {
+  "ids": [
+   "S2A_19PGP_20240109_0_L2A",
+   "S2A_19PGP_20210117_0_L2A"
+  ],
+  "datetimes": [
+   "2024-01-09T14:59:30.505000Z",
+   "2021-01-17T15:09:31.162000Z"
+  ],
+  "sunZenithDeg": 41.3127,
+  "sunAzimuthDeg": 145.9438,
+  "referenceScenes": [
+   "S2A_19PGP_20220129_0_L2A",
+   "S2A_19PGP_20230504_0_L2A"
+  ],
+  "sunZenith": 41.3127,
+  "sunAzimuth": 145.9438
+ },
+ "features": "v2/features.json",
+ "optics": {
+  "model": "Lee et al. 1998/1999 semi-analytical shallow-water reflectance",
+  "formula": [
+   "a = mix(ocean.a, lagoon.a, w); bb = mix(ocean.bb, lagoon.bb, w)   // w = lagoon weight from the waterType map",
+   "u = bb/(a+bb); k = a+bb",
+   "DuC = 1.03*sqrt(1+2.4*u); DuB = 1.04*sqrt(1+5.4*u)",
+   "rrs_dp = (0.084 + 0.170*u)*u",
+   "rrs = rrs_dp*(1 - exp(-(1/muS + DuC/muV)*k*H)) + (rho/PI)*exp(-(1/muS + DuB/muV)*k*H)",
+   "Rrs = 0.52*rrs/(1 - 1.7*rrs)",
+   "surfaceReflectance = PI*Rrs"
+  ],
+  "bands": [
+   "B04",
+   "B03",
+   "B02"
+  ],
+  "channelOrder": "R, G, B",
+  "nWater": 1.34,
+  "sunZenithDeg": 41.3127,
+  "muS": 0.87022,
+  "muV": 1.0,
+  "constants": {
+   "g0": 0.084,
+   "g1": 0.17,
+   "DuC": [
+    1.03,
+    2.4
+   ],
+   "DuB": [
+    1.04,
+    5.4
+   ],
+   "surface": [
+    0.52,
+    1.7
+   ]
+  },
+  "pureWaterAbsorption": [
+   0.429,
+   0.0619,
+   0.015
+  ],
+  "ocean": {
+   "a": [
+    0.433,
+    0.0649,
+    0.027
+   ],
+   "bb": [
+    0.003749,
+    0.003108,
+    0.003334
+   ],
+   "deepReflectance": [
+    0.0012,
+    0.0069,
+    0.0188
+   ]
+  },
+  "lagoon": {
+   "a": [
+    0.439,
+    0.0769,
+    0.055
+   ],
+   "bb": [
+    0.02,
+    0.022,
+    0.024
+   ],
+   "deepReflectance": [
+    0.006551,
+    0.046405,
+    0.072391
+   ]
+  },
+  "nirForDepthSolveOnly": {
+   "band": "B08",
+   "a": 3.0,
+   "bb": 0.003749
+  },
+  "waterType": {
+   "map": "waterType",
+   "channel": 0,
+   "meaning": "lagoon weight w: 0 = open-ocean water, 1 = lagoon water; a and bb are mixed linearly with w",
+   "sampling": "bilinear at texel centres, clamp to edge (the map covers the whole grid extent)"
+  },
+  "a": [
+   0.433,
+   0.0649,
+   0.027
+  ],
+  "bb": [
+   0.003749,
+   0.003108,
+   0.003334
+  ],
+  "bottomAlbedo": "albedo map over water (irradiance reflectance, linear after sRGB decoding)",
+  "depth": "H = max(0, -height)",
+  "satelliteCorrection": {
+   "description": "satellite = L2A surface reflectance minus w_water * (G + c): G = min(B08, k * B11 + margin, gmax) is the surface term (sun glint, reflected sky, whitecaps), c a per-band constant that sets the open ocean to the level of the calmest scene; land is untouched; foam is left in",
+   "baseSceneConstants_B04_B03_B02": [
+    0.0006000002613291144,
+    0.0009999996982514858,
+    0.001199999824166298
+   ],
+   "deepOceanReflectance_B04_B03_B02": [
+    0.001199999824166298,
+    0.006899999920278788,
+    0.018799999728798866
+   ]
+  }
+ },
+ "attribution": [
+  "Contains modified Copernicus Sentinel data 2021, 2024",
+  "produced using Copernicus WorldDEM-30 \u00a9 DLR e.V. 2010-2014 and \u00a9 Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved",
+  "GEBCO Compilation Group (2026) GEBCO 2026 Grid",
+  "Allen Coral Atlas (2022), CC BY 4.0, doi.org/10.5281/zenodo.3833242",
+  "\u00a9 OpenStreetMap contributors (ODbL)"
+ ],
+ "maps": {
+  "height": {
+   "hi": {
+    "channels": 1,
+    "dtype": "u16",
+    "filter": "grad",
+    "scale": 0.002929732204165713,
+    "offset": -64.0,
+    "channelNames": [
+     "height_m"
+    ],
+    "unit": "m above sea level at acquisition",
+    "clamp": [
+     -64.0,
+     128.0
+    ],
+    "file": "v2/height.bin",
+    "width": 640,
+    "height": 768,
+    "bytes": 983040,
+    "sha256": "3058dc28f72f2360b9e5d1bb8592574ef370b9f12e731e9f9eddd52238c58f83",
+    "rawSha256": "dc5a6e2112f23591e9cd02cb962f2832d51cde825f50cd89f3a2bd52f6c5d641"
+   }
+  },
+  "shore": {
+   "hi": {
+    "channels": 1,
+    "dtype": "u16",
+    "filter": "grad",
+    "scale": 0.01,
+    "offset": -300.0,
+    "channelNames": [
+     "shore_m"
+    ],
+    "unit": "m, signed distance to the shoreline, positive seaward",
+    "clamp": [
+     -300.0,
+     300.0
+    ],
+    "file": "v2/shore.bin",
+    "width": 640,
+    "height": 768,
+    "bytes": 983040,
+    "sha256": "df97f5fd7dd7e9e8935cb10e673a6f6544be6c39dd00fc9640459181d2c40fa7",
+    "rawSha256": "4c073fc9fa8577334874e4550035f9146f0709742dfab3194a13be96c315dbe5"
+   }
+  },
+  "benthic": {
+   "hi": {
+    "channels": 4,
+    "dtype": "u8",
+    "filter": "grad",
+    "scale": 0.00392156862745098,
+    "offset": 0.0,
+    "channelNames": [
+     "seagrass",
+     "coralAlgae",
+     "rubbleRock",
+     "confidence"
+    ],
+    "file": "v2/benthic.bin",
+    "width": 640,
+    "height": 768,
+    "bytes": 1966080,
+    "sha256": "f86c5f887b7bc21add4301280ee8f624d65b13ca18f9fecfff805962efaa05ef",
+    "rawSha256": "3738d75b7f79baddfdd541d45f4af6e7f4609a09f198ff0989e5a50bed8cc418"
+   }
+  },
+  "land": {
+   "hi": {
+    "channels": 4,
+    "dtype": "u8",
+    "filter": "grad",
+    "scale": [
+     0.00392156862745098,
+     0.00392156862745098,
+     0.00392156862745098,
+     0.1
+    ],
+    "offset": [
+     0.0,
+     0.0,
+     0.0,
+     0.0
+    ],
+    "channelNames": [
+     "mangrove",
+     "scrub",
+     "builtUp",
+     "canopyHeight_m"
+    ],
+    "file": "v2/land.bin",
+    "width": 640,
+    "height": 768,
+    "bytes": 1966080,
+    "sha256": "86a6082f0635ee268852fd05f438465f2370c9c105d60af63f1d2e4db7db2218",
+    "rawSha256": "ba534a548e00642f31e6b52e66dcd3148fe8d24a68ec7423518f1214b5d236e0"
+   }
+  },
+  "waveMap": {
+   "hi": {
+    "channels": 4,
+    "dtype": "u8",
+    "filter": "grad",
+    "scale": 0.00392156862745098,
+    "offset": 0.0,
+    "channelNames": [
+     "swellRatio",
+     "fetchLog",
+     "breakerDistSqrt",
+     "breakerStrength"
+    ],
+    "encoding": [
+     "linear 0..1",
+     "g = ln(fetch / 10 m) / ln(2000)",
+     "b = sqrt(distance / 250 m)",
+     "linear 0..1"
+    ],
+    "swellFromDeg": 75.0,
+    "file": "v2/waveMap.bin",
+    "width": 320,
+    "height": 384,
+    "bytes": 491520,
+    "sha256": "77e9d53e8c8ece92d9216a05b07b2e5920df64dbfd6263e06c7f376734e36f0d",
+    "rawSha256": "733ac944f0ab7785bccd45b9a19c6975685f6a192ba5d704934c759ee55a9588"
+   }
+  },
+  "waterType": {
+   "hi": {
+    "channels": 1,
+    "dtype": "u8",
+    "filter": "grad",
+    "scale": 0.00392156862745098,
+    "offset": 0.0,
+    "channelNames": [
+     "lagoonWeight"
+    ],
+    "sampling": "bilinear, texel centres, clamp to edge; covers the whole grid extent",
+    "file": "v2/waterType.bin",
+    "width": 80,
+    "height": 96,
+    "bytes": 7680,
+    "sha256": "482ba562f5eec999e61e57d2bae1f901e7286382a677fa48b90c502dc1142737",
+    "rawSha256": "73aee39c7a63a26892c4274834a697d5a31612c1f65afabe34b6513fb40a596d"
+   }
+  },
+  "albedo": {
+   "hi": {
+    "encoding": "srgb-reflectance",
+    "bands": [
+     "B04",
+     "B03",
+     "B02"
+    ],
+    "file": "v2/albedo.webp",
+    "width": 640,
+    "height": 768,
+    "bytes": 227052,
+    "sha256": "1b76cb57c338e1352783cb77a4032bbd2f0af76d1015906c0a023e6e994502f0",
+    "lossless": true
+   }
+  }
+ },
+ "vectors": {
+  "features": "v2/features.json"
+ },
+ "waves": {
+  "fromDeg": 75.0,
+  "H0_m": 1.3,
+  "gamma": 0.55,
+  "frictionLength1m_m": 600.0,
+  "spreadDeg": [
+   -40.0,
+   40.0
+  ],
+  "spreadSigmaDeg": 18.0,
+  "fetchMax_m": 20000.0,
+  "breakerMaxDist_m": 250.0
+ },
+ "stats": {
+  "landArea_km2": 33.3676633125,
+  "depthByZone_m": {
+   "Unmapped": {
+    "area_km2": 772.171543,
+    "mean": 128.12002563476562,
+    "p05": 6.342033863067627,
+    "p25": 14.909447193145752,
+    "p50": 30.569292068481445,
+    "p75": 122.21672439575195,
+    "p95": 657.9652038574204,
+    "max": 1096.6514892578125,
+    "conf_mean": 0.20014554262161255
+   },
+   "Shallow Lagoon": {
+    "area_km2": 283.762666,
+    "mean": 4.056438446044922,
+    "p05": 1.5501397550106049,
+    "p25": 2.8781334161758423,
+    "p50": 3.773489236831665,
+    "p75": 4.855936646461487,
+    "p95": 7.929717421531677,
+    "max": 13.648228645324707,
+    "conf_mean": 0.9030492901802063
+   },
+   "Deep Lagoon": {
+    "area_km2": 48.570005,
+    "mean": 6.021566867828369,
+    "p05": 3.4819266319274904,
+    "p25": 5.013540267944336,
+    "p50": 6.102800369262695,
+    "p75": 7.022834300994873,
+    "p95": 8.571851348876953,
+    "max": 11.419144630432129,
+    "conf_mean": 0.539080798625946
+   },
+   "Inner Reef Flat": {
+    "area_km2": 54.298266,
+    "mean": 1.6726747751235962,
+    "p05": 0.8090415596961975,
+    "p25": 1.1465500891208649,
+    "p50": 1.4866057634353638,
+    "p75": 2.056900680065155,
+    "p95": 3.0976951122283936,
+    "max": 7.001281261444092,
+    "conf_mean": 0.9950733780860901
+   },
+   "Outer Reef Flat": {
+    "area_km2": 14.225607,
+    "mean": 1.5305750370025635,
+    "p05": 0.6329088866710663,
+    "p25": 0.9847262501716614,
+    "p50": 1.2347527742385864,
+    "p75": 1.771729826927185,
+    "p95": 3.245766758918762,
+    "max": 11.134016036987305,
+    "conf_mean": 0.984210193157196
+   },
+   "Reef Crest": {
+    "area_km2": 0.4114,
+    "mean": 4.298988342285156,
+    "p05": 1.552047896385193,
+    "p25": 2.2834052443504333,
+    "p50": 3.769894242286682,
+    "p75": 5.872921586036682,
+    "p95": 8.66720724105835,
+    "max": 12.790581703186035,
+    "conf_mean": 0.7257589101791382
+   },
+   "Reef Slope": {
+    "area_km2": 11.170115,
+    "mean": 4.737727642059326,
+    "p05": 1.0763709187507629,
+    "p25": 2.8343273401260376,
+    "p50": 4.182247638702393,
+    "p75": 6.738895893096924,
+    "p95": 9.411678791046143,
+    "max": 16.565271377563477,
+    "conf_mean": 0.8579748868942261
+   },
+   "Sheltered Reef Slope": {
+    "area_km2": 1.934427,
+    "mean": 5.659921646118164,
+    "p05": 2.2355304479599,
+    "p25": 3.560503125190735,
+    "p50": 5.246818542480469,
+    "p75": 7.3043341636657715,
+    "p95": 10.764298248291015,
+    "max": 15.857003211975098,
+    "conf_mean": 0.7325575947761536
+   },
+   "Back Reef Slope": {
+    "area_km2": 15.172069,
+    "mean": 5.979341983795166,
+    "p05": 2.7415127754211426,
+    "p25": 4.358728408813477,
+    "p50": 5.901716709136963,
+    "p75": 7.4956583976745605,
+    "p95": 9.49610481262207,
+    "max": 15.615997314453125,
+    "conf_mean": 0.7933446764945984
+   },
+   "Plateau": {
+    "area_km2": 15.272983,
+    "mean": 7.173027515411377,
+    "p05": 3.9348060131072997,
+    "p25": 5.595934629440308,
+    "p50": 7.301189422607422,
+    "p75": 8.542073726654053,
+    "p95": 10.417215061187743,
+    "max": 20.242876052856445,
+    "conf_mean": 0.7102963924407959
+   },
+   "Lagoon (shallow + deep)": {
+    "mean": 4.343639850616455,
+    "p50": 4.029695987701416,
+    "p99": 9.862656593322754,
+    "max": 13.648228645324707
+   }
+  },
+  "margins_m": {
+   "ACA geomorphic": {
+    "west": 560.0,
+    "east": 533.2,
+    "south": 633.5,
+    "north": 606.4
+   },
+   "ACA benthic": {
+    "west": 728.4,
+    "east": 561.0,
+    "south": 643.5,
+    "north": 621.7
+   },
+   "OSM coastline polygons": {
+    "west": 1182.4,
+    "east": 3183.1,
+    "south": 741.6,
+    "north": 1612.9
+   },
+   "brief lon/lat extent": {
+    "west": 441.7,
+    "east": 420.6,
+    "south": 540.3,
+    "north": 520.8
+   }
+  }
+ },
+ "crop": {
+  "keepAbove_m": -10.0,
+  "margin_m": 1500.0,
+  "align_px": 64,
+  "easeFrom_m": 500.0,
+  "easeOver_m": 1000.0,
+  "edge_m": 400.0,
+  "ocean_m": -64.0,
+  "from": "v1"
+ }
+}
